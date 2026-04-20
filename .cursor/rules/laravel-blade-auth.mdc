@@ -1,0 +1,50 @@
+---
+description: Laravel Blade templating và Authentication conventions
+globs: resources/views/**/*.blade.php,app/Http/Controllers/**/*.php
+alwaysApply: false
+---
+
+# Blade & Authentication
+
+## Blade Templating
+
+- Luôn dùng Blade cho views, **không** echo PHP thuần trong template
+- Dùng `@extends` / `@section` / `@yield` để kế thừa layout
+- Dùng `@include` cho partial components tái sử dụng
+
+```blade
+{{-- ❌ BAD --}}
+<?php echo $name; ?>
+<?php if ($isAdmin): ?>
+
+{{-- ✅ GOOD --}}
+{{ $name }}
+@if ($isAdmin)
+    @include('basic.partials.admin-menu')
+@endif
+```
+
+- Dùng `{{ }}` để escape output (XSS safe), chỉ dùng `{!! !!}` khi chắc chắn data đã được sanitize
+- Truyền data vào view qua `compact()` hoặc `->with()`, không dùng global variable
+
+```php
+// ✅ GOOD
+return view('basic.form_answer.index', compact('bot', 'formAnswerNumber'));
+```
+
+## Authentication
+
+- Dùng `auth()->user()` hoặc `Auth::user()` để lấy user hiện tại
+- Bảo vệ route qua middleware `auth`, không check manual trong controller
+
+```php
+// ❌ BAD - check thủ công trong controller
+if (!Auth::check()) { return redirect('/login'); }
+
+// ✅ GOOD - dùng middleware trong route
+Route::middleware(['auth'])->group(function () {
+    Route::get('/dashboard', [DashboardController::class, 'index']);
+});
+```
+
+- Dùng `@auth` / `@guest` trong Blade thay vì `@if(auth()->check())`

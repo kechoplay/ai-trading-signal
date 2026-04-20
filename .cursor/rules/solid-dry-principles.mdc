@@ -1,0 +1,61 @@
+---
+description: SOLID principles và DRY - OOP, modularization, tránh duplication
+alwaysApply: true
+---
+
+# SOLID & DRY Principles
+
+## Single Responsibility (S)
+
+Mỗi class/method chỉ làm một việc. Tách logic phức tạp thành methods nhỏ.
+
+```php
+// ❌ BAD - handle() làm quá nhiều thứ
+public function handle() {
+    $bot = Bots::find($this->botId);
+    // validate, get credentials, call API, handle error... tất cả trong 1 method
+}
+
+// ✅ GOOD - tách từng trách nhiệm
+public function handle() {
+    [$spreadsheetId, $token] = $this->getGoogleSheetCredentials();
+    $targetRow = $this->findRowNumberByResultId($rowDatas, $column);
+    GoogleSheetService::deleteRowData($googleSheet, $spreadsheetId, $sheetId, $targetRow);
+}
+```
+
+## Open/Closed (O)
+
+Mở rộng qua interface/abstract, không sửa class gốc.
+
+```php
+// ✅ GOOD - thêm loại xử lý mới bằng cách implement interface, không sửa class cũ
+interface GoogleSheetHandlerInterface {
+    public function handle(\Google_Service_Sheets $sheet, string $spreadsheetId): void;
+}
+```
+
+## Dependency Inversion (D)
+
+Phụ thuộc vào abstraction, không phụ thuộc vào concrete class.
+
+```php
+// ❌ BAD
+public function __construct(BotRepository $repo) {}
+
+// ✅ GOOD
+public function __construct(BotRepositoryInterface $repo) {}
+```
+
+## DRY — Tránh Duplication
+
+Khi cùng một đoạn logic lặp lại từ 2 lần trở lên → tách ra method/helper/service.
+
+```php
+// ❌ BAD - lặp logic tạo ResultErrorGoogle ở nhiều nơi
+ResultErrorGoogle::create(['bot_id' => $bot->id, 'status' => 3, 'retry_time' => 1, ...]);
+ResultErrorGoogle::create(['bot_id' => $bot->id, 'status' => 3, 'retry_time' => 1, ...]);
+
+// ✅ GOOD - gom vào method dùng chung
+private function createResultErrorGoogle(int $botId, int $formId, int $status, ?string $errorMessage = null): void
+```

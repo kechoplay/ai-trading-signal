@@ -1,0 +1,46 @@
+---
+description: Laravel architecture conventions - MVC, Form Request, Job queue, Events
+alwaysApply: true
+---
+
+# Laravel Architecture Conventions
+
+## MVC & Routing
+
+- Controller chỉ điều phối: validate → gọi Service/Repository → trả response
+- Business logic đặt trong `app/Services/`, data access trong `app/Repositories/`
+- Định nghĩa route trong `routes/web.php` hoặc `routes/api.php`, không inline logic
+
+## Form Request Validation
+
+```php
+// ❌ BAD - validate trong controller
+$request->validate(['name' => 'required']);
+
+// ✅ GOOD - tách ra FormRequest
+class StoreFormAnswerRequest extends FormRequest {
+    public function rules(): array {
+        return ['name' => 'required|string|max:255'];
+    }
+}
+```
+
+## Job Queue cho long-running tasks
+
+```php
+// ✅ Dispatch job với connection và queue rõ ràng
+MyJob::dispatch($id)->onConnection('database')->onQueue('googleEvent');
+```
+
+- Mọi tác vụ tốn thời gian (Google API, gửi mail, sync...) phải dùng Job queue
+- Implement `ShouldQueue`, dùng `Dispatchable, InteractsWithQueue, Queueable, SerializesModels`
+
+## Events & Listeners
+
+```php
+// Dùng Event/Listener để decouple side-effects khỏi core logic
+event(new FormAnswerSubmitted($result));
+```
+
+- Dùng Eloquent relationships thay vì manual join khi có thể
+- Luôn tạo migration kèm model khi thêm bảng mới

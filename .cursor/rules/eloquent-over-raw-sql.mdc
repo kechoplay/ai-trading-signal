@@ -1,0 +1,54 @@
+---
+description: Ưu tiên dùng Eloquent ORM thay vì raw SQL queries
+alwaysApply: true
+---
+
+# Eloquent ORM thay vì Raw SQL
+
+Luôn ưu tiên Eloquent ORM. Chỉ dùng `DB::raw()` / `DB::select()` khi Eloquent không thể diễn đạt được query.
+
+## Query cơ bản
+
+```php
+// ❌ BAD
+DB::select('SELECT * FROM bots WHERE id = ?', [$id]);
+
+// ✅ GOOD
+Bots::query()->find($id);
+Bots::query()->where('id', $id)->first();
+```
+
+## Update
+
+```php
+// ❌ BAD
+DB::statement('UPDATE bots SET google_sheet_status = 0 WHERE id = ?', [$id]);
+
+// ✅ GOOD
+Bots::query()->where(['id' => $id])->update(['google_sheet_status' => 0]);
+```
+
+## Soft delete / whereNull
+
+```php
+// ❌ BAD
+DB::select('SELECT * FROM form_answer_result WHERE deleted_at IS NULL AND form_id = ?', [$formId]);
+
+// ✅ GOOD
+FormAnswerResult::query()->where('form_id', $formId)->whereNull('deleted_at')->get();
+```
+
+## Khi nào được phép dùng DB::raw()
+
+- Hàm SQL không có trong Eloquent: `FIELD()`, `DATE_FORMAT()`, `DISTINCT`, `CASE WHEN`
+- Aggregate phức tạp cần `groupByRaw`, `orderByRaw`, `selectRaw`
+- Chunk xử lý dữ liệu lớn kết hợp select cụ thể các cột
+
+```php
+// ✅ OK - DB::raw chỉ dùng trong select để dùng hàm SQL đặc thù
+DB::table('form_answer_result')
+    ->where('form_id', $formId)
+    ->whereNull('deleted_at')
+    ->select(DB::raw('id, data, created_at, line_id'))
+    ->chunk(250, function ($rows) { ... });
+```
