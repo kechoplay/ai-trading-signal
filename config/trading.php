@@ -8,21 +8,27 @@ return [
     |--------------------------------------------------------------------------
     | Market Data Provider
     |--------------------------------------------------------------------------
-    | Supported: "twelvedata", "oanda"
+    | Supported: "tradingview", "twelvedata", "oanda"
+    |
+    | "tradingview" — captures screenshots via headless browser, sends to Claude Vision.
+    |                 No API key needed for market data. Requires Node.js + puppeteer.
+    | "twelvedata"  — fetches OHLCV candles via REST API (free 800 req/day).
+    | "oanda"       — fetches OHLCV candles via OANDA REST v3 (requires account).
     */
 
-    'provider' => env('MARKET_PROVIDER', 'twelvedata'),
+    'provider' => env('MARKET_PROVIDER', 'tradingview'),
 
     /*
     |--------------------------------------------------------------------------
-    | Trading Instrument & Timeframes
+    | Trading Instrument
     |--------------------------------------------------------------------------
-    | instrument: symbol used by your chosen provider
-    |   - TwelveData : "XAU/USD"
-    |   - OANDA      : "XAU_USD"
+    | Format depends on your chosen provider:
+    |   tradingview : "OANDA:XAUUSD"  (symbol shown on TradingView)
+    |   twelvedata  : "XAU/USD"
+    |   oanda       : "XAU_USD"
     */
 
-    'instrument' => env('TRADING_INSTRUMENT', 'XAU/USD'),
+    'instrument' => env('TRADING_INSTRUMENT', 'OANDA:XAUUSD'),
 
     'timeframes' => array_filter(array_map(
         'trim',
@@ -37,9 +43,45 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Market Hours (for TradingView mode — skips analysis when market closed)
+    |--------------------------------------------------------------------------
+    | open / close: hour in 24h format, in the specified timezone.
+    | Default: 06:00–22:00 Asia/Ho_Chi_Minh (covers London pre-open → NY close)
+    */
+
+    'market_hours' => [
+        'open' => (int) env('MARKET_HOURS_OPEN', 6),
+        'close' => (int) env('MARKET_HOURS_CLOSE', 22),
+        'timezone' => env('MARKET_HOURS_TIMEZONE', 'Asia/Ho_Chi_Minh'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | TradingView Screenshot Config
+    |--------------------------------------------------------------------------
+    | symbol   : TradingView symbol (e.g. "OANDA:XAUUSD", "CAPITALCOM:GOLD")
+    | theme    : "dark" | "light"
+    | width/height : screenshot resolution (recommend 1280×720 for token savings)
+    | wait_ms  : milliseconds to wait for chart to fully render (3000–6000)
+    | node_binary / npm_binary : leave empty to auto-detect from PATH
+    */
+
+    'tradingview' => [
+        'symbol' => env('TV_SYMBOL', 'OANDA:XAUUSD'),
+        'theme' => env('TV_THEME', 'dark'),
+        'timezone' => env('TV_TIMEZONE', 'Asia/Ho_Chi_Minh'),
+        'width' => (int) env('TV_WIDTH', 1280),
+        'height' => (int) env('TV_HEIGHT', 720),
+        'wait_ms' => (int) env('TV_WAIT_MS', 5000),
+        'node_binary' => env('TV_NODE_BINARY', ''),
+        'npm_binary' => env('TV_NPM_BINARY', ''),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | TwelveData API
     |--------------------------------------------------------------------------
-    | Sign up free at https://twelvedata.com — 800 req/day, no credit card.
+    | Sign up free: https://twelvedata.com — 800 req/day, no credit card.
     */
 
     'twelvedata' => [
@@ -49,9 +91,8 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | OANDA API (optional — use if you have a practice account)
+    | OANDA API (optional)
     |--------------------------------------------------------------------------
-    | Environments: practice | live
     */
 
     'oanda' => [
@@ -67,11 +108,13 @@ return [
     |--------------------------------------------------------------------------
     | Anthropic Claude
     |--------------------------------------------------------------------------
+    | For TradingView vision mode, claude-haiku is cheaper (10x less than sonnet).
+    | For OHLCV text mode, sonnet gives better analysis.
     */
 
     'anthropic' => [
         'api_key' => env('ANTHROPIC_API_KEY'),
-        'model' => env('ANTHROPIC_MODEL', 'claude-sonnet-4-5-20250929'),
+        'model' => env('ANTHROPIC_MODEL', 'claude-haiku-4-5'),
         'base_url' => 'https://api.anthropic.com/v1',
         'version' => '2023-06-01',
     ],
