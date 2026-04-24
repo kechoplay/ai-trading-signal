@@ -1,66 +1,172 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# AI Trading Signal - XAUUSD
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Phân tích XAUUSD (giá vàng) trên sàn OANDA bằng AI (Claude), đưa ra tín hiệu Buy/Sell scalp khung M5 + M15 với Entry/SL/TP, rồi gửi về Telegram mỗi 15 phút.
 
-## About Laravel
+## Kiến trúc
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+```
+Laravel Scheduler (mỗi 15 phút)
+  └─> php artisan signal:analyze
+        └─> SignalOrchestrator
+              ├─ OandaCandleService    (lấy 100 nến M5 + 100 nến M15)
+              ├─ ClaudeAnalystService  (gửi cho Claude → JSON signal)
+              ├─ DB: trading_signals   (lưu lịch sử)
+              └─ TelegramNotifier      (gửi message có format)
+```
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## Yêu cầu
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+- PHP >= 8.2 (đã dùng PHP 8.2.12 của XAMPP)
+- Composer
+- MySQL (XAMPP)
+- Tài khoản OANDA Practice (miễn phí) + API Token
+- Anthropic API Key (Claude)
+- Telegram Bot Token + Chat ID
 
-## Learning Laravel
+## Cấu hình `.env`
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+```env
+OANDA_ENV=practice
+OANDA_API_TOKEN=<paste ở đây>
+OANDA_ACCOUNT_ID=<paste ở đây>
 
-You may also try the [Laravel Bootcamp](https://bootcamp.laravel.com), where you will be guided through building a modern Laravel application from scratch.
+ANTHROPIC_API_KEY=<paste ở đây>
+ANTHROPIC_MODEL=claude-sonnet-4-5-20250929
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+TELEGRAM_BOT_TOKEN=<paste ở đây>
+TELEGRAM_CHAT_ID=<paste ở đây>
 
-## Laravel Sponsors
+TRADING_INSTRUMENT=XAU_USD
+TRADING_TIMEFRAMES=M5,M15
+TRADING_CANDLES_COUNT=100
+TRADING_MIN_RR=2.0
+TRADING_LANGUAGE=vi
+```
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+## Hướng dẫn lấy API keys
 
-### Premium Partners
+### 1. OANDA API Token (Practice - miễn phí)
 
-- **[Vehikl](https://vehikl.com/)**
-- **[Tighten Co.](https://tighten.co)**
-- **[WebReinvent](https://webreinvent.com/)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel/)**
-- **[Cyber-Duck](https://cyber-duck.co.uk)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Jump24](https://jump24.co.uk)**
-- **[Redberry](https://redberry.international/laravel/)**
-- **[Active Logic](https://activelogic.com)**
-- **[byte5](https://byte5.de)**
-- **[OP.GG](https://op.gg)**
+1. Đăng ký/đăng nhập tài khoản Practice: https://www.oanda.com/demo-account/
+2. Truy cập: https://www.oanda.com/demo-account/tpa/personal_token
+3. Nhấn **Generate Token** → copy token
+4. Lấy `OANDA_ACCOUNT_ID` trong trang account (dạng `101-011-XXXXXXXX-001`)
 
-## Contributing
+### 2. Anthropic Claude API Key
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+1. https://console.anthropic.com/ → đăng ký
+2. Nạp credit (Billing) tối thiểu $5
+3. API Keys → Create Key → copy `sk-ant-api03-...`
 
-## Code of Conduct
+### 3. Telegram Bot + Chat ID
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+**Tạo Bot:**
+1. Chat với [@BotFather](https://t.me/BotFather) → gửi `/newbot`
+2. Đặt tên + username (kết thúc bằng `bot`)
+3. Copy token dạng `8012345678:AAH...`
 
-## Security Vulnerabilities
+**Lấy Chat ID:**
+1. Chat với bot vừa tạo, nhấn Start (gửi "hi")
+2. Mở URL: `https://api.telegram.org/bot<TOKEN>/getUpdates`
+3. Tìm `"chat":{"id":123456789}` → đó là Chat ID
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+## Chạy thử thủ công
 
-## License
+```powershell
+php artisan signal:analyze
+```
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+## Chạy tự động 15 phút/lần (Windows Task Scheduler)
+
+Laravel có scheduler tích hợp — bạn chỉ cần tạo 1 task Windows chạy `php artisan schedule:run` **mỗi phút**. Laravel sẽ tự quyết định khi nào chạy `signal:analyze` (mỗi 15 phút).
+
+### Tạo task bằng PowerShell (chạy Administrator):
+
+```powershell
+$action = New-ScheduledTaskAction `
+    -Execute "D:\xampp\php\php.exe" `
+    -Argument "artisan schedule:run" `
+    -WorkingDirectory "D:\ai-trading-signal"
+
+$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
+    -RepetitionInterval (New-TimeSpan -Minutes 1) `
+    -RepetitionDuration (New-TimeSpan -Days 3650)
+
+$settings = New-ScheduledTaskSettingsSet `
+    -AllowStartIfOnBatteries `
+    -DontStopIfGoingOnBatteries `
+    -StartWhenAvailable `
+    -MultipleInstances IgnoreNew
+
+$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType S4U -RunLevel Highest
+
+Register-ScheduledTask `
+    -TaskName "Laravel - AI Trading Signal" `
+    -Action $action `
+    -Trigger $trigger `
+    -Settings $settings `
+    -Principal $principal `
+    -Description "Runs Laravel scheduler every minute for XAUUSD signal analysis"
+```
+
+### Kiểm tra task đã hoạt động:
+
+```powershell
+Get-ScheduledTask -TaskName "Laravel - AI Trading Signal"
+Start-ScheduledTask -TaskName "Laravel - AI Trading Signal"
+```
+
+### Xóa task (nếu cần):
+
+```powershell
+Unregister-ScheduledTask -TaskName "Laravel - AI Trading Signal" -Confirm:$false
+```
+
+## Log
+
+- `storage/logs/laravel.log` — log chung của app
+- `storage/logs/signal.log` — output của `signal:analyze`
+
+## Xem lịch sử tín hiệu
+
+```sql
+-- Vào MySQL (XAMPP)
+USE ai_trading_signal;
+SELECT id, action, confidence, entry, stop_loss, take_profit, risk_reward, trend_bias, created_at
+FROM trading_signals
+ORDER BY id DESC
+LIMIT 20;
+```
+
+## Cấu trúc chính
+
+```
+app/
+  Console/Commands/
+    AnalyzeSignalCommand.php          # php artisan signal:analyze
+  Models/
+    TradingSignal.php                 # Eloquent model
+  Services/
+    Oanda/
+      OandaCandleService.php          # HTTP client OANDA
+      Dto/Candle.php
+    Ai/
+      ClaudeAnalystService.php        # gọi Claude API
+      Dto/AnalysisResult.php
+    Telegram/
+      TelegramNotifier.php            # gửi tin nhắn
+    Signal/
+      SignalOrchestrator.php          # điều phối toàn bộ
+config/
+  trading.php                         # config tập trung
+database/migrations/
+  ..._create_trading_signals_table.php
+routes/
+  console.php                         # đăng ký schedule */15 phút
+```
+
+## Lưu ý quan trọng
+
+- **Đây là tín hiệu tham khảo** — AI có thể sai. KHÔNG bao giờ trade live bằng tiền thật chỉ dựa vào bot này. Luôn backtest + quản lý vốn.
+- OANDA Practice data giống Live về giá (cùng feed), nên không cần trả phí gì.
+- Claude call tốn khoảng **$0.01 - $0.03/lần** (tuỳ model). Chạy 15 phút/lần = ~96 lần/ngày → ~$1-3/ngày.
