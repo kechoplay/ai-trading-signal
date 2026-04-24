@@ -108,8 +108,15 @@ return [
     |--------------------------------------------------------------------------
     | Anthropic Claude
     |--------------------------------------------------------------------------
-    | For TradingView vision mode, claude-haiku is cheaper (10x less than sonnet).
-    | For OHLCV text mode, sonnet gives better analysis.
+    |
+    | ĐỂ CHUYỂN SANG SONNET: chỉ đổi ANTHROPIC_MODEL trong file .env
+    |
+    | Haiku   (mặc định) : claude-haiku-4-5               ~$8-12/tháng
+    | Sonnet  (tốt hơn)  : claude-sonnet-4-5-20250929     ~$49/tháng
+    |
+    | Haiku đủ dùng cho vision mode (nhìn chart, nhận diện pattern).
+    | Sonnet cho kết quả reasoning chi tiết hơn, nên dùng khi cần
+    | phân tích phức tạp hoặc khi OHLCV text mode (nhiều số liệu hơn).
     */
 
     'anthropic' => [
