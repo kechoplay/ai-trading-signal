@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Services\Signal;
 
 use App\Models\TradingSignal;
-use App\Services\Ai\ClaudeAnalystService;
+use App\Services\Ai\GeminiAnalystService;
 use App\Services\Ai\Dto\AnalysisResult;
 use App\Services\Market\Candle;
 use App\Services\Market\MarketDataProvider;
@@ -18,7 +18,7 @@ class SignalOrchestrator
 {
     public function __construct(
         private readonly MarketDataProvider $market,
-        private readonly ClaudeAnalystService $claude,
+        private readonly GeminiAnalystService $claude,
         private readonly TelegramNotifier $telegram,
     ) {
     }
@@ -27,7 +27,7 @@ class SignalOrchestrator
     {
         return new self(
             market: MarketDataProviderFactory::make(),
-            claude: ClaudeAnalystService::fromConfig(),
+            claude: GeminiAnalystService::fromConfig(),
             telegram: TelegramNotifier::fromConfig(),
         );
     }

@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Services\Signal;
 
 use App\Models\TradingSignal;
-use App\Services\Ai\ClaudeVisionAnalystService;
+use App\Services\Ai\GeminiVisionAnalystService;
 use App\Services\Ai\Dto\AnalysisResult;
 use App\Services\Telegram\TelegramNotifier;
 use App\Services\TradingView\TradingViewChartService;
@@ -16,7 +16,7 @@ class TradingViewOrchestrator
 {
     public function __construct(
         private readonly TradingViewChartService $chartService,
-        private readonly ClaudeVisionAnalystService $claude,
+        private readonly GeminiVisionAnalystService $claude,
         private readonly TelegramNotifier $telegram,
         private readonly MarketHoursService $marketHours,
     ) {
@@ -26,7 +26,7 @@ class TradingViewOrchestrator
     {
         return new self(
             chartService: TradingViewChartService::fromConfig(),
-            claude: ClaudeVisionAnalystService::fromConfig(),
+            claude: GeminiVisionAnalystService::fromConfig(),
             telegram: TelegramNotifier::fromConfig(),
             marketHours: MarketHoursService::fromConfig(),
         );

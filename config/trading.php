@@ -106,17 +106,24 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Anthropic Claude
+    | Google Gemini (AI provider — miễn phí)
     |--------------------------------------------------------------------------
+    | Đăng ký API key miễn phí tại: https://aistudio.google.com
     |
-    | ĐỂ CHUYỂN SANG SONNET: chỉ đổi ANTHROPIC_MODEL trong file .env
-    |
-    | Haiku   (mặc định) : claude-haiku-4-5               ~$8-12/tháng
-    | Sonnet  (tốt hơn)  : claude-sonnet-4-5-20250929     ~$49/tháng
-    |
-    | Haiku đủ dùng cho vision mode (nhìn chart, nhận diện pattern).
-    | Sonnet cho kết quả reasoning chi tiết hơn, nên dùng khi cần
-    | phân tích phức tạp hoặc khi OHLCV text mode (nhiều số liệu hơn).
+    | gemini-2.0-flash (mặc định): miễn phí, hỗ trợ vision, 1500 req/ngày
+    | gemini-1.5-pro             : chất lượng cao hơn, 50 req/ngày (free)
+    */
+
+    'gemini' => [
+        'api_key' => env('GEMINI_API_KEY', ''),
+        'model' => env('GEMINI_MODEL', 'gemini-2.0-flash'),
+        'base_url' => 'https://generativelanguage.googleapis.com/v1beta',
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Anthropic Claude (không còn dùng — giữ lại để tham khảo)
+    |--------------------------------------------------------------------------
     */
 
     'anthropic' => [
