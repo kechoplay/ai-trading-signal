@@ -49,23 +49,23 @@ class GeminiAnalystService
 
         $url = "{$this->baseUrl}/models/{$this->model}:generateContent?key={$this->apiKey}";
 
-        $response = Http::timeout(90)
-            ->retry(2, 1000, throw: false)
-            ->post($url, [
-                'systemInstruction' => [
-                    'parts' => [['text' => $systemPrompt]],
+        $requestBody = [
+            'systemInstruction' => [
+                'parts' => [['text' => $systemPrompt]],
+            ],
+            'contents' => [
+                [
+                    'role' => 'user',
+                    'parts' => [['text' => $userPrompt]],
                 ],
-                'contents' => [
-                    [
-                        'role' => 'user',
-                        'parts' => [['text' => $userPrompt]],
-                    ],
-                ],
-                'generationConfig' => [
-                    'temperature' => 0.2,
-                    'maxOutputTokens' => 2048,
-                ],
-            ]);
+            ],
+            'generationConfig' => [
+                'temperature' => 0.2,
+                'maxOutputTokens' => 2048,
+            ],
+        ];
+
+        $response = $this->postWithRetry($url, $requestBody);
 
         if ($response->failed()) {
             Log::error('Gemini API call failed', [
@@ -85,6 +85,39 @@ class GeminiAnalystService
         $json = $this->extractJson($text);
 
         return AnalysisResult::fromAiJson($json, $payload);
+    }
+
+    /**
+     * Posts to Gemini with retry on transient errors (429, 5xx). Backoff: 3s, 6s, 9s.
+     */
+    private function postWithRetry(string $url, array $body): \Illuminate\Http\Client\Response
+    {
+        $maxAttempts = 4;
+        $transientStatuses = [429, 500, 502, 503, 504];
+        $response = null;
+
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+            $response = Http::timeout(90)->post($url, $body);
+
+            if ($response->successful()) {
+                return $response;
+            }
+
+            $isTransient = in_array($response->status(), $transientStatuses, true);
+            if (! $isTransient || $attempt === $maxAttempts) {
+                return $response;
+            }
+
+            $sleepSeconds = $attempt * 3;
+            Log::warning('Gemini transient error, retrying', [
+                'attempt' => $attempt,
+                'status' => $response->status(),
+                'sleep_seconds' => $sleepSeconds,
+            ]);
+            sleep($sleepSeconds);
+        }
+
+        return $response;
     }
 
     private function buildSystemPrompt(string $instrument, float $minRr, string $language): string

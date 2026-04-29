@@ -45,25 +45,30 @@ class GeminiVisionAnalystService
         $systemPrompt = $this->buildSystemPrompt($instrument, $minRr, $language);
         $parts = $this->buildParts($instrument, $screenshotsByTimeframe, $minRr, $language);
 
+        Log::info('TradingView Vision parts', [
+            'parts' => $parts,
+        ]);
+
         $url = "{$this->baseUrl}/models/{$this->model}:generateContent?key={$this->apiKey}";
 
-        $response = Http::timeout(120)
-            ->retry(2, 1000, throw: false)
-            ->post($url, [
-                'systemInstruction' => [
-                    'parts' => [['text' => $systemPrompt]],
+        $requestBody = [
+            'systemInstruction' => [
+                'parts' => [['text' => $systemPrompt]],
+            ],
+            'contents' => [
+                [
+                    'role' => 'user',
+                    'parts' => $parts,
                 ],
-                'contents' => [
-                    [
-                        'role' => 'user',
-                        'parts' => $parts,
-                    ],
-                ],
-                'generationConfig' => [
-                    'temperature' => 0.2,
-                    'maxOutputTokens' => 1024,
-                ],
-            ]);
+            ],
+            'generationConfig' => [
+                'temperature' => 0.2,
+                'maxOutputTokens' => 1024,
+                'responseMimeType' => 'application/json',
+            ],
+        ];
+
+        $response = $this->postWithRetry($url, $requestBody);
 
         if ($response->failed()) {
             Log::error('Gemini Vision API call failed', [
@@ -83,6 +88,39 @@ class GeminiVisionAnalystService
         $json = $this->extractJson($text);
 
         return AnalysisResult::fromAiJson($json, $payload);
+    }
+
+    /**
+     * Posts to Gemini with retry on transient errors (429, 5xx). Backoff: 3s, 6s, 9s.
+     */
+    private function postWithRetry(string $url, array $body): \Illuminate\Http\Client\Response
+    {
+        $maxAttempts = 4;
+        $transientStatuses = [429, 500, 502, 503, 504];
+        $response = null;
+
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+            $response = Http::timeout(120)->post($url, $body);
+
+            if ($response->successful()) {
+                return $response;
+            }
+
+            $isTransient = in_array($response->status(), $transientStatuses, true);
+            if (! $isTransient || $attempt === $maxAttempts) {
+                return $response;
+            }
+
+            $sleepSeconds = $attempt * 3;
+            Log::warning('Gemini Vision transient error, retrying', [
+                'attempt' => $attempt,
+                'status' => $response->status(),
+                'sleep_seconds' => $sleepSeconds,
+            ]);
+            sleep($sleepSeconds);
+        }
+
+        return $response;
     }
 
     private function buildSystemPrompt(string $instrument, float $minRr, string $language): string
@@ -138,8 +176,8 @@ PROMPT;
         foreach ($screenshotsByTimeframe as $timeframe => $base64Png) {
             $parts[] = ['text' => "=== {$timeframe} Chart ==="];
             $parts[] = [
-                'inline_data' => [
-                    'mime_type' => 'image/png',
+                'inlineData' => [
+                    'mimeType' => 'image/png',
                     'data' => $base64Png,
                 ],
             ];

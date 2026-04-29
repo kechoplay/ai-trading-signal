@@ -72,9 +72,10 @@ return [
         'timezone' => env('TV_TIMEZONE', 'Asia/Ho_Chi_Minh'),
         'width' => (int) env('TV_WIDTH', 1280),
         'height' => (int) env('TV_HEIGHT', 720),
-        'wait_ms' => (int) env('TV_WAIT_MS', 5000),
+        'wait_ms' => (int) env('TV_WAIT_MS', 8000),
         'node_binary' => env('TV_NODE_BINARY', ''),
         'npm_binary' => env('TV_NPM_BINARY', ''),
+        'save_screenshots' => env('TV_SAVE_SCREENSHOTS', false),
     ],
 
     /*
