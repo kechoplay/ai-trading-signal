@@ -36,8 +36,6 @@ return [
 
     'min_rr' => (float) env('TRADING_MIN_RR', 2.0),
 
-    'language' => env('TRADING_LANGUAGE', 'vi'),
-
     /*
     |--------------------------------------------------------------------------
     | Market Hours (skip analysis when market closed)

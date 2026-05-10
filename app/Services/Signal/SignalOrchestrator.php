@@ -38,7 +38,6 @@ class SignalOrchestrator
         $timeframes = (array) config('trading.timeframes');
         $candlesCount = (int) config('trading.candles_count');
         $minRr = (float) config('trading.min_rr');
-        $language = (string) config('trading.language');
 
         Log::info('Signal analysis started', [
             'instrument' => $instrument,
@@ -58,7 +57,6 @@ class SignalOrchestrator
             candlesByTimeframe: $candlesByTf,
             currentPrice: $currentPrice,
             minRr: $minRr,
-            language: $language,
         );
 
         $signal = $this->persistSignal($instrument, $currentPrice, $result, $candlesByTf);

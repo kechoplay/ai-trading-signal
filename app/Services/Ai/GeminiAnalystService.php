@@ -12,6 +12,8 @@ use RuntimeException;
 
 class GeminiAnalystService
 {
+    private const CANDLE_TABLE_ROWS = 50;
+
     public function __construct(
         private readonly string $apiKey,
         private readonly string $model,
@@ -42,10 +44,9 @@ class GeminiAnalystService
         array $candlesByTimeframe,
         float $currentPrice,
         float $minRr,
-        string $language = 'vi',
     ): AnalysisResult {
-        $systemPrompt = $this->buildSystemPrompt($instrument, $minRr, $language);
-        $userPrompt = $this->buildUserPrompt($instrument, $candlesByTimeframe, $currentPrice, $minRr, $language);
+        $systemPrompt = $this->buildSystemPrompt();
+        $userPrompt   = $this->buildUserPrompt($instrument, $candlesByTimeframe, $currentPrice, $minRr);
 
         $url = "{$this->baseUrl}/models/{$this->model}:generateContent?key={$this->apiKey}";
 
@@ -55,13 +56,13 @@ class GeminiAnalystService
             ],
             'contents' => [
                 [
-                    'role' => 'user',
+                    'role'  => 'user',
                     'parts' => [['text' => $userPrompt]],
                 ],
             ],
             'generationConfig' => [
-                'temperature' => 0.2,
-                'maxOutputTokens' => 2048,
+                'temperature'     => 0.2,
+                'maxOutputTokens' => 4096,
             ],
         ];
 
@@ -70,7 +71,7 @@ class GeminiAnalystService
         if ($response->failed()) {
             Log::error('Gemini API call failed', [
                 'status' => $response->status(),
-                'body' => $response->body(),
+                'body'   => $response->body(),
             ]);
 
             throw new RuntimeException(sprintf(
@@ -81,71 +82,113 @@ class GeminiAnalystService
         }
 
         $payload = $response->json();
-        $text = $this->extractText($payload);
-        $json = $this->extractJson($text);
+        $text    = $this->extractText($payload);
+        $json    = $this->extractJson($text);
+
+        // Store full analysis markdown in reasoning if not provided by JSON
+        if (empty($json['reasoning'])) {
+            $json['reasoning'] = mb_substr($text, 0, 1000);
+        }
 
         return AnalysisResult::fromAiJson($json, $payload);
     }
 
-    /**
-     * Posts to Gemini with retry on transient errors (429, 5xx). Backoff: 3s, 6s, 9s.
-     */
-    private function postWithRetry(string $url, array $body): \Illuminate\Http\Client\Response
+    private function buildSystemPrompt(): string
     {
-        $maxAttempts = 4;
-        $transientStatuses = [429, 500, 502, 503, 504];
-        $response = null;
+        return <<<'PROMPT'
+Bạn là một trader vàng chuyên nghiệp với hơn 15 năm kinh nghiệm phân tích kỹ thuật và giao dịch XAUUSD.
 
-        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
-            $response = Http::timeout(90)->post($url, $body);
+Khi nhận được dữ liệu giá vàng, hãy phân tích và đưa ra kế hoạch giao dịch hoàn chỉnh theo khung bắt buộc dưới đây.
 
-            if ($response->successful()) {
-                return $response;
-            }
+## KHUNG PHÂN TÍCH BẮT BUỘC
 
-            $isTransient = in_array($response->status(), $transientStatuses, true);
-            if (! $isTransient || $attempt === $maxAttempts) {
-                return $response;
-            }
+### 1. CẤU TRÚC THỊ TRƯỜNG
+- Xu hướng hiện tại: TĂNG / GIẢM / SIDEWAY
+- Xác định Swing High & Swing Low gần nhất
+- Chuỗi: HH–HL (tăng) hoặc LH–LL (giảm)
+- Nhận diện BOS (Break of Structure) hoặc CHoCH (Change of Character) nếu có
 
-            $sleepSeconds = $attempt * 3;
-            Log::warning('Gemini transient error, retrying', [
-                'attempt' => $attempt,
-                'status' => $response->status(),
-                'sleep_seconds' => $sleepSeconds,
-            ]);
-            sleep($sleepSeconds);
-        }
+### 2. CÁC MỨC GIÁ QUAN TRỌNG
+- Kháng cự gần / xa
+- Hỗ trợ gần / xa
+- Số tròn quan trọng trong vùng
+- FVG (Fair Value Gap) nếu nhận diện được
+- Order Block (OB) gần nhất
 
-        return $response;
-    }
+### 3. VÙNG CUNG & CẦU
+Liệt kê dạng bảng:
+| Loại | Vùng Giá | Độ Mạnh | Ghi chú |
+|------|----------|---------|---------|
 
-    private function buildSystemPrompt(string $instrument, float $minRr, string $language): string
-    {
-        $lang = $language === 'vi' ? 'Vietnamese' : 'English';
+### 4. XÁC NHẬN CHỈ BÁO
+| Chỉ báo | Giá trị | Tín hiệu |
+|---------|---------|---------|
+| EMA 200 | ... | Giá trên/dưới → Bull/Bear |
+| HMA 200 | ... | Giá trên/dưới → Bull/Bear |
+| BB(34)  | ... | Mở rộng/Co lại |
+| RSI(14) | ... | OB/OS/Bình thường/Phân kỳ |
+| Volume  | ... | Xác nhận/Mâu thuẫn |
 
-        return <<<PROMPT
-You are a senior professional scalping trader specialized in {$instrument} on OANDA.
-You analyze multi-timeframe price action (M5 and M15) to produce high-probability scalp setups.
+### 5. PHÂN TÍCH ĐA KHUNG (MTF)
+Tóm tắt ngắn gọn theo từng khung có dữ liệu.
 
-Your analysis principles:
-- Identify the higher timeframe (M15) trend/bias first, then look for entries on M5.
-- Use market structure (HH/HL vs LH/LL), swing points, support/resistance, liquidity.
-- Apply indicators that can be inferred from OHLCV: EMA 20/50, recent range, ATR (approx via high-low), RSI-style momentum.
-- Prefer trading with the M15 bias unless a clear M5 reversal setup exists at strong level.
-- Set SL beyond the most recent swing with a small buffer. Set TP respecting structure and minimum Risk:Reward of {$minRr}.
-- If market is ranging, choppy, or unclear, output action = "NO_TRADE".
-- NEVER invent data. Use only the candles provided.
+### 6. THIẾT LẬP LỆNH GIAO DỊCH
 
-CRITICAL OUTPUT RULES:
-- Respond with ONE valid minified JSON object and NOTHING else. No markdown, no code fences, no prose.
-- The `reasoning` field MUST be written in {$lang}, concise (max ~500 chars).
-- All prices MUST be numbers (not strings), formatted with the same precision as the input candles.
-- `confidence` is an integer from 0 to 100 reflecting setup quality.
-- `risk_reward` is computed as |TP - Entry| / |Entry - SL|.
+#### 🟢 BUY SETUP (nếu có):
+| Thông số | Chi tiết |
+|----------|---------|
+| Vùng vào lệnh | XXXX – XXXX |
+| Điều kiện kích hoạt | ... |
+| Stop Loss (SL) | XXXX — lý do |
+| TP1 | XXXX — RR X:1 |
+| TP2 | XXXX — RR X:1 |
+| TP3 | XXXX — RR X:1 |
+| Mức tin cậy | Cao / Trung bình / Thấp |
+| Điều kiện hủy | ... |
 
-Required JSON schema:
-{"action":"BUY"|"SELL"|"NO_TRADE","entry":number|null,"stop_loss":number|null,"take_profit":number|null,"risk_reward":number|null,"confidence":integer,"trend_bias":"BULLISH"|"BEARISH"|"NEUTRAL","reasoning":"string"}
+#### 🔴 SELL SETUP (nếu có):
+| Thông số | Chi tiết |
+|----------|---------|
+| Vùng vào lệnh | XXXX – XXXX |
+| Điều kiện kích hoạt | ... |
+| Stop Loss (SL) | XXXX — lý do |
+| TP1 | XXXX — RR X:1 |
+| TP2 | XXXX — RR X:1 |
+| TP3 | XXXX — RR X:1 |
+| Mức tin cậy | Cao / Trung bình / Thấp |
+| Điều kiện hủy | ... |
+
+### 7. QUẢN LÝ VỐN
+- Rủi ro/lệnh: 1–2% tài khoản
+- Chiến lược chốt lời: 50% tại TP1, dời SL về vốn, 50% còn lại đến TP2/TP3
+- Số lệnh tối đa cùng lúc: 1–2
+
+### 8. BỐI CẢNH VĨ MÔ
+- DXY, US10Y, tâm lý thị trường
+- Tin tức quan trọng sắp tới
+- Khuyến nghị: Vào lệnh bình thường / Thận trọng / Tránh giao dịch
+
+### 9. TÓM TẮT ĐỊNH HƯỚNG
+| | |
+|--|--|
+| Xu hướng tổng thể | TĂNG / GIẢM / TRUNG LẬP |
+| Cơ hội tốt nhất | BUY / SELL / KHÔNG GIAO DỊCH |
+| Khung thời gian entry | M5 / M15 / H1 |
+| Hành động ngay | Vào lệnh / Chờ retest / Bỏ qua |
+| Mức độ rủi ro thị trường | Thấp / Trung bình / Cao |
+
+### 10. CẢNH BÁO & GHI CHÚ CUỐI
+Tối đa 3–5 điểm rủi ro cần theo dõi, dạng bullet ngắn gọn.
+
+---
+
+## NGUYÊN TẮC BẮT BUỘC:
+✅ Chỉ đề xuất lệnh khi RR tối thiểu 1:2
+✅ Không đuổi giá — chỉ vào lệnh khi giá về vùng
+✅ Cấu trúc không rõ ràng → GHI RÕ "KHÔNG GIAO DỊCH"
+✅ Có tin tức trong 30 phút → CẢNH BÁO rõ ràng
+✅ Ưu tiên bảo vệ vốn trước lợi nhuận
+✅ Kết quả phải có số liệu cụ thể, KHÔNG mơ hồ
 PROMPT;
     }
 
@@ -157,62 +200,106 @@ PROMPT;
         array $candlesByTimeframe,
         float $currentPrice,
         float $minRr,
-        string $language,
     ): string {
-        $now = now()->toIso8601String();
+        $now = now()->setTimezone('Asia/Ho_Chi_Minh')->format('d/m/Y H:i');
 
-        $sections = [];
-        $sections[] = "Instrument: {$instrument}";
-        $sections[] = "Current mid price: {$currentPrice}";
-        $sections[] = "Current time (server tz): {$now}";
-        $sections[] = "Minimum risk:reward required: {$minRr}";
-        $sections[] = 'Candles are ordered oldest -> newest. Fields: t=time, o,h,l,c=open/high/low/close, v=volume, rsi=RSI(14).';
-        $sections[] = '';
+        $sections   = [];
+        $sections[] = "## DỮ LIỆU ĐẦU VÀO\n";
+        $sections[] = "**Công cụ:** {$instrument}";
+        $sections[] = "**Thời điểm:** {$now} (Asia/Ho_Chi_Minh)";
+        $sections[] = "**Giá hiện tại:** {$currentPrice}";
+        $sections[] = "**RR tối thiểu:** {$minRr}:1\n";
 
         foreach ($candlesByTimeframe as $tf => $candles) {
-            $sections[] = "=== {$tf} candles (count=" . count($candles) . ') ===';
-            $rsi = $this->calculateRsi($candles, 14);
-            $rows = array_map(
-                static function (Candle $c) use ($rsi): string {
-                    $data = $c->toArray();
-                    $data['rsi'] = $rsi[$c->time] ?? null;
-                    return json_encode($data, JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
-                },
-                $candles
-            );
-            $sections[] = implode("\n", $rows);
-            $sections[] = '';
+            $sections[] = $this->buildTimeframeSection($tf, $candles);
         }
 
-        $langNote = $language === 'vi'
-            ? 'Viết phần "reasoning" bằng tiếng Việt, ngắn gọn, súc tích.'
-            : 'Write the "reasoning" field in English, concise.';
+        $sections[] = <<<INSTRUCTION
 
-        $sections[] = $langNote;
-        $sections[] = 'Return ONLY the JSON object, no explanation before or after.';
+---
+
+Hãy phân tích đầy đủ theo khung 10 mục đã được chỉ định trong system prompt.
+
+Sau khi hoàn thành toàn bộ phân tích, kết thúc response bằng block JSON sau để hệ thống tự động xử lý:
+
+```json
+{
+  "action": "BUY" hoặc "SELL" hoặc "NO_TRADE",
+  "entry": số thực hoặc null,
+  "stop_loss": số thực hoặc null,
+  "take_profit": số thực (TP1) hoặc null,
+  "risk_reward": số thực hoặc null,
+  "confidence": số nguyên 0–100,
+  "trend_bias": "BULLISH" hoặc "BEARISH" hoặc "NEUTRAL",
+  "reasoning": "tóm tắt 1–2 câu lý do chính bằng tiếng Việt"
+}
+```
+INSTRUCTION;
 
         return implode("\n", $sections);
     }
 
-    private function extractText(array $payload): string
+    /**
+     * @param  array<int, Candle>  $candles
+     */
+    private function buildTimeframeSection(string $tf, array $candles): string
     {
-        $text = $payload['candidates'][0]['content']['parts'][0]['text'] ?? '';
+        $total   = count($candles);
+        $display = array_slice($candles, -self::CANDLE_TABLE_ROWS);
 
-        if ($text === '') {
-            throw new RuntimeException('Gemini returned empty text content.');
+        $rsi   = $this->calculateRsi($candles, 14);
+        $ema200 = $this->calculateEma($candles, 200);
+        $hma200 = $this->calculateHma($candles, 200);
+        $bb     = $this->calculateBB($candles, 34, 2.0);
+
+        $lastRsi  = $rsi   ? round(end($rsi),   2) : 'N/A';
+        $lastEma  = $ema200 ? round(end($ema200), 2) : 'N/A';
+        $lastHma  = $hma200 ? round(end($hma200), 2) : 'N/A';
+        $lastBbU  = $bb ? round($bb['upper'], 2) : 'N/A';
+        $lastBbM  = $bb ? round($bb['middle'], 2) : 'N/A';
+        $lastBbL  = $bb ? round($bb['lower'], 2) : 'N/A';
+
+        $lastCandle = end($candles);
+        $vol        = $lastCandle ? number_format($lastCandle->volume) : 'N/A';
+
+        $lines   = [];
+        $lines[] = "\n### [{$tf}] — {$total} nến";
+        $lines[] = '';
+        $lines[] = "**Chỉ báo kỹ thuật (nến cuối):**";
+        $lines[] = "| Chỉ báo | Giá trị |";
+        $lines[] = "|---------|---------|";
+        $lines[] = "| EMA 200 | {$lastEma} |";
+        $lines[] = "| HMA 200 | {$lastHma} |";
+        $lines[] = "| BB(34) Upper | {$lastBbU} |";
+        $lines[] = "| BB(34) Middle | {$lastBbM} |";
+        $lines[] = "| BB(34) Lower | {$lastBbL} |";
+        $lines[] = "| RSI(14) | {$lastRsi} |";
+        $lines[] = "| Volume nến cuối | {$vol} |";
+        $lines[] = '';
+        $lines[] = "**Dữ liệu nến (" . count($display) . " nến gần nhất):**";
+        $lines[] = "| Thời gian | Open | High | Low | Close | Volume | RSI(14) |";
+        $lines[] = "|-----------|------|------|-----|-------|--------|---------|";
+
+        foreach ($display as $c) {
+            $rsiVal = isset($rsi[$c->time]) ? round($rsi[$c->time], 2) : '-';
+            $lines[] = "| {$c->time} | {$c->open} | {$c->high} | {$c->low} | {$c->close} | {$c->volume} | {$rsiVal} |";
         }
 
-        return (string) $text;
+        Log::debug("RSI(14) [{$tf}]", $rsi);
+
+        return implode("\n", $lines);
     }
+
+    // ─── Indicator calculations ───────────────────────────────────────────────
 
     /**
      * @param  array<int, Candle>  $candles
-     * @return array<string, float>  Keys = candle time string, values = RSI value
+     * @return array<string, float>  keyed by candle time
      */
     private function calculateRsi(array $candles, int $period = 14): array
     {
         $result = [];
-        $n = count($candles);
+        $n      = count($candles);
 
         if ($n < $period + 1) {
             return $result;
@@ -239,19 +326,201 @@ PROMPT;
         return $result;
     }
 
+    /**
+     * @param  array<int, Candle>  $candles
+     * @return array<int, float>
+     */
+    private function calculateEma(array $candles, int $period): array
+    {
+        $n = count($candles);
+
+        if ($n < $period) {
+            return [];
+        }
+
+        $k      = 2.0 / ($period + 1);
+        $result = [];
+        $ema    = 0.0;
+
+        for ($i = 0; $i < $period; $i++) {
+            $ema += $candles[$i]->close;
+        }
+        $ema /= $period;
+
+        for ($i = $period; $i < $n; $i++) {
+            $ema      = $candles[$i]->close * $k + $ema * (1 - $k);
+            $result[] = $ema;
+        }
+
+        return $result;
+    }
+
+    /**
+     * Hull Moving Average: HMA(n) = WMA(2×WMA(n/2) − WMA(n), √n)
+     *
+     * @param  array<int, Candle>  $candles
+     * @return array<int, float>
+     */
+    private function calculateHma(array $candles, int $period): array
+    {
+        $n = count($candles);
+
+        if ($n < $period) {
+            return [];
+        }
+
+        $half  = (int) round($period / 2);
+        $sqrt  = (int) round(sqrt($period));
+
+        $wmaFull = $this->wma($candles, $period);
+        $wmaHalf = $this->wma($candles, $half);
+
+        $minLen = min(count($wmaFull), count($wmaHalf));
+        $diff   = [];
+
+        for ($i = 0; $i < $minLen; $i++) {
+            $iF = count($wmaFull) - $minLen + $i;
+            $iH = count($wmaHalf) - $minLen + $i;
+
+            $diff[] = (object) ['close' => 2 * $wmaHalf[$iH] - $wmaFull[$iF]];
+        }
+
+        return $this->wmaRaw($diff, $sqrt);
+    }
+
+    /**
+     * @param  array<int, Candle>  $candles
+     * @return array<int, float>
+     */
+    private function wma(array $candles, int $period): array
+    {
+        $n      = count($candles);
+        $result = [];
+
+        for ($i = $period - 1; $i < $n; $i++) {
+            $sum    = 0.0;
+            $weight = 0;
+
+            for ($j = 0; $j < $period; $j++) {
+                $w       = $j + 1;
+                $sum    += $candles[$i - ($period - 1 - $j)]->close * $w;
+                $weight += $w;
+            }
+
+            $result[] = $sum / $weight;
+        }
+
+        return $result;
+    }
+
+    /**
+     * @param  array<int, object{close: float}>  $items
+     * @return array<int, float>
+     */
+    private function wmaRaw(array $items, int $period): array
+    {
+        $n      = count($items);
+        $result = [];
+
+        for ($i = $period - 1; $i < $n; $i++) {
+            $sum    = 0.0;
+            $weight = 0;
+
+            for ($j = 0; $j < $period; $j++) {
+                $w       = $j + 1;
+                $sum    += $items[$i - ($period - 1 - $j)]->close * $w;
+                $weight += $w;
+            }
+
+            $result[] = $sum / $weight;
+        }
+
+        return $result;
+    }
+
+    /**
+     * @param  array<int, Candle>  $candles
+     * @return array{upper:float,middle:float,lower:float}|null
+     */
+    private function calculateBB(array $candles, int $period, float $mult): ?array
+    {
+        $n = count($candles);
+
+        if ($n < $period) {
+            return null;
+        }
+
+        $slice  = array_slice($candles, -$period);
+        $closes = array_map(fn (Candle $c) => $c->close, $slice);
+        $sma    = array_sum($closes) / $period;
+
+        $variance = array_sum(array_map(fn ($c) => ($c - $sma) ** 2, $closes)) / $period;
+        $std      = sqrt($variance);
+
+        return [
+            'upper'  => $sma + $mult * $std,
+            'middle' => $sma,
+            'lower'  => $sma - $mult * $std,
+        ];
+    }
+
+    // ─── HTTP / parsing ───────────────────────────────────────────────────────
+
+    private function postWithRetry(string $url, array $body): \Illuminate\Http\Client\Response
+    {
+        $maxAttempts       = 4;
+        $transientStatuses = [429, 500, 502, 503, 504];
+        $response          = null;
+
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+            $response = Http::timeout(120)->post($url, $body);
+
+            if ($response->successful()) {
+                return $response;
+            }
+
+            $isTransient = in_array($response->status(), $transientStatuses, true);
+
+            if (! $isTransient || $attempt === $maxAttempts) {
+                return $response;
+            }
+
+            $sleep = $attempt * 3;
+            Log::warning('Gemini transient error, retrying', [
+                'attempt' => $attempt,
+                'status'  => $response->status(),
+                'sleep'   => $sleep,
+            ]);
+            sleep($sleep);
+        }
+
+        return $response;
+    }
+
+    private function extractText(array $payload): string
+    {
+        $text = $payload['candidates'][0]['content']['parts'][0]['text'] ?? '';
+
+        if ($text === '') {
+            throw new RuntimeException('Gemini returned empty text content.');
+        }
+
+        return (string) $text;
+    }
+
     private function extractJson(string $text): array
     {
         $trimmed = trim($text);
 
-        if (preg_match('/```(?:json)?\s*(\{.*\})\s*```/s', $trimmed, $m) === 1) {
+        if (preg_match('/```(?:json)?\s*(\{.*?\})\s*```/s', $trimmed, $m) === 1) {
             $trimmed = $m[1];
         }
 
         $start = strpos($trimmed, '{');
-        $end = strrpos($trimmed, '}');
+        $end   = strrpos($trimmed, '}');
 
         if ($start === false || $end === false || $end <= $start) {
-            throw new RuntimeException('Gemini response is not valid JSON: ' . substr($text, 0, 200));
+            throw new RuntimeException('Gemini response contains no valid JSON: ' . substr($text, 0, 300));
         }
 
         $jsonStr = substr($trimmed, $start, $end - $start + 1);
