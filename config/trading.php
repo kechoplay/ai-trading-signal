@@ -8,27 +8,24 @@ return [
     |--------------------------------------------------------------------------
     | Market Data Provider
     |--------------------------------------------------------------------------
-    | Supported: "tradingview", "twelvedata", "oanda"
+    | Supported: "twelvedata", "oanda"
     |
-    | "tradingview" — captures screenshots via headless browser, sends to Claude Vision.
-    |                 No API key needed for market data. Requires Node.js + puppeteer.
-    | "twelvedata"  — fetches OHLCV candles via REST API (free 800 req/day).
-    | "oanda"       — fetches OHLCV candles via OANDA REST v3 (requires account).
+    | "twelvedata" — fetches OHLCV candles via REST API (free 800 req/day).
+    | "oanda"      — fetches OHLCV candles via OANDA REST v3 (requires account).
     */
 
-    'provider' => env('MARKET_PROVIDER', 'tradingview'),
+    'provider' => env('MARKET_PROVIDER', 'twelvedata'),
 
     /*
     |--------------------------------------------------------------------------
     | Trading Instrument
     |--------------------------------------------------------------------------
-    | Format depends on your chosen provider:
-    |   tradingview : "OANDA:XAUUSD"  (symbol shown on TradingView)
-    |   twelvedata  : "XAU/USD"
-    |   oanda       : "XAU_USD"
+    | Format depends on provider:
+    |   twelvedata : "XAU/USD"
+    |   oanda      : "XAU_USD"
     */
 
-    'instrument' => env('TRADING_INSTRUMENT', 'OANDA:XAUUSD'),
+    'instrument' => env('TRADING_INSTRUMENT', 'XAU/USD'),
 
     'timeframes' => array_filter(array_map(
         'trim',
@@ -43,39 +40,17 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Market Hours (for TradingView mode — skips analysis when market closed)
+    | Market Hours (skip analysis when market closed)
     |--------------------------------------------------------------------------
     | open / close: hour in 24h format, in the specified timezone.
     | Default: 06:00–22:00 Asia/Ho_Chi_Minh (covers London pre-open → NY close)
+    | Override with --force to bypass.
     */
 
     'market_hours' => [
-        'open' => (int) env('MARKET_HOURS_OPEN', 6),
-        'close' => (int) env('MARKET_HOURS_CLOSE', 22),
+        'open'     => (int) env('MARKET_HOURS_OPEN', 6),
+        'close'    => (int) env('MARKET_HOURS_CLOSE', 22),
         'timezone' => env('MARKET_HOURS_TIMEZONE', 'Asia/Ho_Chi_Minh'),
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | TradingView Screenshot Config
-    |--------------------------------------------------------------------------
-    | symbol   : TradingView symbol (e.g. "OANDA:XAUUSD", "CAPITALCOM:GOLD")
-    | theme    : "dark" | "light"
-    | width/height : screenshot resolution (recommend 1280×720 for token savings)
-    | wait_ms  : milliseconds to wait for chart to fully render (3000–6000)
-    | node_binary / npm_binary : leave empty to auto-detect from PATH
-    */
-
-    'tradingview' => [
-        'symbol' => env('TV_SYMBOL', 'OANDA:XAUUSD'),
-        'theme' => env('TV_THEME', 'dark'),
-        'timezone' => env('TV_TIMEZONE', 'Asia/Ho_Chi_Minh'),
-        'width' => (int) env('TV_WIDTH', 1280),
-        'height' => (int) env('TV_HEIGHT', 720),
-        'wait_ms' => (int) env('TV_WAIT_MS', 8000),
-        'node_binary' => env('TV_NODE_BINARY', ''),
-        'npm_binary' => env('TV_NPM_BINARY', ''),
-        'save_screenshots' => env('TV_SAVE_SCREENSHOTS', false),
     ],
 
     /*
@@ -107,11 +82,11 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Google Gemini (AI provider — miễn phí)
+    | Google Gemini
     |--------------------------------------------------------------------------
     | Đăng ký API key miễn phí tại: https://aistudio.google.com
     |
-    | gemini-2.0-flash (mặc định): miễn phí, hỗ trợ vision, 1500 req/ngày
+    | gemini-2.0-flash (mặc định): miễn phí, 1500 req/ngày
     | gemini-1.5-pro             : chất lượng cao hơn, 50 req/ngày (free)
     */
 
@@ -119,19 +94,6 @@ return [
         'api_key' => env('GEMINI_API_KEY', ''),
         'model' => env('GEMINI_MODEL', 'gemini-2.0-flash'),
         'base_url' => 'https://generativelanguage.googleapis.com/v1beta',
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | Anthropic Claude (không còn dùng — giữ lại để tham khảo)
-    |--------------------------------------------------------------------------
-    */
-
-    'anthropic' => [
-        'api_key' => env('ANTHROPIC_API_KEY'),
-        'model' => env('ANTHROPIC_MODEL', 'claude-haiku-4-5'),
-        'base_url' => 'https://api.anthropic.com/v1',
-        'version' => '2023-06-01',
     ],
 
     /*

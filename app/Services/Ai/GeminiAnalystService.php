@@ -166,13 +166,18 @@ PROMPT;
         $sections[] = "Current mid price: {$currentPrice}";
         $sections[] = "Current time (server tz): {$now}";
         $sections[] = "Minimum risk:reward required: {$minRr}";
-        $sections[] = 'Candles are ordered oldest -> newest. Fields: t=time, o,h,l,c=open/high/low/close, v=volume.';
+        $sections[] = 'Candles are ordered oldest -> newest. Fields: t=time, o,h,l,c=open/high/low/close, v=volume, rsi=RSI(14).';
         $sections[] = '';
 
         foreach ($candlesByTimeframe as $tf => $candles) {
             $sections[] = "=== {$tf} candles (count=" . count($candles) . ') ===';
+            $rsi = $this->calculateRsi($candles, 14);
             $rows = array_map(
-                static fn (Candle $c): string => json_encode($c->toArray(), JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION),
+                static function (Candle $c) use ($rsi): string {
+                    $data = $c->toArray();
+                    $data['rsi'] = $rsi[$c->time] ?? null;
+                    return json_encode($data, JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
+                },
                 $candles
             );
             $sections[] = implode("\n", $rows);
@@ -198,6 +203,40 @@ PROMPT;
         }
 
         return (string) $text;
+    }
+
+    /**
+     * @param  array<int, Candle>  $candles
+     * @return array<string, float>  Keys = candle time string, values = RSI value
+     */
+    private function calculateRsi(array $candles, int $period = 14): array
+    {
+        $result = [];
+        $n = count($candles);
+
+        if ($n < $period + 1) {
+            return $result;
+        }
+
+        $avgGain = 0.0;
+        $avgLoss = 0.0;
+
+        for ($i = 1; $i <= $period; $i++) {
+            $diff = $candles[$i]->close - $candles[$i - 1]->close;
+            $diff > 0 ? $avgGain += $diff : $avgLoss += abs($diff);
+        }
+        $avgGain /= $period;
+        $avgLoss /= $period;
+
+        for ($i = $period + 1; $i < $n; $i++) {
+            $diff    = $candles[$i]->close - $candles[$i - 1]->close;
+            $avgGain = ($avgGain * ($period - 1) + max(0.0, $diff)) / $period;
+            $avgLoss = ($avgLoss * ($period - 1) + max(0.0, -$diff)) / $period;
+            $rs      = $avgLoss == 0.0 ? 100.0 : $avgGain / $avgLoss;
+            $result[$candles[$i]->time] = round(100 - 100 / (1 + $rs), 2);
+        }
+
+        return $result;
     }
 
     private function extractJson(string $text): array

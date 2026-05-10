@@ -6,6 +6,7 @@ namespace App\Services\Market;
 
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
 
 /**
@@ -76,6 +77,14 @@ class TwelveDataProvider implements MarketDataProvider
 
         $payload = $response->json();
 
+        Log::debug('TwelveData time_series response', [
+            'instrument' => $instrument,
+            'timeframe'  => $timeframe,
+            'status'     => $payload['status'] ?? null,
+            'count'      => count($payload['values'] ?? []),
+            'payload'    => $payload,
+        ]);
+
         if (($payload['status'] ?? '') === 'error') {
             throw new RuntimeException('TwelveData API error: ' . ($payload['message'] ?? 'unknown'));
         }
@@ -115,6 +124,11 @@ class TwelveDataProvider implements MarketDataProvider
         }
 
         $payload = $response->json();
+
+        Log::debug('TwelveData price response', [
+            'instrument' => $instrument,
+            'payload'    => $payload,
+        ]);
 
         if (($payload['status'] ?? '') === 'error') {
             throw new RuntimeException('TwelveData price error: ' . ($payload['message'] ?? 'unknown'));
