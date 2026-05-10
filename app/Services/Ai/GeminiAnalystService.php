@@ -85,10 +85,9 @@ class GeminiAnalystService
         $text    = $this->extractText($payload);
         $json    = $this->extractJson($text);
 
-        // Store full analysis markdown in reasoning if not provided by JSON
-        if (empty($json['reasoning'])) {
-            $json['reasoning'] = mb_substr($text, 0, 1000);
-        }
+        // Store full markdown analysis (everything before the JSON block) as reasoning
+        $fullAnalysis = trim((string) preg_replace('/```json[\s\S]*?```/i', '', $text));
+        $json['reasoning'] = $fullAnalysis ?: ($json['reasoning'] ?? '');
 
         return AnalysisResult::fromAiJson($json, $payload);
     }
