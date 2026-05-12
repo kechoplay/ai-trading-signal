@@ -1,23 +1,30 @@
-/.phpunit.cache
+# Dependencies
 /node_modules
-/public/build
-/public/hot
-/public/storage
-/storage/*.key
-/storage/pail
-/vendor
+
+# Build output
+/dist
+
+# Environment
 .env
 .env.backup
 .env.production
-.phpactor.json
-.phpunit.result.cache
-Homestead.json
-Homestead.yaml
-npm-debug.log
-yarn-error.log
-/auth.json
-/.fleet
-/.idea
-/.nova
+
+# Logs
+/logs/*.log
+
+# Prisma
+/prisma/*.db
+/prisma/*.db-journal
+/prisma/*.db-shm
+/prisma/*.db-wal
+
+# IDE
 /.vscode
+/.idea
+/.fleet
+/.nova
 /.zed
+
+# OS
+.DS_Store
+Thumbs.db
