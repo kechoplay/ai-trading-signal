@@ -77,8 +77,8 @@ export class SignalOrchestrator {
 
   private async notify(signal: TradingSignal): Promise<void> {
     try {
-      const message = this.telegram.formatSignal(signal);
-      const messageId = await this.telegram.send(message);
+      const signalCard = this.telegram.formatSignal(signal);
+      const messageId = await this.telegram.send(signalCard);
 
       await prisma.tradingSignal.update({
         where: { id: signal.id },
@@ -88,7 +88,13 @@ export class SignalOrchestrator {
         },
       });
 
-      logger.info('Telegram message sent', { signal_id: signal.id, message_id: messageId });
+      logger.info('Telegram signal sent', { signal_id: signal.id, message_id: messageId });
+
+      if (messageId && signal.reasoning) {
+        const analysis = this.telegram.formatAnalysis(signal.reasoning);
+        await this.telegram.sendComment(analysis, messageId);
+        logger.info('Telegram analysis thread sent', { signal_id: signal.id, reply_to: messageId });
+      }
     } catch (err: any) {
       logger.error('Failed to send Telegram message', {
         signal_id: signal.id,

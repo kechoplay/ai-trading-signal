@@ -43,6 +43,7 @@ export const config = {
   telegram: {
     botToken: process.env.TELEGRAM_BOT_TOKEN ?? '',
     chatId: process.env.TELEGRAM_CHAT_ID ?? '',
+    discussionId: process.env.TELEGRAM_DISCUSSION_ID ?? '',
     baseUrl: 'https://api.telegram.org',
   },
 };

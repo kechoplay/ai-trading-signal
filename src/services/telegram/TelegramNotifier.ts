@@ -6,10 +6,14 @@ import { logger } from '../../logger';
 const MAX_LENGTH = 4000;
 
 export class TelegramNotifier {
+  private resolvedDiscussionId: string | null | undefined = undefined;
+  private resolvedChannelNumericId: string | null | undefined = undefined;
+
   constructor(
     private readonly botToken: string,
     private readonly chatId: string,
     private readonly baseUrl: string,
+    private readonly discussionId: string = '',
   ) {}
 
   static fromConfig(): TelegramNotifier {
@@ -20,6 +24,7 @@ export class TelegramNotifier {
       config.telegram.botToken,
       config.telegram.chatId,
       config.telegram.baseUrl,
+      config.telegram.discussionId,
     );
   }
 
@@ -34,6 +39,180 @@ export class TelegramNotifier {
     }
 
     return firstId;
+  }
+
+  /**
+   * Post analysis as a comment in the discussion thread of a channel post.
+   * Finds the forwarded message ID in the discussion group via getUpdates,
+   * then replies to it so the analysis appears under the channel post's Comments.
+   */
+  async sendComment(message: string, channelMessageId: string): Promise<void> {
+    const discussionId = await this.getDiscussionId();
+    if (!discussionId) {
+      logger.warn('No discussion group linked to channel, skipping analysis comment');
+      return;
+    }
+
+    const discussionMsgId = await this.findForwardedMessageId(channelMessageId, discussionId);
+    if (!discussionMsgId) {
+      logger.warn('Could not find forwarded channel post in discussion group', { channelMessageId });
+      return;
+    }
+
+    logger.info('Replying to discussion thread', { discussionMsgId, channelMessageId });
+
+    const parts = this.splitMessage(message);
+    for (const part of parts) {
+      await this.sendPart(part, discussionMsgId, discussionId);
+    }
+  }
+
+  /**
+   * Poll getUpdates to find the message_id of the auto-forwarded channel post
+   * inside the linked discussion group.
+   * Supports both old (forward_from_message_id) and new (forward_origin) Bot API formats.
+   * Falls back to forwardMessage if polling finds nothing after 8 attempts.
+   */
+  private async findForwardedMessageId(
+    channelMessageId: string,
+    discussionId: string,
+  ): Promise<string | null> {
+    const channelNumericId = await this.getChannelNumericId();
+    const since = Math.floor(Date.now() / 1000) - 60;
+    const maxAttempts = 8;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      await new Promise((r) => setTimeout(r, 1500));
+
+      try {
+        const url = `${this.baseUrl.replace(/\/$/, '')}/bot${this.botToken}/getUpdates`;
+        const { data } = await axios.get(url, {
+          params: { limit: 50, allowed_updates: JSON.stringify(['message', 'channel_post']) },
+          timeout: 10_000,
+        });
+
+        for (const update of (data.result ?? []) as any[]) {
+          const msg = update.message ?? update.channel_post;
+          if (!msg || msg.date < since) continue;
+          if (String(msg.chat?.id) !== discussionId) continue;
+
+          // Bot API ≥ 7.0: forward_origin object
+          const originMsgId = msg.forward_origin?.type === 'channel'
+            ? String(msg.forward_origin.message_id)
+            : undefined;
+          const originChatId = msg.forward_origin?.type === 'channel'
+            ? String(msg.forward_origin.chat?.id)
+            : undefined;
+
+          // Bot API < 7.0: flat fields
+          const legacyMsgId = msg.forward_from_message_id !== undefined
+            ? String(msg.forward_from_message_id)
+            : undefined;
+          const legacyChatId = msg.forward_from_chat?.id !== undefined
+            ? String(msg.forward_from_chat.id)
+            : undefined;
+
+          const fwdMsgId = originMsgId ?? legacyMsgId;
+          const fwdChatId = originChatId ?? legacyChatId;
+
+          const chatMatches = fwdChatId === channelNumericId
+            || fwdChatId === this.chatId
+            || channelNumericId === null;
+
+          if (fwdMsgId === channelMessageId && chatMatches) {
+            logger.info('Found forwarded message in discussion group', {
+              discussion_msg_id: msg.message_id,
+              attempt,
+            });
+            return String(msg.message_id);
+          }
+        }
+      } catch (err: any) {
+        logger.warn('getUpdates attempt failed', { attempt, error: err.message });
+      }
+    }
+
+    // Fallback: use forwardMessage to create an anchor in the discussion group
+    logger.warn('getUpdates exhausted, falling back to forwardMessage', { channelMessageId });
+    return this.forwardToDiscussion(channelMessageId, discussionId);
+  }
+
+  private async forwardToDiscussion(
+    channelMessageId: string,
+    discussionId: string,
+  ): Promise<string | null> {
+    try {
+      const url = `${this.baseUrl.replace(/\/$/, '')}/bot${this.botToken}/forwardMessage`;
+      const { data } = await axios.post(url, {
+        chat_id: discussionId,
+        from_chat_id: this.chatId,
+        message_id: parseInt(channelMessageId, 10),
+      }, { timeout: 10_000 });
+      const msgId = data?.result?.message_id;
+      if (msgId) {
+        logger.info('Forwarded channel post to discussion group as anchor', { msgId });
+        return String(msgId);
+      }
+    } catch (err: any) {
+      logger.error('forwardMessage fallback failed', { error: err.message });
+    }
+    return null;
+  }
+
+  private async getDiscussionId(): Promise<string | null> {
+    if (this.discussionId) return this.discussionId;
+    if (this.resolvedDiscussionId !== undefined) return this.resolvedDiscussionId;
+    await this.resolveChannelInfo();
+    return this.resolvedDiscussionId ?? null;
+  }
+
+  private async getChannelNumericId(): Promise<string | null> {
+    if (this.resolvedChannelNumericId !== undefined) return this.resolvedChannelNumericId ?? null;
+    await this.resolveChannelInfo();
+    return this.resolvedChannelNumericId ?? null;
+  }
+
+  private async resolveChannelInfo(): Promise<void> {
+    try {
+      const url = `${this.baseUrl.replace(/\/$/, '')}/bot${this.botToken}/getChat`;
+      const { data } = await axios.get(url, {
+        params: { chat_id: this.chatId },
+        timeout: 10_000,
+      });
+      const linkedId: number | undefined = data?.result?.linked_chat_id;
+      const channelId: number | undefined = data?.result?.id;
+      this.resolvedDiscussionId = linkedId ? String(linkedId) : null;
+      this.resolvedChannelNumericId = channelId ? String(channelId) : null;
+      if (this.resolvedDiscussionId) {
+        logger.info('Channel info resolved', {
+          discussion_id: this.resolvedDiscussionId,
+          channel_numeric_id: this.resolvedChannelNumericId,
+        });
+      }
+    } catch (err: any) {
+      logger.warn('resolveChannelInfo failed', { error: err.message });
+      this.resolvedDiscussionId = null;
+      this.resolvedChannelNumericId = null;
+    }
+  }
+
+  formatAnalysis(reasoning: string): string {
+    // Escape HTML first, then convert markdown patterns to Telegram HTML
+    let text = reasoning
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
+    // ## / ### headers → bold with blank line before
+    text = text.replace(/^#{1,3}\s+(.+)$/gm, '\n<b>$1</b>');
+
+    // **bold** → <b>bold</b>
+    text = text.replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
+
+    // *italic* (single) → <i>italic</i>
+    text = text.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<i>$1</i>');
+
+    return `📋 <b>Phân tích chi tiết</b>\n─────────────────────────\n\n${text.trim()}`;
   }
 
   formatSignal(signal: TradingSignal): string {
@@ -78,12 +257,6 @@ export class TelegramNotifier {
       lines.push(`🔎 <b>Độ tin cậy:</b> ${signal.confidence}/100`);
     }
 
-    if (signal.reasoning) {
-      lines.push('');
-      lines.push('─────────────────────────');
-      lines.push(htmlEscape(signal.reasoning));
-    }
-
     lines.push('');
     lines.push('<i>⚠️ Tín hiệu tham khảo từ AI, không phải lời khuyên đầu tư.</i>');
 
@@ -92,20 +265,22 @@ export class TelegramNotifier {
 
   // ─── private ──────────────────────────────────────────────────────────────
 
-  private async sendPart(text: string): Promise<string | null> {
+  private async sendPart(text: string, replyToMessageId?: string, chatId?: string): Promise<string | null> {
     const url = `${this.baseUrl.replace(/\/$/, '')}/bot${this.botToken}/sendMessage`;
 
+    const body: Record<string, unknown> = {
+      chat_id: chatId ?? this.chatId,
+      text,
+      parse_mode: 'HTML',
+      disable_web_page_preview: true,
+    };
+
+    if (replyToMessageId) {
+      body.reply_to_message_id = parseInt(replyToMessageId, 10);
+    }
+
     try {
-      const { data } = await axios.post(
-        url,
-        {
-          chat_id: this.chatId,
-          text,
-          parse_mode: 'HTML',
-          disable_web_page_preview: true,
-        },
-        { timeout: 20_000 },
-      );
+      const { data } = await axios.post(url, body, { timeout: 20_000 });
       const messageId = data?.result?.message_id;
       return messageId !== undefined ? String(messageId) : null;
     } catch (err: any) {
