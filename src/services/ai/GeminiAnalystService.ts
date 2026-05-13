@@ -100,7 +100,7 @@ Vị trí giá   : Trên/Dưới EMA 20/50/200
 BOS / CHoCH  : Có [mô tả] / Không
 Nhận xét     : [1-2 câu về xác nhận hướng entry]
 
-#### M15 - TÍN HIỆU ENTRY CHÍNH XÁC
+#### M15 - TINH CHỈNH VÙNG VÀO
 Xu hướng     : TĂNG / GIẢM / SIDEWAY
 Cấu trúc     : HH-HL / LH-LL / Không rõ
 Swing High   : XXXX  |  Swing Low: XXXX
@@ -108,7 +108,17 @@ Vị trí giá   : Trên/Dưới EMA 20/50/200
 BOS / CHoCH  : Có [mô tả] / Không
 FVG          : Có [XXXX-XXXX] / Không
 Order Block  : BUY OB [XXXX-XXXX] / SELL OB [XXXX-XXXX]
-Nhận xét     : [1-2 câu về tín hiệu vào lệnh]
+Nhận xét     : [1-2 câu về xác nhận hướng entry]
+
+#### M5 - TÍN HIỆU ENTRY CHÍNH XÁC
+Xu hướng     : TĂNG / GIẢM / SIDEWAY
+Cấu trúc     : HH-HL / LH-LL / Không rõ
+Swing High   : XXXX  |  Swing Low: XXXX
+Vị trí giá   : Trên/Dưới EMA 20/50/200
+BOS / CHoCH  : Có [mô tả] / Không
+FVG          : Có [XXXX-XXXX] / Không
+Order Block  : BUY OB [XXXX-XXXX] / SELL OB [XXXX-XXXX]
+Nhận xét     : [1-2 câu về tín hiệu vào lệnh chính xác nhất]
 
 ---
 
@@ -147,20 +157,20 @@ Ghi chú: Vùng xác nhận bởi nhiều khung = độ mạnh cao hơn
 
 Bảng tổng hợp đa khung:
 
-| Chỉ báo  | M15  | H1   | H4   | D1   | Tổng hợp    |
-|----------|------|------|------|------|-------------|
-| EMA 20   | B/Be | B/Be | B/Be | B/Be | Bull/Bear   |
-| EMA 50   | B/Be | B/Be | B/Be | B/Be | Bull/Bear   |
-| EMA 200  | B/Be | B/Be | B/Be | B/Be | Bull/Bear   |
-| RSI (14) | XX   | XX   | XX   | XX   | OB/OS/OK/PK |
-| MACD     | C/X  | C/X  | C/X  | C/X  | Bull/Bear   |
-| Volume   | C/T  | C/T  | C/T  | C/T  | XN/MT       |
+| Chỉ báo  | M5   | M15  | H1   | H4   | D1   | Tổng hợp    |
+|----------|------|------|------|------|------|-------------|
+| EMA 20   | B/Be | B/Be | B/Be | B/Be | B/Be | Bull/Bear   |
+| EMA 50   | B/Be | B/Be | B/Be | B/Be | B/Be | Bull/Bear   |
+| EMA 200  | B/Be | B/Be | B/Be | B/Be | B/Be | Bull/Bear   |
+| RSI (14) | XX   | XX   | XX   | XX   | XX   | OB/OS/OK/PK |
+| MACD     | C/X  | C/X  | C/X  | C/X  | C/X  | Bull/Bear   |
+| Volume   | C/T  | C/T  | C/T  | C/T  | C/T  | XN/MT       |
 
 (B=Bullish, Be=Bearish, OB=Quá mua, OS=Quá bán,
 PK=Phân kỳ, C=Cao/Cắt lên, X=Xuống, T=Thấp,
 XN=Xác nhận, MT=Mâu thuẫn)
 
-Chi tiết tại M15 (khung entry):
+Chi tiết tại M5 (khung entry chính xác):
 
 EMA 20   : XXXX — Giá trên/dưới → [nhận xét]
 EMA 50   : XXXX — Giá trên/dưới → [nhận xét]
@@ -192,11 +202,12 @@ Volume:
 | H4    | Tăng/Giảm/SW | Bull/Bear/Neu | XXXX-XXXX       | Có/Không   |
 | H1    | Tăng/Giảm/SW | Bull/Bear/Neu | XXXX-XXXX       | Có/Không   |
 | M15   | Tăng/Giảm/SW | Bull/Bear/Neu | XXXX-XXXX       | Có/Không   |
+| M5    | Tăng/Giảm/SW | Bull/Bear/Neu | XXXX-XXXX       | Có/Không   |
 
-Mức độ đồng thuận : [X/5 khung cùng hướng]
-- 4-5/5 khung → Tín hiệu MẠNH  — có thể vào lệnh
-- 2-3/5 khung → Tín hiệu TB    — thận trọng, chờ thêm
-- 0-1/5 khung → Tín hiệu YẾU   — KHÔNG giao dịch
+Mức độ đồng thuận : [X/6 khung cùng hướng]
+- 5-6/6 khung → Tín hiệu MẠNH  — có thể vào lệnh
+- 3-4/6 khung → Tín hiệu TB    — thận trọng, chờ thêm
+- 0-2/6 khung → Tín hiệu YẾU   — KHÔNG giao dịch
 
 ---
 
@@ -207,14 +218,14 @@ Mức độ đồng thuận : [X/5 khung cùng hướng]
 | Thông số             | Chi tiết                          |
 |----------------------|-----------------------------------|
 | Vùng Vào Lệnh        | XXXX - XXXX                       |
-| Khung xác nhận       | H1 tinh chỉnh + M15 tín hiệu     |
+| Khung xác nhận       | M15 tinh chỉnh + M5 tín hiệu     |
 | Điều Kiện Kích Hoạt  | [nến đảo chiều + RSI + Volume]    |
 | Cắt Lỗ (SL)         | XXXX — dưới [vùng/cấu trúc nào]  |
 | Chốt Lời 1 (TP1)    | XXXX — RR X:1 — [kháng cự nào]   |
 | Chốt Lời 2 (TP2)    | XXXX — RR X:1 — [kháng cự nào]   |
 | Chốt Lời 3 (TP3)    | XXXX — RR X:1 — [kháng cự nào]   |
 | Mức Độ Tin Cậy       | Cao / Trung bình / Thấp           |
-| MTF đồng thuận       | X/5 khung                         |
+| MTF đồng thuận       | X/6 khung                         |
 | Điều Kiện Huỷ Setup  | [mô tả cụ thể]                    |
 
 #### LỆNH BÁN - SELL (nếu có cơ hội):
@@ -222,14 +233,14 @@ Mức độ đồng thuận : [X/5 khung cùng hướng]
 | Thông số             | Chi tiết                          |
 |----------------------|-----------------------------------|
 | Vùng Vào Lệnh        | XXXX - XXXX                       |
-| Khung xác nhận       | H1 tinh chỉnh + M15 tín hiệu     |
+| Khung xác nhận       | M15 tinh chỉnh + M5 tín hiệu     |
 | Điều Kiện Kích Hoạt  | [nến đảo chiều + RSI + Volume]    |
 | Cắt Lỗ (SL)         | XXXX — trên [vùng/cấu trúc nào]  |
 | Chốt Lời 1 (TP1)    | XXXX — RR X:1 — [hỗ trợ nào]     |
 | Chốt Lời 2 (TP2)    | XXXX — RR X:1 — [hỗ trợ nào]     |
 | Chốt Lời 3 (TP3)    | XXXX — RR X:1 — [hỗ trợ nào]     |
 | Mức Độ Tin Cậy       | Cao / Trung bình / Thấp           |
-| MTF đồng thuận       | X/5 khung                         |
+| MTF đồng thuận       | X/6 khung                         |
 | Điều Kiện Huỷ Setup  | [mô tả cụ thể]                    |
 
 ---
@@ -238,12 +249,12 @@ Mức độ đồng thuận : [X/5 khung cùng hướng]
 
 Xu hướng tổng thể (W1+D1)    : TĂNG / GIẢM / SIDEWAY
 Xu hướng trung gian (H4+H1)  : TĂNG / GIẢM / SIDEWAY
-Xu hướng ngắn hạn (M15)      : TĂNG / GIẢM / SIDEWAY
+Xu hướng ngắn hạn (M15+M5)   : TĂNG / GIẢM / SIDEWAY
 Bias giao dịch tốt nhất      : BUY / SELL / TRUNG LẬP
 Cơ hội tốt nhất              : MUA / BÁN / KHÔNG GIAO DỊCH
-Khung thời gian tốt nhất     : W1 → D1 → H4 → H1 → M15
+Khung thời gian tốt nhất     : W1 → D1 → H4 → H1 → M15 → M5
 Vùng entry lý tưởng          : XXXX - XXXX
-Mức đồng thuận MTF           : X/5 khung
+Mức đồng thuận MTF           : X/6 khung
 Mức độ kiên nhẫn             : Vào ngay / Chờ retest / Tránh giao dịch hôm nay
 Rủi ro lớn nhất              : [mô tả ngắn]
 
@@ -327,14 +338,14 @@ Xung đột với lệnh cũ             : Có [giải thích] / Không
 |----------------------|-----------------------------------|
 | ID mới               | #[Phiên][Số] - ví dụ: #B1         |
 | Vùng Vào Lệnh        | XXXX - XXXX                       |
-| Khung xác nhận       | H1 tinh chỉnh + M15 tín hiệu     |
+| Khung xác nhận       | M15 tinh chỉnh + M5 tín hiệu     |
 | Điều Kiện Kích Hoạt  | [nến + chỉ báo cụ thể]            |
 | Cắt Lỗ (SL)         | XXXX — dưới [vùng/cấu trúc nào]  |
 | Chốt Lời 1 (TP1)    | XXXX — RR X:1 — [kháng cự nào]   |
 | Chốt Lời 2 (TP2)    | XXXX — RR X:1 — [kháng cự nào]   |
 | Chốt Lời 3 (TP3)    | XXXX — RR X:1 — [kháng cự nào]   |
 | Mức Độ Tin Cậy       | Cao / Trung bình / Thấp           |
-| MTF đồng thuận       | X/5 khung                         |
+| MTF đồng thuận       | X/6 khung                         |
 | Quan hệ lệnh cũ      | Bổ trợ / Độc lập / Thay thế #XX  |
 | Điều Kiện Huỷ Setup  | [mô tả cụ thể]                    |
 
@@ -344,14 +355,14 @@ Xung đột với lệnh cũ             : Có [giải thích] / Không
 |----------------------|-----------------------------------|
 | ID mới               | #[Phiên][Số] - ví dụ: #B2         |
 | Vùng Vào Lệnh        | XXXX - XXXX                       |
-| Khung xác nhận       | H1 tinh chỉnh + M15 tín hiệu     |
+| Khung xác nhận       | M15 tinh chỉnh + M5 tín hiệu     |
 | Điều Kiện Kích Hoạt  | [nến + chỉ báo cụ thể]            |
 | Cắt Lỗ (SL)         | XXXX — trên [vùng/cấu trúc nào]  |
 | Chốt Lời 1 (TP1)    | XXXX — RR X:1 — [hỗ trợ nào]     |
 | Chốt Lời 2 (TP2)    | XXXX — RR X:1 — [hỗ trợ nào]     |
 | Chốt Lời 3 (TP3)    | XXXX — RR X:1 — [hỗ trợ nào]     |
 | Mức Độ Tin Cậy       | Cao / Trung bình / Thấp           |
-| MTF đồng thuận       | X/5 khung                         |
+| MTF đồng thuận       | X/6 khung                         |
 | Quan hệ lệnh cũ      | Bổ trợ / Độc lập / Thay thế #XX  |
 | Điều Kiện Huỷ Setup  | [mô tả cụ thể]                    |
 
@@ -407,7 +418,7 @@ Chiến lược chốt lời chuẩn:
 ## TÓM TẮT HÀNH ĐỘNG (30 giây đọc xong)
 ## ═══════════════════════════════════
 
-BIAS TỔNG THỂ: [BUY / SELL / NEUTRAL] - [X/5 khung]
+BIAS TỔNG THỂ: [BUY / SELL / NEUTRAL] - [X/6 khung]
 
 VIỆC LÀM NGAY VỚI LỆNH CŨ:
 1. [#XX]: [Hành động] - [lý do 1 câu]
@@ -431,7 +442,7 @@ RỦI RO CẦN CHÚ Ý:
 NGUYÊN TẮC BẮT BUỘC:
 - PHÂN TÍCH MTF TRƯỚC - quyết định lệnh SAU
 - Bias W1+D1 là nền tảng - không giao dịch ngược W1
-- Tối thiểu 4/5 khung đồng thuận mới được vào lệnh
+- Tối thiểu 4/6 khung đồng thuận mới được vào lệnh
 - RR tối thiểu 1:2 - TP phải khớp mức kháng cự/hỗ trợ MTF
 - Tối đa 2 lệnh hoạt động cùng lúc
 - Sau TP1 bắt buộc dời SL về hòa vốn
