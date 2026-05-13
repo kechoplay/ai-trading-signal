@@ -197,40 +197,49 @@ export class TelegramNotifier {
   }
 
   formatAnalysis(reasoning: string): string {
-    // Escape HTML first, then convert markdown patterns to Telegram HTML
     let text = reasoning
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;');
 
-    // ## / ### headers → bold with blank line before
-    text = text.replace(/^#{1,3}\s+(.+)$/gm, '\n<b>$1</b>');
+    // Convert markdown tables before other transforms (pipes are unaffected by HTML escaping)
+    text = convertMarkdownTables(text);
+
+    // ## / ### headers → bold with arrow prefix
+    text = text.replace(/^#{1,3}\s+(.+)$/gm, '\n<b>▸ $1</b>');
 
     // **bold** → <b>bold</b>
     text = text.replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
 
-    // *italic* (single) → <i>italic</i>
+    // *italic* → <i>italic</i>
     text = text.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<i>$1</i>');
 
-    return `📋 <b>Phân tích chi tiết</b>\n─────────────────────────\n\n${text.trim()}`;
+    // - / * bullet points → •
+    text = text.replace(/^[ \t]*[-*]\s+(.+)$/gm, '  • $1');
+
+    return `📋 <b>PHÂN TÍCH CHI TIẾT</b>\n━━━━━━━━━━━━━━━━━━━━━\n\n${text.trim()}`;
   }
 
   formatSignal(signal: TradingSignal): string {
     const instrument = htmlEscape(signal.instrument);
-    const time = formatDate(signal.created_at) + ' (VN)';
+    const time = formatDate(signal.created_at);
 
-    const actionEmoji =
-      signal.action === 'BUY' ? '🟢 BUY' :
-      signal.action === 'SELL' ? '🔴 SELL' :
-      '⚪ NO TRADE';
+    const actionLine =
+      signal.action === 'BUY' ? '🟢 <b>MUA (BUY)</b>' :
+      signal.action === 'SELL' ? '🔴 <b>BÁN (SELL)</b>' :
+      '⚪ <b>KHÔNG VÀO LỆNH</b>';
+
+    const SEP = '━━━━━━━━━━━━━━━━━━━━━';
 
     const lines: string[] = [
-      `📊 <b>${instrument} — ${actionEmoji}</b>`,
-      `🕐 <b>Thời gian:</b> ${time}`,
+      SEP,
+      `📊 <b>${instrument}</b>  ${actionLine}`,
+      SEP,
+      `🕐 ${time} <i>(Giờ VN)</i>`,
     ];
 
     if (signal.current_price != null) {
-      lines.push(`💵 <b>Giá hiện tại:</b> ${formatPrice(toNum(signal.current_price), 3)}`);
+      lines.push(`💵 <b>Giá hiện tại:</b>  ${formatPrice(toNum(signal.current_price), 3)}`);
     }
 
     if (signal.trend_bias != null) {
@@ -238,26 +247,34 @@ export class TelegramNotifier {
         signal.trend_bias.toUpperCase() === 'BULLISH' ? '📈 Tăng' :
         signal.trend_bias.toUpperCase() === 'BEARISH' ? '📉 Giảm' :
         '➖ Trung tính';
-      lines.push(`📐 <b>Xu hướng:</b> ${biasLabel}`);
+      lines.push(`📐 <b>Xu hướng:</b>      ${biasLabel}`);
     }
 
     if (signal.action === 'BUY' || signal.action === 'SELL') {
       lines.push('');
+      lines.push('<b>─ Thông số lệnh ──────────────</b>');
       if (signal.entry != null)
-        lines.push(`🎯 <b>Entry:</b> ${formatPrice(toNum(signal.entry), 3)}`);
+        lines.push(`🎯 Entry:       <code>${formatPrice(toNum(signal.entry), 3)}</code>`);
       if (signal.stop_loss != null)
-        lines.push(`🛡 <b>Stop Loss:</b> ${formatPrice(toNum(signal.stop_loss), 3)}`);
+        lines.push(`🛡 Stop Loss:   <code>${formatPrice(toNum(signal.stop_loss), 3)}</code>`);
       if (signal.take_profit != null)
-        lines.push(`💰 <b>Take Profit:</b> ${formatPrice(toNum(signal.take_profit), 3)}`);
+        lines.push(`💰 Take Profit: <code>${formatPrice(toNum(signal.take_profit), 3)}</code>`);
       if (signal.risk_reward != null)
-        lines.push(`⚖️ <b>R:R</b> = 1:${formatPrice(toNum(signal.risk_reward), 2)}`);
+        lines.push(`⚖️ R:R:         <code>1 : ${formatPrice(toNum(signal.risk_reward), 2)}</code>`);
     }
 
     if (signal.confidence != null) {
-      lines.push(`🔎 <b>Độ tin cậy:</b> ${signal.confidence}/100`);
+      const conf = signal.confidence;
+      const filled = Math.round(conf / 10);
+      const bar = '█'.repeat(filled) + '░'.repeat(10 - filled);
+      lines.push('');
+      lines.push('<b>─ Đánh giá AI ─────────────────</b>');
+      lines.push(`🔎 Độ tin cậy: <b>${conf}/100</b>`);
+      lines.push(`<code>${bar}</code>`);
     }
 
     lines.push('');
+    lines.push(SEP);
     lines.push('<i>⚠️ Tín hiệu tham khảo từ AI, không phải lời khuyên đầu tư.</i>');
 
     return lines.join('\n');
@@ -322,6 +339,91 @@ export class TelegramNotifier {
     if (current !== '') parts.push(current);
     return parts;
   }
+}
+
+function convertMarkdownTables(text: string): string {
+  const lines = text.split('\n');
+  const result: string[] = [];
+  let tableLines: string[] = [];
+
+  const flushTable = () => {
+    if (tableLines.length === 0) return;
+    result.push(renderTable(tableLines));
+    tableLines = [];
+  };
+
+  for (const line of lines) {
+    if (/^\|.+\|$/.test(line.trim())) {
+      tableLines.push(line);
+    } else {
+      flushTable();
+      result.push(line);
+    }
+  }
+  flushTable();
+
+  return result.join('\n');
+}
+
+function renderTable(lines: string[]): string {
+  const dataLines = lines.filter(l => !/^\|[-:\s|]+\|$/.test(l.trim()));
+  if (dataLines.length < 2) return lines.join('\n');
+
+  const rows = dataLines.map(line =>
+    line.split('|').slice(1, -1).map(cell => cell.trim())
+  );
+  const [header, ...dataRows] = rows;
+  if (!header || dataRows.length === 0) return lines.join('\n');
+
+  const isPriceLevels =
+    (header[0]?.toLowerCase() ?? '').includes('loại') &&
+    (header[1]?.toLowerCase() ?? '').includes('giá');
+
+  return isPriceLevels
+    ? formatPriceLevelsTable(dataRows)
+    : formatGenericTable(header, dataRows);
+}
+
+function formatPriceLevelsTable(rows: string[][]): string {
+  const rendered = rows.map(cols => {
+    const type  = cols[0] ?? '';
+    const price = cols[1] ?? '';
+    const frame = cols[2] ?? '';
+    const note  = cols[3] ?? '';
+    if (!type || !price) return '';
+
+    const emoji    = priceLevelEmoji(type);
+    const frameStr = frame && frame !== '-' ? ` <i>(${frame})</i>` : '';
+    const noteStr  = note ? ` — <i>${note}</i>` : '';
+    return `${emoji} <b>${type}:</b> <code>${price}</code>${frameStr}${noteStr}`;
+  }).filter(Boolean);
+
+  return rendered.join('\n');
+}
+
+function priceLevelEmoji(type: string): string {
+  const t = type.toLowerCase();
+  if (t.includes('kháng cự') && t.includes('mạnh')) return '🔴';
+  if (t.includes('kháng cự'))                        return '🟠';
+  if (t.includes('giá hiện tại'))                    return '💵';
+  if (t.includes('hỗ trợ') && t.includes('mạnh'))   return '🟢';
+  if (t.includes('hỗ trợ'))                          return '🟡';
+  if (/pwh|pwl|pdh|pdl/.test(t))                    return '📅';
+  if (t.includes('số tròn'))                         return '🔢';
+  if (t.includes('fvg'))                             return '📐';
+  if (t.includes('buy'))                             return '🟢';
+  if (t.includes('sell'))                            return '🔴';
+  return '◦';
+}
+
+function formatGenericTable(header: string[], rows: string[][]): string {
+  const headerLine = header.filter(Boolean).length > 0
+    ? `<b>${header.filter(Boolean).join(' │ ')}</b>\n`
+    : '';
+  const dataLines = rows
+    .map(cols => '  • ' + cols.filter(Boolean).join(' │ '))
+    .join('\n');
+  return headerLine + dataLines;
 }
 
 function htmlEscape(str: string): string {

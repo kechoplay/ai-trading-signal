@@ -385,35 +385,6 @@ KHÔNG MỞ LỆNH MỚI
 
 ---
 
-### 3D. QUẢN LÝ VỐN TỔNG THỂ
-
-| Thông số               | Giá trị              |
-|------------------------|----------------------|
-| Lệnh đang hoạt động    | X / tối đa 2         |
-| Rủi ro lệnh #XX        | X% tài khoản         |
-| Rủi ro lệnh #XX        | X% tài khoản         |
-| Rủi ro lệnh mới        | X% tài khoản         |
-| Tổng rủi ro            | X% / tối đa 4%       |
-| Trạng thái vốn         | An toàn / Cần giảm   |
-
-Chiến lược chốt lời chuẩn:
-- TP1: Chốt 50% | Dời SL về hòa vốn
-- TP2: Chốt 30% | Dời SL về TP1
-- TP3: Để 20% chạy với trailing SL theo cấu trúc
-
----
-
-### 3E. BỐI CẢNH THỊ TRƯỜNG
-
-- DXY    : [tăng/giảm/sideway → tác động vàng]
-- US10Y  : [tăng/giảm → tác động vàng]
-- Tâm lý : Ưa rủi ro (Risk-on) / Tránh rủi ro (Risk-off)
-- Tin tức sắp tới:
-  [Tên sự kiện | Thời gian | Mức độ: High/Med/Low]
-- Khuyến nghị: Bình thường / Thận trọng / Tránh lệnh mới
-
----
-
 ## ═══════════════════════════════════
 ## TÓM TẮT HÀNH ĐỘNG (30 giây đọc xong)
 ## ═══════════════════════════════════
