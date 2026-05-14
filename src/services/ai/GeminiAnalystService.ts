@@ -66,32 +66,6 @@ BƯỚC 3 → Đối chiếu & ra quyết định tổng thể
 
 ### 1A. CẤU TRÚC THỊ TRƯỜNG
 
-#### W1 - XU HƯỚNG VĨ MÔ
-Xu hướng     : TĂNG / GIẢM / SIDEWAY
-Cấu trúc     : HH-HL / LH-LL / Không rõ
-Swing High   : XXXX  |  Swing Low: XXXX
-Vị trí giá   : Trên/Dưới EMA 200 → Bullish/Bearish
-PWH / PWL    : XXXX / XXXX
-BOS / CHoCH  : Có [mô tả] / Không
-Nhận xét     : [1-2 câu về bức tranh toàn cảnh]
-
-#### D1 - CẤU TRÚC VĨ MÔ
-Xu hướng     : TĂNG / GIẢM / SIDEWAY
-Cấu trúc     : HH-HL / LH-LL / Không rõ
-Swing High   : XXXX  |  Swing Low: XXXX
-PDH / PDL    : XXXX / XXXX
-Vị trí giá   : Trên/Dưới EMA 200 → Bullish/Bearish
-BOS / CHoCH  : Có [mô tả] / Không
-Nhận xét     : [1-2 câu về định hướng trong ngày]
-
-#### H4 - XU HƯỚNG TRUNG GIAN
-Xu hướng     : TĂNG / GIẢM / SIDEWAY
-Cấu trúc     : HH-HL / LH-LL / Không rõ
-Swing High   : XXXX  |  Swing Low: XXXX
-Vị trí giá   : Trên/Dưới EMA 20/50/200
-BOS / CHoCH  : Có [mô tả] / Không
-Nhận xét     : [1-2 câu về xác nhận vùng entry]
-
 #### H1 - TINH CHỈNH VÙNG VÀO
 Xu hướng     : TĂNG / GIẢM / SIDEWAY
 Cấu trúc     : HH-HL / LH-LL / Không rõ
