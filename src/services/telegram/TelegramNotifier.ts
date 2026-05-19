@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { TradingSignal } from '@prisma/client';
+import { AnalysisResult } from '../ai/dto/AnalysisResult';
 import { config } from '../../config/trading';
 import { logger } from '../../logger';
 
@@ -194,6 +195,78 @@ export class TelegramNotifier {
       this.resolvedDiscussionId = null;
       this.resolvedChannelNumericId = null;
     }
+  }
+
+  formatStructured(result: AnalysisResult): string {
+    const parts: string[] = [];
+    const SEP = '━━━━━━━━━━━━━━━━━━━━━';
+
+    // ── CẤU TRÚC THỊ TRƯỜNG ─────────────────────────────────
+    if (result.marketStructure) {
+      const ms = result.marketStructure;
+      parts.push(`📊 <b>CẤU TRÚC THỊ TRƯỜNG</b>\n${SEP}`);
+
+      const rows: [string, string | undefined][] = [
+        ['Giá hiện tại',     ms.current_price],
+        ['Xu hướng M5',      ms.trend_m5 ? [ms.trend_m5, ms.trend_m5_detail].filter(Boolean).join('  ') : undefined],
+        ['Xu hướng M15',     ms.trend_m15 ? [ms.trend_m15, ms.trend_m15_detail].filter(Boolean).join('  ') : undefined],
+        ['Cấu trúc',         ms.structure],
+        ['Vị trí so với MA', ms.ma_position],
+        ['RSI (M5)',         ms.rsi_m5],
+        ['Khối lượng',       ms.volume],
+      ];
+
+      for (const [label, val] of rows) {
+        if (val) parts.push(`<b>${htmlEscape(label)}:</b>  ${htmlEscape(val)}`);
+      }
+    }
+
+    // ── CÁC MỨC GIÁ QUAN TRỌNG ──────────────────────────────
+    if (result.keyLevels && result.keyLevels.length > 0) {
+      if (parts.length) parts.push('');
+      parts.push(`📍 <b>CÁC MỨC GIÁ QUAN TRỌNG</b>\n${SEP}`);
+
+      for (const level of result.keyLevels) {
+        const emoji = keyLevelEmoji(level.type);
+        parts.push(`${emoji} ${htmlEscape(level.label)}\n    <code>${htmlEscape(level.value)}</code>`);
+      }
+    }
+
+    // ── SETUPS ───────────────────────────────────────────────
+    if (result.setups && result.setups.length > 0) {
+      const sells = result.setups.filter(s => s.direction === 'SELL');
+      const buys  = result.setups.filter(s => s.direction === 'BUY');
+
+      for (const group of [sells, buys]) {
+        if (!group.length) continue;
+        const dir = group[0].direction;
+        if (parts.length) parts.push('');
+        const icon = dir === 'SELL' ? '🔴' : '🟢';
+        parts.push(`${icon} <b>LỆNH ${dir === 'SELL' ? 'BÁN' : 'MUA'} — ${dir}</b>\n${SEP}`);
+
+        for (const s of group) {
+          const confLabel = s.confidence_label === 'Cao' ? '🟢 Cao' : s.confidence_label === 'Thấp' ? '🔴 Thấp' : '🟡 Trung bình';
+          parts.push(
+            `<b>${htmlEscape(s.label)}</b> — ${htmlEscape(s.description)}  (${confLabel})`,
+            `  🎯 Vùng vào:  <code>${htmlEscape(s.entry_zone)}</code>`,
+            `  ⚡ Kích hoạt: ${htmlEscape(s.trigger)}`,
+            `  🛡 SL:        <code>${s.stop_loss}</code>${s.stop_loss_note ? ` — ${htmlEscape(s.stop_loss_note)}` : ''}`,
+            `  💰 TP1:       <code>${s.tp1.value}</code>  (${htmlEscape(s.tp1.rr)})${s.tp1.note ? ` — ${htmlEscape(s.tp1.note)}` : ''}`,
+            `  💰 TP2:       <code>${s.tp2.value}</code>  (${htmlEscape(s.tp2.rr)})`,
+            `  💰 TP3:       <code>${s.tp3.value}</code>  (${htmlEscape(s.tp3.rr)})`,
+            `  ❌ Hủy nếu:   ${htmlEscape(s.cancel_condition)}`,
+            '',
+          );
+        }
+      }
+    }
+
+    // fallback nếu không có structured data
+    if (!parts.length && result.reasoning) {
+      return this.formatAnalysis(result.reasoning);
+    }
+
+    return parts.join('\n').trim();
   }
 
   formatAnalysis(reasoning: string): string {
@@ -424,6 +497,12 @@ function formatGenericTable(header: string[], rows: string[][]): string {
     .map(cols => '  • ' + cols.filter(Boolean).join(' │ '))
     .join('\n');
   return headerLine + dataLines;
+}
+
+function keyLevelEmoji(type?: string): string {
+  if (type === 'resistance') return '🔴';
+  if (type === 'support')    return '🟢';
+  return '◦';
 }
 
 function htmlEscape(str: string): string {

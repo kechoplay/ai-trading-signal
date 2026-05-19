@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Trading Signal — XAU/USD</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #f0f2f5;
+      --card: #ffffff;
+      --border: #e8eaed;
+      --text: #1a1d23;
+      --muted: #6b7280;
+      --sell-accent: #ef4444;
+      --buy-accent: #22c55e;
+      --neutral-accent: #f59e0b;
+      --tag-down-bg: #fee2e2;
+      --tag-down-text: #b91c1c;
+      --tag-up-bg: #dcfce7;
+      --tag-up-text: #15803d;
+      --tag-neutral-bg: #fef3c7;
+      --tag-neutral-text: #b45309;
+      --resistance-color: #ef4444;
+      --support-color: #22c55e;
+      --radius: 12px;
+      --shadow: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.04);
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 24px 16px 48px;
+    }
+
+    .page-header {
+      max-width: 960px;
+      margin: 0 auto 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .page-title {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -.3px;
+    }
+
+    .page-title span { color: var(--muted); font-weight: 400; font-size: 14px; margin-left: 8px; }
+
+    .refresh-btn {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 14px;
+      font-size: 13px;
+      cursor: pointer;
+      color: var(--text);
+      transition: background .15s;
+    }
+    .refresh-btn:hover { background: #f3f4f6; }
+
+    .grid {
+      max-width: 960px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    @media (max-width: 680px) { .grid { grid-template-columns: 1fr; } }
+
+    .col-full { grid-column: 1 / -1; }
+
+    /* ── Card ── */
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 18px 12px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: .3px;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .card-header .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--muted);
+      flex-shrink: 0;
+    }
+
+    .card-header.sell .dot { background: var(--sell-accent); }
+    .card-header.buy  .dot { background: var(--buy-accent); }
+    .card-header.info .dot { background: #6366f1; }
+    .card-header.levels .dot { background: var(--neutral-accent); }
+
+    /* ── Signal banner ── */
+    .signal-banner {
+      padding: 18px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .signal-left { display: flex; align-items: center; gap: 12px; }
+
+    .instrument { font-size: 22px; font-weight: 700; }
+
+    .action-badge {
+      padding: 4px 14px;
+      border-radius: 20px;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: .4px;
+    }
+    .action-badge.sell { background: var(--tag-down-bg); color: var(--tag-down-text); }
+    .action-badge.buy  { background: var(--tag-up-bg);   color: var(--tag-up-text);  }
+    .action-badge.no_trade { background: #f3f4f6; color: var(--muted); }
+
+    .signal-right { text-align: right; }
+    .current-price { font-size: 24px; font-weight: 700; letter-spacing: -.5px; }
+    .price-label { font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+
+    /* ── KPI row ── */
+    .kpi-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      border-top: 1px solid var(--border);
+    }
+    @media (max-width: 480px) { .kpi-row { grid-template-columns: repeat(2, 1fr); } }
+
+    .kpi {
+      padding: 14px 16px;
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .kpi:last-child { border-right: none; }
+    .kpi-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+    .kpi-value { font-size: 16px; font-weight: 700; }
+    .kpi-value.sell { color: var(--sell-accent); }
+    .kpi-value.buy  { color: var(--buy-accent); }
+
+    /* ── Confidence bar ── */
+    .conf-row {
+      padding: 12px 18px 14px;
+      border-top: 1px solid var(--border);
+      display: flex; align-items: center; gap: 12px;
+    }
+    .conf-label { font-size: 12px; color: var(--muted); white-space: nowrap; }
+    .conf-track {
+      flex: 1;
+      height: 6px;
+      border-radius: 3px;
+      background: #e5e7eb;
+      overflow: hidden;
+    }
+    .conf-fill {
+      height: 100%;
+      border-radius: 3px;
+      background: linear-gradient(90deg, #6366f1, #8b5cf6);
+      transition: width .4s ease;
+    }
+    .conf-pct { font-size: 13px; font-weight: 600; white-space: nowrap; }
+
+    /* ── Key-value table ── */
+    .kv-table { width: 100%; border-collapse: collapse; }
+    .kv-table tr { border-bottom: 1px solid var(--border); }
+    .kv-table tr:last-child { border-bottom: none; }
+    .kv-table td {
+      padding: 11px 18px;
+      font-size: 13.5px;
+      vertical-align: middle;
+    }
+    .kv-table td:first-child {
+      color: var(--muted);
+      width: 44%;
+      font-size: 13px;
+    }
+    .kv-table td:last-child {
+      font-weight: 500;
+      text-align: right;
+    }
+
+    /* ── Tags ── */
+    .tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .3px;
+      margin-right: 5px;
+      white-space: nowrap;
+    }
+    .tag.down    { background: var(--tag-down-bg);    color: var(--tag-down-text); }
+    .tag.up      { background: var(--tag-up-bg);      color: var(--tag-up-text); }
+    .tag.neutral { background: var(--tag-neutral-bg); color: var(--tag-neutral-text); }
+
+    /* ── Key levels list ── */
+    .levels-list { list-style: none; }
+    .levels-list li {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 18px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13.5px;
+      gap: 12px;
+    }
+    .levels-list li:last-child { border-bottom: none; }
+    .level-label { color: var(--muted); flex: 1; min-width: 0; }
+    .level-value { font-weight: 600; text-align: right; white-space: nowrap; }
+    .level-value.resistance { color: var(--resistance-color); }
+    .level-value.support    { color: var(--support-color); }
+
+    /* ── Setup cards ── */
+    .setups-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      padding: 0;
+    }
+    @media (max-width: 600px) { .setups-grid { grid-template-columns: 1fr; } }
+
+    .setup-card {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      position: relative;
+    }
+    .setup-card::before {
+      content: '';
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 4px;
+    }
+    .setup-card.sell::before { background: var(--sell-accent); }
+    .setup-card.buy::before  { background: var(--buy-accent); }
+
+    .setup-card-header {
+      padding: 12px 16px 10px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .setup-title { font-size: 14px; font-weight: 700; }
+    .setup-desc  { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .conf-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 12px;
+      white-space: nowrap;
+    }
+    .conf-badge.high   { background: var(--tag-up-bg);      color: var(--tag-up-text); }
+    .conf-badge.medium { background: var(--tag-neutral-bg); color: var(--tag-neutral-text); }
+    .conf-badge.low    { background: var(--tag-down-bg);    color: var(--tag-down-text); }
+
+    .setup-body { }
+    .setup-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      padding: 9px 16px 9px 20px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+      gap: 10px;
+    }
+    .setup-row:last-child { border-bottom: none; }
+    .setup-row-label { color: var(--muted); white-space: nowrap; min-width: 90px; padding-top: 1px; }
+    .setup-row-value { font-weight: 500; text-align: right; line-height: 1.4; }
+    .setup-row-value.price { font-weight: 700; font-variant-numeric: tabular-nums; }
+    .setup-row-value.sell  { color: var(--sell-accent); }
+    .setup-row-value.buy   { color: var(--buy-accent); }
+    .setup-row-value.cancel { color: var(--neutral-accent); font-size: 12px; }
+    .rr-tag {
+      display: inline-block;
+      background: #eff6ff;
+      color: #1d4ed8;
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-size: 11px;
+      font-weight: 600;
+      margin-left: 6px;
+    }
+
+    /* ── Meta row ── */
+    .meta-row {
+      max-width: 960px;
+      margin: 0 auto 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .meta-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: #22c55e;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%  { opacity: .4; }
+    }
+
+    /* ── No data ── */
+    .empty {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    /* ── History table ── */
+    .history-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .history-table th {
+      padding: 10px 14px;
+      text-align: left;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .4px;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+    }
+    .history-table td {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    .history-table tr:last-child td { border-bottom: none; }
+    .history-table tr:hover td { background: #f9fafb; }
+  </style>
+</head>
+<body>
+
+<div class="page-header">
+  <div class="page-title">
+    AI Trading Signal
+    <span id="lastUpdate"></span>
+  </div>
+  <button class="refresh-btn" onclick="loadLatest()">↻ Refresh</button>
+</div>
+
+<div id="metaRow" class="meta-row" style="display:none">
+  <div class="meta-dot"></div>
+  <span id="metaText"></span>
+</div>
+
+<div id="main"></div>
+
+<div class="grid" style="max-width:960px;margin:16px auto 0">
+  <div class="card col-full" id="historyCard" style="display:none">
+    <div class="card-header"><div class="dot"></div>Lịch sử tín hiệu</div>
+    <div style="overflow-x:auto">
+      <table class="history-table">
+        <thead>
+          <tr>
+            <th>Thời gian</th><th>Hành động</th><th>Giá vào</th>
+            <th>SL</th><th>TP1</th><th>R:R</th><th>Tin cậy</th>
+          </tr>
+        </thead>
+        <tbody id="historyBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const fmt = (n, d=2) => n == null ? '—' : Number(n).toLocaleString('en-US', {minimumFractionDigits:d, maximumFractionDigits:d});
+const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+function trendTag(val, detail) {
+  if (!val) return '—';
+  const v = val.toUpperCase();
+  let cls = 'neutral';
+  if (v.includes('GIẢM') || v.includes('BEARISH') || v.includes('DOWN')) cls = 'down';
+  else if (v.includes('TĂNG') || v.includes('BULLISH') || v.includes('UP'))  cls = 'up';
+  const detailHtml = detail ? `<span style="color:#6b7280;font-weight:400;margin-left:6px;font-size:12px">${esc(detail)}</span>` : '';
+  return `<span class="tag ${cls}">${esc(val)}</span>${detailHtml}`;
+}
+
+function confBadgeClass(label) {
+  if (!label) return 'medium';
+  const l = label.toLowerCase();
+  if (l.includes('cao') || l.includes('high')) return 'high';
+  if (l.includes('thấp') || l.includes('low')) return 'low';
+  return 'medium';
+}
+
+function renderSignalBanner(s) {
+  const actionCls = s.action === 'BUY' ? 'buy' : s.action === 'SELL' ? 'sell' : 'no_trade';
+  const actionLabel = s.action === 'BUY' ? '🟢 MUA (BUY)' : s.action === 'SELL' ? '🔴 BÁN (SELL)' : '⚪ KHÔNG VÀO LỆNH';
+  const bias = (s.trend_bias ?? '').toUpperCase();
+  const biasIcon = bias === 'BULLISH' ? '📈' : bias === 'BEARISH' ? '📉' : '➖';
+
+  return `
+  <div class="card col-full">
+    <div class="signal-banner">
+      <div class="signal-left">
+        <div class="instrument">${esc(s.instrument)}</div>
+        <div class="action-badge ${actionCls}">${actionLabel}</div>
+      </div>
+      <div class="signal-right">
+        <div class="price-label">Giá hiện tại</div>
+        <div class="current-price">${fmt(s.current_price, 2)}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:3px">${biasIcon} ${bias || '—'}</div>
+      </div>
+    </div>
+    ${s.action !== 'NO_TRADE' ? `
+    <div class="kpi-row">
+      <div class="kpi">
+        <div class="kpi-label">Entry</div>
+        <div class="kpi-value">${fmt(s.entry, 2)}</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Stop Loss</div>
+        <div class="kpi-value sell">${fmt(s.stop_loss, 2)}</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Take Profit</div>
+        <div class="kpi-value buy">${fmt(s.take_profit, 2)}</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">R : R</div>
+        <div class="kpi-value">1 : ${fmt(s.risk_reward, 2)}</div>
+      </div>
+    </div>` : ''}
+    ${s.confidence != null ? `
+    <div class="conf-row">
+      <div class="conf-label">Độ tin cậy AI</div>
+      <div class="conf-track"><div class="conf-fill" style="width:${s.confidence}%"></div></div>
+      <div class="conf-pct">${s.confidence}/100</div>
+    </div>` : ''}
+  </div>`;
+}
+
+function renderMarketStructure(ms) {
+  if (!ms) return '';
+  const rows = [
+    ['Giá hiện tại',     ms.current_price ? `<strong>${esc(ms.current_price)}</strong>` : null],
+    ['Xu hướng M5',      ms.trend_m5      ? trendTag(ms.trend_m5, ms.trend_m5_detail)  : null],
+    ['Xu hướng M15',     ms.trend_m15     ? trendTag(ms.trend_m15, ms.trend_m15_detail): null],
+    ['Cấu trúc',         ms.structure     ? `<span style="color:#b91c1c;font-weight:500">${esc(ms.structure)}</span>` : null],
+    ['Vị trí so với MA', ms.ma_position   ? esc(ms.ma_position)  : null],
+    ['RSI (M5)',         ms.rsi_m5        ? esc(ms.rsi_m5)       : null],
+    ['Khối lượng',       ms.volume        ? esc(ms.volume)       : null],
+  ].filter(([, v]) => v != null);
+
+  if (!rows.length) return '';
+  return `
+  <div class="card">
+    <div class="card-header info"><div class="dot"></div>Cấu trúc thị trường</div>
+    <table class="kv-table">
+      ${rows.map(([l, v]) => `<tr><td>${esc(l)}</td><td>${v}</td></tr>`).join('')}
+    </table>
+  </div>`;
+}
+
+function renderKeyLevels(levels) {
+  if (!levels || !levels.length) return '';
+  return `
+  <div class="card">
+    <div class="card-header levels"><div class="dot"></div>Các mức giá quan trọng</div>
+    <ul class="levels-list">
+      ${levels.map(lv => {
+        const cls = lv.type === 'resistance' ? 'resistance' : lv.type === 'support' ? 'support' : '';
+        return `<li>
+          <span class="level-label">${esc(lv.label)}</span>
+          <span class="level-value ${cls}">${esc(lv.value)}</span>
+        </li>`;
+      }).join('')}
+    </ul>
+  </div>`;
+}
+
+function renderSetups(setups) {
+  if (!setups || !setups.length) return '';
+  const sells = setups.filter(s => s.direction === 'SELL');
+  const buys  = setups.filter(s => s.direction === 'BUY');
+  let html = '';
+
+  for (const [group, dir] of [[sells,'SELL'],[buys,'BUY']]) {
+    if (!group.length) continue;
+    const icon  = dir === 'SELL' ? '🔴' : '🟢';
+    const label = dir === 'SELL' ? 'Lệnh Bán — SELL (Ưu tiên)' : 'Lệnh Mua — BUY (Ưu tiên)';
+    const cls   = dir === 'SELL' ? 'sell' : 'buy';
+    html += `
+    <div class="card col-full">
+      <div class="card-header ${cls}"><div class="dot"></div>${icon} ${label}</div>
+      <div style="padding:16px">
+        <div class="setups-grid">
+          ${group.map(s => renderSetupCard(s, cls)).join('')}
+        </div>
+      </div>
+    </div>`;
+  }
+  return html;
+}
+
+function renderSetupCard(s, cls) {
+  const bc = confBadgeClass(s.confidence_label);
+  const tp1Note = s.tp1?.note ? `<span style="color:var(--muted);font-size:11px;margin-left:4px">— ${esc(s.tp1.note)}</span>` : '';
+  return `
+  <div class="setup-card ${cls}">
+    <div class="setup-card-header">
+      <div>
+        <div class="setup-title">${esc(s.label)}</div>
+        <div class="setup-desc">${esc(s.description)}</div>
+      </div>
+      <div class="conf-badge ${bc}">Độ tin cậy: ${esc(s.confidence_label)}</div>
+    </div>
+    <div class="setup-body">
+      <div class="setup-row">
+        <div class="setup-row-label">Vùng vào lệnh</div>
+        <div class="setup-row-value price ${cls}">${esc(s.entry_zone)}</div>
+      </div>
+      <div class="setup-row">
+        <div class="setup-row-label">Điều kiện kích hoạt</div>
+        <div class="setup-row-value" style="font-size:12px;color:#374151">${esc(s.trigger)}</div>
+      </div>
+      <div class="setup-row">
+        <div class="setup-row-label">Cắt lỗ (SL)</div>
+        <div class="setup-row-value price sell">${fmt(s.stop_loss,2)}${s.stop_loss_note ? `<span style="font-size:11px;font-weight:400;color:var(--muted)"> — ${esc(s.stop_loss_note)}</span>` : ''}</div>
+      </div>
+      ${s.tp1 ? `<div class="setup-row">
+        <div class="setup-row-label">TP1 ${s.tp1.rr ? `<span class="rr-tag">${esc(s.tp1.rr)}</span>` : ''}</div>
+        <div class="setup-row-value price buy">${fmt(s.tp1.value,2)}${tp1Note}</div>
+      </div>` : ''}
+      ${s.tp2 ? `<div class="setup-row">
+        <div class="setup-row-label">TP2 ${s.tp2.rr ? `<span class="rr-tag">${esc(s.tp2.rr)}</span>` : ''}</div>
+        <div class="setup-row-value price buy">${fmt(s.tp2.value,2)}</div>
+      </div>` : ''}
+      ${s.tp3 ? `<div class="setup-row">
+        <div class="setup-row-label">TP3 ${s.tp3.rr ? `<span class="rr-tag">${esc(s.tp3.rr)}</span>` : ''}</div>
+        <div class="setup-row-value price buy">${esc(String(s.tp3.value))}</div>
+      </div>` : ''}
+      <div class="setup-row">
+        <div class="setup-row-label">Hủy setup nếu</div>
+        <div class="setup-row-value cancel">${esc(s.cancel_condition)}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderHistory(signals) {
+  if (!signals || signals.length < 2) return;
+  const card = document.getElementById('historyCard');
+  const body = document.getElementById('historyBody');
+  card.style.display = '';
+  body.innerHTML = signals.slice(1).map(s => {
+    const actionCls = s.action === 'BUY' ? 'buy' : s.action === 'SELL' ? 'sell' : '';
+    const timeStr = new Date(s.created_at).toLocaleString('vi-VN', {timeZone:'Asia/Ho_Chi_Minh',hour12:false});
+    return `<tr>
+      <td style="color:var(--muted);font-size:12px">${timeStr}</td>
+      <td><span class="tag ${actionCls === 'buy' ? 'up' : actionCls === 'sell' ? 'down' : 'neutral'}">${s.action}</span></td>
+      <td>${fmt(s.entry,2)}</td>
+      <td style="color:var(--sell-accent)">${fmt(s.stop_loss,2)}</td>
+      <td style="color:var(--buy-accent)">${fmt(s.take_profit,2)}</td>
+      <td>${s.risk_reward ? '1:'+fmt(s.risk_reward,2) : '—'}</td>
+      <td>${s.confidence != null ? s.confidence+'%' : '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function loadLatest() {
+  try {
+    const [latest, all] = await Promise.all([
+      fetch('/api/signals/latest').then(r => r.json()),
+      fetch('/api/signals?limit=10').then(r => r.json()),
+    ]);
+
+    if (latest.error) {
+      document.getElementById('main').innerHTML = `<div class="grid"><div class="card col-full"><div class="empty">Chưa có tín hiệu nào.<br>Chạy <code>npm run analyze:force</code> để tạo tín hiệu đầu tiên.</div></div></div>`;
+      return;
+    }
+
+    const timeStr = new Date(latest.created_at).toLocaleString('vi-VN', {timeZone:'Asia/Ho_Chi_Minh',hour12:false});
+    document.getElementById('lastUpdate').textContent = '';
+    document.getElementById('metaRow').style.display = 'flex';
+    document.getElementById('metaText').textContent = `Tín hiệu mới nhất: ${timeStr} (Giờ VN)`;
+
+    const html = `
+    <div class="grid">
+      ${renderSignalBanner(latest)}
+      ${renderMarketStructure(latest.market_structure)}
+      ${renderKeyLevels(latest.key_levels)}
+      ${renderSetups(latest.setups)}
+    </div>`;
+
+    document.getElementById('main').innerHTML = html;
+    renderHistory(all);
+  } catch (e) {
+    document.getElementById('main').innerHTML = `<div class="grid"><div class="card col-full"><div class="empty">Không thể kết nối server. Hãy chắc chắn server đang chạy.</div></div></div>`;
+  }
+}
+
+loadLatest();
+setInterval(loadLatest, 60_000);
+</script>
+</body>
+</html>

@@ -39,7 +39,7 @@ export class SignalOrchestrator {
 
     const signal = await this.persistSignal(instrument, currentPrice, result, candlesByTf);
 
-    await this.notify(signal);
+    await this.notify(signal, result);
 
     return prisma.tradingSignal.findUniqueOrThrow({ where: { id: signal.id } });
   }
@@ -69,13 +69,18 @@ export class SignalOrchestrator {
         current_price: currentPrice,
         reasoning: result.reasoning ?? undefined,
         trend_bias: result.trendBias ?? undefined,
-        raw_ai_response: JSON.stringify(result.raw),
+        raw_ai_response: JSON.stringify({
+          ...result.raw,
+          market_structure: result.marketStructure,
+          key_levels: result.keyLevels,
+          setups: result.setups,
+        }),
         indicators_snapshot: JSON.stringify({ last_candles: lastByTf, price: currentPrice }),
       },
     });
   }
 
-  private async notify(signal: TradingSignal): Promise<void> {
+  private async notify(signal: TradingSignal, result: AnalysisResult): Promise<void> {
     try {
       const signalCard = this.telegram.formatSignal(signal);
       const messageId = await this.telegram.send(signalCard);

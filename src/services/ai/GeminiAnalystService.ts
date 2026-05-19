@@ -430,14 +430,49 @@ Sau khi hoàn thành toàn bộ phân tích, kết thúc response bằng block J
 
 \`\`\`json
 {
-  "action": "BUY" hoặc "SELL" hoặc "NO_TRADE",
-  "entry": số thực hoặc null,
-  "stop_loss": số thực hoặc null,
-  "take_profit": số thực (TP1) hoặc null,
-  "risk_reward": số thực hoặc null,
-  "confidence": số nguyên 0–100,
-  "trend_bias": "BULLISH" hoặc "BEARISH" hoặc "NEUTRAL",
-  "reasoning": "tóm tắt 1–2 câu lý do chính bằng tiếng Việt"
+  "action": "BUY hoặc SELL hoặc NO_TRADE",
+  "entry": "số thực hoặc null",
+  "stop_loss": "số thực hoặc null",
+  "take_profit": "số thực (TP1) hoặc null",
+  "risk_reward": "số thực hoặc null",
+  "confidence": "số nguyên 0–100",
+  "trend_bias": "BULLISH hoặc BEARISH hoặc NEUTRAL",
+  "reasoning": "tóm tắt 1–2 câu lý do chính bằng tiếng Việt",
+  "market_structure": {
+    "current_price": "string — giá hiện tại",
+    "trend_m5": "string — ví dụ: GIẢM MẠNH / TĂNG NHẸ / SIDEWAY",
+    "trend_m5_detail": "string — mô tả ngắn cấu trúc M5",
+    "trend_m15": "string — xu hướng M15",
+    "trend_m15_detail": "string — mô tả ngắn cấu trúc M15",
+    "structure": "string — BOS/CHoCH và ý nghĩa",
+    "ma_position": "string — vị trí so với EMA/HMA/BB",
+    "rsi_m5": "string — giá trị RSI và ý nghĩa",
+    "volume": "string — nhận xét về khối lượng"
+  },
+  "key_levels": [
+    {
+      "label": "string — tên vùng giá (ví dụ: Kháng cự mạnh nhất (Dải 89 M15))",
+      "value": "string — vùng giá (ví dụ: 4,645 – 4,655)",
+      "type": "resistance hoặc support hoặc neutral"
+    }
+  ],
+  "setups": [
+    {
+      "direction": "BUY hoặc SELL",
+      "id": "string — ví dụ: SELL1, BUY2",
+      "label": "string — ví dụ: SELL 1",
+      "description": "string — mô tả setup ngắn",
+      "confidence_label": "Cao hoặc Trung bình hoặc Thấp",
+      "entry_zone": "string — vùng vào lệnh",
+      "trigger": "string — điều kiện kích hoạt chi tiết",
+      "stop_loss": "số thực — mức SL",
+      "stop_loss_note": "string — giải thích SL đặt ở đâu",
+      "tp1": { "value": "số thực", "rr": "string — ví dụ: 1:2", "note": "string tùy chọn" },
+      "tp2": { "value": "số thực", "rr": "string" },
+      "tp3": { "value": "string hoặc số", "rr": "string" },
+      "cancel_condition": "string — điều kiện hủy setup"
+    }
+  ]
 }
 \`\`\``);
 

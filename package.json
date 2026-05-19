@@ -10,12 +10,16 @@
     "analyze:force": "tsx src/commands/analyzeSignal.ts --force",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
-    "db:migrate": "prisma migrate dev"
+    "db:migrate": "prisma migrate dev",
+    "server": "tsx src/server.ts",
+    "server:dev": "tsx watch src/server.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
+    "@types/express": "^5.0.6",
     "axios": "^1.7.7",
     "dotenv": "^16.4.5",
+    "express": "^5.2.1",
     "node-cron": "^3.0.3",
     "winston": "^3.15.0"
   },
