@@ -1,6 +1,5 @@
 import axios from 'axios';
 import { Candle } from '../market/Candle';
-import { AnalysisResult } from './dto/AnalysisResult';
 import { config } from '../../config/trading';
 import { logger } from '../../logger';
 
@@ -23,9 +22,9 @@ export class GeminiAnalystService {
     candlesByTimeframe: Record<string, Candle[]>,
     currentPrice: number,
     minRr: number,
-  ): Promise<AnalysisResult> {
+  ): Promise<string> {
     const systemPrompt = this.buildSystemPrompt();
-    const userPrompt = this.buildUserPrompt(instrument, candlesByTimeframe, currentPrice, minRr);
+    const userPrompt = this.buildOhlcPrompt(instrument, candlesByTimeframe, currentPrice, minRr);
 
     const url = `${this.baseUrl}/models/${this.model}:generateContent?key=${this.apiKey}`;
 
@@ -36,16 +35,10 @@ export class GeminiAnalystService {
     };
 
     const payload = await this.postWithRetry(url, requestBody);
-
     const text = this.extractText(payload);
     logger.info('[Gemini] Raw response', { text });
-    const json = this.extractJson(text);
-    logger.info('[Gemini] Parsed JSON', { json });
 
-    const fullAnalysis = text.replace(/```json[\s\S]*?```/gi, '').trim();
-    json['reasoning'] = fullAnalysis || (json['reasoning'] ?? '');
-
-    return AnalysisResult.fromAiJson(json, payload);
+    return text;
   }
 
   // ─── Prompt builders ──────────────────────────────────────────────────────
@@ -163,173 +156,67 @@ Hãy phân tích hoàn chỉnh theo đúng cấu trúc sau.
 - Bảo vệ vốn trước, lợi nhuận sau`;
   }
 
-  private buildUserPrompt(
+  private buildOhlcPrompt(
     instrument: string,
     candlesByTimeframe: Record<string, Candle[]>,
     currentPrice: number,
     minRr: number,
   ): string {
     const now = this.formatVnTime(new Date());
-
-    const sections: string[] = [
-      '## DATA ĐẦU VÀO\n',
-      `**Công cụ:** ${instrument}`,
-      `**Thời điểm:** ${now} (Asia/Ho_Chi_Minh)`,
-      `**Giá hiện tại:** ${currentPrice}`,
-      `**RR tối thiểu:** ${minRr}:1\n`,
-    ];
-
-    // M15 trước, M5 sau theo thứ tự phân tích
     const orderedTf = ['M15', 'M5'];
-    for (const tf of orderedTf) {
-      const candles = candlesByTimeframe[tf];
-      if (candles) sections.push(this.buildTimeframeSection(tf, candles));
-    }
-
-    // Các timeframe khác nếu có (ngoài M15/M5)
-    for (const [tf, candles] of Object.entries(candlesByTimeframe)) {
-      if (!orderedTf.includes(tf)) sections.push(this.buildTimeframeSection(tf, candles));
-    }
-
-    sections.push(`
----
-
-Hãy thực hiện đầy đủ phân tích theo cấu trúc mục 1→8 trong system prompt.
-
-Sau khi hoàn thành toàn bộ phân tích, kết thúc response bằng block JSON sau để hệ thống tự động xử lý:
-
-\`\`\`json
-{
-  "action": "BUY hoặc SELL hoặc NO_TRADE",
-  "entry": "số thực hoặc null",
-  "stop_loss": "số thực hoặc null",
-  "take_profit": "số thực (TP1) hoặc null",
-  "risk_reward": "số thực hoặc null",
-  "confidence": "số nguyên 0–100",
-  "trend_bias": "BULLISH hoặc BEARISH hoặc NEUTRAL",
-  "reasoning": "tóm tắt 1–2 câu lý do chính bằng tiếng Việt",
-  "market_structure": {
-    "current_price": "string — giá hiện tại",
-    "trend_m5": "string — ví dụ: GIẢM MẠNH / TĂNG NHẸ / SIDEWAY",
-    "trend_m5_detail": "string — mô tả ngắn cấu trúc M5",
-    "trend_m15": "string — xu hướng M15",
-    "trend_m15_detail": "string — mô tả ngắn cấu trúc M15",
-    "structure": "string — BOS/CHoCH và ý nghĩa",
-    "ma_position": "string — vị trí so với EMA 20/50/200 và HMA 200",
-    "rsi_m5": "string — giá trị RSI M5 và ý nghĩa",
-    "atr_note": "string — nhận xét về ATR / biến động"
-  },
-  "key_levels": [
-    {
-      "label": "string — tên vùng giá",
-      "value": "string — vùng giá hoặc giá cụ thể",
-      "type": "resistance hoặc support hoặc neutral"
-    }
-  ],
-  "setups": [
-    {
-      "direction": "BUY hoặc SELL",
-      "id": "string — ví dụ: SELL1, BUY1",
-      "label": "string — ví dụ: SELL 1",
-      "description": "string — mô tả setup ngắn",
-      "confidence_label": "Cao hoặc Trung bình hoặc Thấp",
-      "entry_zone": "string — vùng vào lệnh",
-      "trigger": "string — điều kiện kích hoạt chi tiết",
-      "stop_loss": "số thực — mức SL",
-      "stop_loss_note": "string — giải thích SL đặt ở đâu",
-      "tp1": { "value": "số thực", "rr": "string — ví dụ: 1:2", "note": "string tùy chọn" },
-      "tp2": { "value": "số thực", "rr": "string" },
-      "tp3": { "value": "string hoặc số", "rr": "string" },
-      "cancel_condition": "string — điều kiện hủy setup"
-    }
-  ]
-}
-\`\`\``);
-
-    return sections.join('\n');
-  }
-
-  private buildTimeframeSection(tf: string, candles: Candle[]): string {
-    const total = candles.length;
-    const display = candles.slice(-CANDLE_TABLE_ROWS);
-
-    const rsi = this.calculateRsi(candles, 14);
-    const ema20 = this.calculateEma(candles, 20);
-    const ema50 = this.calculateEma(candles, 50);
-    const ema200 = this.calculateEma(candles, 200);
-    const hma200 = this.calculateHma(candles, 200);
-    const bb = this.calculateBB(candles, 34, 2.0);
-    const atr = this.calculateAtr(candles, 14);
-
-    const lastRsi = this.lastVal(Object.values(rsi));
-    const lastEma20 = this.lastVal(ema20);
-    const lastEma50 = this.lastVal(ema50);
-    const lastEma200 = this.lastVal(ema200);
-    const lastHma = this.lastVal(hma200);
-    const lastBbU = bb ? round2(bb.upper) : 'N/A';
-    const lastBbM = bb ? round2(bb.middle) : 'N/A';
-    const lastBbL = bb ? round2(bb.lower) : 'N/A';
-    const lastAtr = this.lastVal(atr);
-
-    const lastCandle = candles[candles.length - 1];
-    const patterns = this.detectCandlePatterns(candles.slice(-5));
-
-    // Log toàn bộ dữ liệu timeframe dưới dạng JSON
-    const candleData = candles.map((c) => ({
-      time: c.time,
-      open: c.open,
-      high: c.high,
-      low: c.low,
-      close: c.close,
-      rsi14: rsi[c.time] !== undefined ? round2(rsi[c.time]) : null,
-    }));
-
-    logger.info(`[${tf}] Market Data`, {
-      timeframe: tf,
-      total,
-      rsi_available_from_index: 15,
-      indicators: {
-        ema20: lastEma20,
-        ema50: lastEma50,
-        ema200: lastEma200,
-        hma200: lastHma,
-        bb34: { upper: lastBbU, middle: lastBbM, lower: lastBbL },
-        rsi14: lastRsi,
-        atr14: lastAtr,
-        candle_patterns: patterns,
-      },
-      candles: candleData,
-    });
-
-    const lines: string[] = [
-      `\n### [${tf}] — ${total} nến`,
-      '',
-      '**Chỉ báo kỹ thuật (nến cuối):**',
-      '| Chỉ báo | Giá trị |',
-      '|---------|---------|',
-      `| EMA 20 | ${lastEma20} |`,
-      `| EMA 50 | ${lastEma50} |`,
-      `| EMA 200 | ${lastEma200} |`,
-      `| HMA 200 | ${lastHma} |`,
-      `| BB(34) Upper | ${lastBbU} |`,
-      `| BB(34) Middle | ${lastBbM} |`,
-      `| BB(34) Lower | ${lastBbL} |`,
-      `| RSI(14) | ${lastRsi} |`,
-      `| ATR(14) | ${lastAtr} |`,
-      '',
-      `**Pattern 5 nến gần nhất:** ${patterns.join(', ') || 'Không rõ'}`,
-      '',
-      `**Dữ liệu nến (${display.length} nến gần nhất):**`,
-      '| Thời gian | Open | High | Low | Close | RSI(14) |',
-      '|-----------|------|------|-----|-------|---------|',
+    const allTf = [
+      ...orderedTf,
+      ...Object.keys(candlesByTimeframe).filter((tf) => !orderedTf.includes(tf)),
     ];
 
-    for (const c of display) {
-      const rsiVal = rsi[c.time] !== undefined ? round2(rsi[c.time]) : '-';
-      lines.push(`| ${c.time} | ${c.open} | ${c.high} | ${c.low} | ${c.close} | ${rsiVal} |`);
+    const timeframes: Record<string, unknown> = {};
+    for (const tf of allTf) {
+      const candles = candlesByTimeframe[tf];
+      if (!candles) continue;
+
+      const rsi = this.calculateRsi(candles, 14);
+      const ema20 = this.calculateEma(candles, 20);
+      const ema50 = this.calculateEma(candles, 50);
+      const ema200 = this.calculateEma(candles, 200);
+      const hma200 = this.calculateHma(candles, 200);
+      const bb = this.calculateBB(candles, 34, 2.0);
+      const atr = this.calculateAtr(candles, 14);
+      const patterns = this.detectCandlePatterns(candles.slice(-5));
+
+      const indicators = {
+        ema20: this.lastVal(ema20),
+        ema50: this.lastVal(ema50),
+        ema200: this.lastVal(ema200),
+        hma200: this.lastVal(hma200),
+        bb_upper: bb ? round2(bb.upper) : null,
+        bb_middle: bb ? round2(bb.middle) : null,
+        bb_lower: bb ? round2(bb.lower) : null,
+        rsi14: this.lastVal(Object.values(rsi)),
+        atr14: this.lastVal(atr),
+        patterns,
+      };
+
+      const candleRows = candles.slice(-CANDLE_TABLE_ROWS).map((c) => ({
+        time: c.time,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+        rsi14: rsi[c.time] !== undefined ? round2(rsi[c.time]) : null,
+      }));
+
+      logger.info(`[${tf}] Market Data`, { timeframe: tf, total: candles.length, indicators, candles: candleRows });
+
+      timeframes[tf] = { indicators, candles: candleRows };
     }
 
-    return lines.join('\n');
+    const ohlc = JSON.stringify(
+      { instrument, current_price: currentPrice, min_rr: minRr, timestamp: now, timeframes },
+      null,
+      2,
+    );
+
+    return `${ohlc}`;
   }
 
   // ─── Indicator calculations ───────────────────────────────────────────────
@@ -546,42 +433,6 @@ Sau khi hoàn thành toàn bộ phân tích, kết thúc response bằng block J
     const text: string = payload?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
     if (!text) throw new Error('Gemini returned empty text content.');
     return text;
-  }
-
-  private extractJson(text: string): Record<string, unknown> {
-    const blocks = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)\s*```/gi)];
-    for (const block of [...blocks].reverse()) {
-      const parsed = this.tryParseJson(block[1].trim());
-      if (parsed) return parsed;
-    }
-
-    const lastClose = text.lastIndexOf('}');
-    if (lastClose !== -1) {
-      let depth = 0;
-      for (let i = lastClose; i >= 0; i--) {
-        if (text[i] === '}') depth++;
-        else if (text[i] === '{') {
-          depth--;
-          if (depth === 0) {
-            const parsed = this.tryParseJson(text.substring(i, lastClose + 1));
-            if (parsed) return parsed;
-            break;
-          }
-        }
-      }
-    }
-
-    throw new Error('Gemini response contains no valid JSON: ' + text.substring(0, 300));
-  }
-
-  private tryParseJson(str: string): Record<string, unknown> | null {
-    try {
-      const v = JSON.parse(str);
-      if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
-        return v as Record<string, unknown>;
-      }
-    } catch { /* ignore */ }
-    return null;
   }
 
   private formatVnTime(date: Date): string {
