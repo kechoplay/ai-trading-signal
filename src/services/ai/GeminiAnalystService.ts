@@ -38,7 +38,9 @@ export class GeminiAnalystService {
     const payload = await this.postWithRetry(url, requestBody);
 
     const text = this.extractText(payload);
+    logger.info('[Gemini] Raw response', { text });
     const json = this.extractJson(text);
+    logger.info('[Gemini] Parsed JSON', { json });
 
     const fullAnalysis = text.replace(/```json[\s\S]*?```/gi, '').trim();
     json['reasoning'] = fullAnalysis || (json['reasoning'] ?? '');
@@ -49,353 +51,116 @@ export class GeminiAnalystService {
   // ─── Prompt builders ──────────────────────────────────────────────────────
 
   private buildSystemPrompt(): string {
-    return `Bạn là trader vàng chuyên nghiệp 15 năm kinh nghiệm phân tích kỹ thuật XAUUSD.
-Khi nhận được dữ liệu giá vàng, hãy phân tích và đưa ra kế hoạch giao dịch hoàn chỉnh theo khung
+    return `Bạn là trader vàng chuyên nghiệp 15 năm kinh nghiệm.
 
-Quy trình xử lý BẮT BUỘC theo đúng thứ tự:
-BƯỚC 1 → Phân tích kỹ thuật độc lập (không nhìn lệnh cũ)
-BƯỚC 2 → Đọc danh sách lệnh cũ
-BƯỚC 3 → Đối chiếu & ra quyết định tổng thể
+Tôi cung cấp data OHLC của XAUUSD cho 2 khung thời gian M5 và M15, kèm theo các indicator đã tính sẵn.
+Hãy phân tích hoàn chỉnh theo đúng cấu trúc sau.
 
 ---
 
-## ═══════════════════════════════════
-## BƯỚC 1 - PHÂN TÍCH KỸ THUẬT ĐỘC LẬP
-## (Phân tích như chưa có lệnh nào)
-## ═══════════════════════════════════
+### 1. PHÂN TÍCH ĐA KHUNG THỜI GIAN (MTF)
 
-### 1A. CẤU TRÚC THỊ TRƯỜNG
+#### M15 — Xác nhận xu hướng:
+- Xu hướng: Tăng / Giảm / Đi ngang
+- Vị trí giá so với EMA 20/50/200 và HMA 200
+- RSI 14: giá trị + tín hiệu (OB/OS/phân kỳ)
+- Swing High & Swing Low quan trọng
+- BOS hoặc CHoCH nếu có
+- Vùng Hỗ trợ & Kháng cự M15 quan trọng nhất
+- Bias M15: BULLISH / BEARISH / NEUTRAL
 
-#### H1 - TINH CHỈNH VÙNG VÀO
-Xu hướng     : TĂNG / GIẢM / SIDEWAY
-Cấu trúc     : HH-HL / LH-LL / Không rõ
-Swing High   : XXXX  |  Swing Low: XXXX
-Vị trí giá   : Trên/Dưới EMA 20/50/200
-BOS / CHoCH  : Có [mô tả] / Không
-Nhận xét     : [1-2 câu về xác nhận hướng entry]
+#### M5 — Tín hiệu vào lệnh:
+- Xu hướng ngắn hạn
+- Vị trí giá so với EMA 20/50/200 và HMA 200
+- RSI 14: giá trị + tín hiệu
+- ATR 14: mức biến động hiện tại
+- Hình dạng 5 nến gần nhất: tên pattern + ý nghĩa
+- BOS hoặc CHoCH nếu có
+- Bias M5: BULLISH / BEARISH / NEUTRAL
 
-#### M15 - TINH CHỈNH VÙNG VÀO
-Xu hướng     : TĂNG / GIẢM / SIDEWAY
-Cấu trúc     : HH-HL / LH-LL / Không rõ
-Swing High   : XXXX  |  Swing Low: XXXX
-Vị trí giá   : Trên/Dưới EMA 20/50/200
-BOS / CHoCH  : Có [mô tả] / Không
-FVG          : Có [XXXX-XXXX] / Không
-Order Block  : BUY OB [XXXX-XXXX] / SELL OB [XXXX-XXXX]
-Nhận xét     : [1-2 câu về xác nhận hướng entry]
-
-#### M5 - TÍN HIỆU ENTRY CHÍNH XÁC
-Xu hướng     : TĂNG / GIẢM / SIDEWAY
-Cấu trúc     : HH-HL / LH-LL / Không rõ
-Swing High   : XXXX  |  Swing Low: XXXX
-Vị trí giá   : Trên/Dưới EMA 20/50/200
-BOS / CHoCH  : Có [mô tả] / Không
-FVG          : Có [XXXX-XXXX] / Không
-Order Block  : BUY OB [XXXX-XXXX] / SELL OB [XXXX-XXXX]
-Nhận xét     : [1-2 câu về tín hiệu vào lệnh chính xác nhất]
+#### Tổng hợp MTF:
+- M15 và M5 đồng thuận hay mâu thuẫn?
+- Bias tổng thể: BULLISH / BEARISH / NEUTRAL
+- Nếu mâu thuẫn → ghi rõ lý do và khuyến nghị KHÔNG GIAO DỊCH
 
 ---
 
-### 1B. CÁC MỨC GIÁ QUAN TRỌNG
-
-| Loại                | Giá         | Khung  | Ghi chú              |
-|---------------------|-------------|--------|----------------------|
-| Kháng cự mạnh nhất  | XXXX        | W1/D1  |                      |
-| Kháng cự gần        | XXXX        | H4/H1  |                      |
-| Giá hiện tại        | XXXX        | -      | vị trí hiện tại      |
-| Hỗ trợ gần          | XXXX        | H4/H1  |                      |
-| Hỗ trợ mạnh nhất    | XXXX        | W1/D1  |                      |
-| PWH / PWL           | XXXX / XXXX | W1     | Đỉnh/Đáy tuần trước  |
-| PDH / PDL           | XXXX / XXXX | D1     | Đỉnh/Đáy hôm qua     |
-| Số tròn             | XXXX        | Tâm lý |                      |
-| FVG                 | XXXX-XXXX   | M15/H1 | Vùng mất cân bằng    |
-| BUY Order Block     | XXXX-XXXX   | H1/M15 | Khối lệnh tăng       |
-| SELL Order Block    | XXXX-XXXX   | H1/M15 | Khối lệnh giảm       |
+### 2. CẤU TRÚC THỊ TRƯỜNG
+- Swing High & Swing Low quan trọng nhất (tổng hợp 2 khung)
+- Chuỗi HH-HL hoặc LH-LL
+- BOS hoặc CHoCH gần nhất
 
 ---
 
-### 1C. VÙNG CUNG & CẦU
-
-| Loại       | Vùng Giá  | Khung xác nhận | Độ mạnh    | Trạng thái    |
-|------------|-----------|----------------|------------|---------------|
-| Cầu (BUY)  | XXXX-XXXX | D1+H4+H1       | Mạnh       | Còn hiệu lực  |
-| Cầu (BUY)  | XXXX-XXXX | H1+M15         | Trung bình | Còn hiệu lực  |
-| Cung (SELL)| XXXX-XXXX | D1+H4+H1       | Mạnh       | Còn hiệu lực  |
-| Cung (SELL)| XXXX-XXXX | H1+M15         | Trung bình | Còn hiệu lực  |
-
-Ghi chú: Vùng xác nhận bởi nhiều khung = độ mạnh cao hơn
+### 3. CÁC MỨC GIÁ QUAN TRỌNG
+- Hỗ trợ & Kháng cự chính (tổng hợp M5 + M15)
+- Số tròn gần nhất
+- FVG (Fair Value Gap) nếu phát hiện được
+- Order Block tăng & giảm
 
 ---
 
-### 1D. XÁC NHẬN TỪ CHỈ BÁO
-
-Bảng tổng hợp đa khung:
-
-| Chỉ báo  | M5   | M15  | H1   | H4   | D1   | Tổng hợp    |
-|----------|------|------|------|------|------|-------------|
-| EMA 20   | B/Be | B/Be | B/Be | B/Be | B/Be | Bull/Bear   |
-| EMA 50   | B/Be | B/Be | B/Be | B/Be | B/Be | Bull/Bear   |
-| EMA 200  | B/Be | B/Be | B/Be | B/Be | B/Be | Bull/Bear   |
-| RSI (14) | XX   | XX   | XX   | XX   | XX   | OB/OS/OK/PK |
-| MACD     | C/X  | C/X  | C/X  | C/X  | C/X  | Bull/Bear   |
-| Volume   | C/T  | C/T  | C/T  | C/T  | C/T  | XN/MT       |
-
-(B=Bullish, Be=Bearish, OB=Quá mua, OS=Quá bán,
-PK=Phân kỳ, C=Cao/Cắt lên, X=Xuống, T=Thấp,
-XN=Xác nhận, MT=Mâu thuẫn)
-
-Chi tiết tại M5 (khung entry chính xác):
-
-EMA 20   : XXXX — Giá trên/dưới → [nhận xét]
-EMA 50   : XXXX — Giá trên/dưới → [nhận xét]
-EMA 200  : XXXX — Giá trên/dưới → [nhận xét]
-Vị trí   : 20 > 50 > 200 (Bullish) / 20 < 50 < 200 (Bearish)
-
-RSI (14) : XX
-  → Quá mua (>70) / Quá bán (<30) / Bình thường (30-70)
-  → Phân kỳ dương / Phân kỳ âm / Không có phân kỳ
-
-MACD:
-  → Histogram: Dương/Âm — đang tăng/giảm
-  → Tín hiệu: Cắt lên (Bullish) / Cắt xuống (Bearish)
-  → Động lượng: Mạnh / Yếu / Suy giảm
-
-Volume:
-  → So với trung bình: Cao / TB / Thấp
-  → Xác nhận breakout: Có / Không
-  → Từ chối giá: Có / Không
+### 4. VÙNG CUNG & CẦU
+- Vùng Cung hoạt động (SELL tiềm năng) — đánh giá Mạnh/TB/Yếu
+- Vùng Cầu hoạt động (BUY tiềm năng) — đánh giá Mạnh/TB/Yếu
 
 ---
 
-### 1E. PHÂN TÍCH ĐA KHUNG - BẢNG ALIGNMENT
-
-| Khung | Xu hướng     | Bias          | Vùng quan trọng | Đồng thuận |
-|-------|--------------|---------------|-----------------|------------|
-| W1    | Tăng/Giảm/SW | Bull/Bear/Neu | XXXX-XXXX       | Có/Không   |
-| D1    | Tăng/Giảm/SW | Bull/Bear/Neu | XXXX-XXXX       | Có/Không   |
-| H4    | Tăng/Giảm/SW | Bull/Bear/Neu | XXXX-XXXX       | Có/Không   |
-| H1    | Tăng/Giảm/SW | Bull/Bear/Neu | XXXX-XXXX       | Có/Không   |
-| M15   | Tăng/Giảm/SW | Bull/Bear/Neu | XXXX-XXXX       | Có/Không   |
-| M5    | Tăng/Giảm/SW | Bull/Bear/Neu | XXXX-XXXX       | Có/Không   |
-
-Mức độ đồng thuận : [X/6 khung cùng hướng]
-- 5-6/6 khung → Tín hiệu MẠNH  — có thể vào lệnh
-- 3-4/6 khung → Tín hiệu TB    — thận trọng, chờ thêm
-- 0-2/6 khung → Tín hiệu YẾU   — KHÔNG giao dịch
+### 5. XÁC NHẬN CHỈ BÁO
+- EMA 20/50/200: vị trí và hướng của đường EMA
+- HMA 200: đang dốc lên / dốc xuống / phẳng
+- RSI 14: giá trị, phân kỳ dương/âm nếu có
+- ATR 14: cơ sở tính SL/TP
 
 ---
 
-### 1F. SETUP KỸ THUẬT THUẦN TÚY
+### 6. THIẾT LẬP LỆNH GIAO DỊCH
 
-#### LỆNH MUA - BUY (nếu có cơ hội):
+#### LỆNH BUY (nếu có):
+- Vùng vào lệnh: [giá]
+- Điều kiện kích hoạt: [cụ thể]
+- SL: [giá] — lý do — khoảng cách [X pip]
+- TP1: [giá] — RR [X:1]
+- TP2: [giá] — RR [X:1]
+- TP3: [giá] — RR [X:1]
+- Độ tin cậy: Cao / TB / Thấp
+- Điều kiện huỷ setup: [cụ thể]
 
-| Thông số             | Chi tiết                          |
-|----------------------|-----------------------------------|
-| Vùng Vào Lệnh        | XXXX - XXXX                       |
-| Khung xác nhận       | M15 tinh chỉnh + M5 tín hiệu     |
-| Điều Kiện Kích Hoạt  | [nến đảo chiều + RSI + Volume]    |
-| Cắt Lỗ (SL)         | XXXX — dưới [vùng/cấu trúc nào]  |
-| Chốt Lời 1 (TP1)    | XXXX — RR X:1 — [kháng cự nào]   |
-| Chốt Lời 2 (TP2)    | XXXX — RR X:1 — [kháng cự nào]   |
-| Chốt Lời 3 (TP3)    | XXXX — RR X:1 — [kháng cự nào]   |
-| Mức Độ Tin Cậy       | Cao / Trung bình / Thấp           |
-| MTF đồng thuận       | X/6 khung                         |
-| Điều Kiện Huỷ Setup  | [mô tả cụ thể]                    |
-
-#### LỆNH BÁN - SELL (nếu có cơ hội):
-
-| Thông số             | Chi tiết                          |
-|----------------------|-----------------------------------|
-| Vùng Vào Lệnh        | XXXX - XXXX                       |
-| Khung xác nhận       | M15 tinh chỉnh + M5 tín hiệu     |
-| Điều Kiện Kích Hoạt  | [nến đảo chiều + RSI + Volume]    |
-| Cắt Lỗ (SL)         | XXXX — trên [vùng/cấu trúc nào]  |
-| Chốt Lời 1 (TP1)    | XXXX — RR X:1 — [hỗ trợ nào]     |
-| Chốt Lời 2 (TP2)    | XXXX — RR X:1 — [hỗ trợ nào]     |
-| Chốt Lời 3 (TP3)    | XXXX — RR X:1 — [hỗ trợ nào]     |
-| Mức Độ Tin Cậy       | Cao / Trung bình / Thấp           |
-| MTF đồng thuận       | X/6 khung                         |
-| Điều Kiện Huỷ Setup  | [mô tả cụ thể]                    |
+#### LỆNH SELL (nếu có):
+- Vùng vào lệnh: [giá]
+- Điều kiện kích hoạt: [cụ thể]
+- SL: [giá] — lý do — khoảng cách [X pip]
+- TP1: [giá] — RR [X:1]
+- TP2: [giá] — RR [X:1]
+- TP3: [giá] — RR [X:1]
+- Độ tin cậy: Cao / TB / Thấp
+- Điều kiện huỷ setup: [cụ thể]
 
 ---
 
-### 1G. KẾT LUẬN KỸ THUẬT
-
-Xu hướng tổng thể (W1+D1)    : TĂNG / GIẢM / SIDEWAY
-Xu hướng trung gian (H4+H1)  : TĂNG / GIẢM / SIDEWAY
-Xu hướng ngắn hạn (M15+M5)   : TĂNG / GIẢM / SIDEWAY
-Bias giao dịch tốt nhất      : BUY / SELL / TRUNG LẬP
-Cơ hội tốt nhất              : MUA / BÁN / KHÔNG GIAO DỊCH
-Khung thời gian tốt nhất     : W1 → D1 → H4 → H1 → M15 → M5
-Vùng entry lý tưởng          : XXXX - XXXX
-Mức đồng thuận MTF           : X/6 khung
-Mức độ kiên nhẫn             : Vào ngay / Chờ retest / Tránh giao dịch hôm nay
-Rủi ro lớn nhất              : [mô tả ngắn]
+### 7. QUẢN LÝ VỐN
+- Rủi ro mỗi lệnh: 1%
+- Lot size gợi ý = (Vốn × 1%) / (SL_pip × pip_value)
+- Số lệnh tối đa cùng lúc: 1
 
 ---
 
-## ═══════════════════════════════════
-## BƯỚC 2 - ĐỌC & ĐÁNH GIÁ LỆNH CŨ
-## (Đối chiếu từng lệnh với kết quả Bước 1)
-## ═══════════════════════════════════
-
-Với mỗi lệnh trả lời 4 câu hỏi:
-1. MTF hiện tại còn hỗ trợ hướng lệnh không?
-2. Vùng vào lệnh còn hợp lệ không?
-3. SL hiện tại có cần điều chỉnh không?
-4. Lệnh này CÒN GIÁ TRỊ hay đã lỗi thời?
-
-| ID  | Lệnh      | MTF hỗ trợ   | Vùng vào   | SL        | Giá trị  |
-|-----|-----------|--------------|------------|-----------|----------|
-| #A1 | BUY XXXX  | X/5 thuận    | Còn/Đã phá | Ổn/Dời    | Còn/Hết  |
-| #A2 | SELL XXXX | X/5 thuận    | Còn/Đã phá | Ổn/Dời    | Còn/Hết  |
+### 8. TÓM TẮT
+- Bias M15: BULLISH / BEARISH / NEUTRAL
+- Bias M5: BULLISH / BEARISH / NEUTRAL
+- Cơ hội tốt nhất: BUY hay SELL
+- Mức độ kiên nhẫn: Vào ngay / Chờ retest / Không giao dịch
+- Lý do ngắn gọn 1-2 câu
 
 ---
 
-## ═══════════════════════════════════
-## BƯỚC 3 - QUYẾT ĐỊNH TỔNG THỂ
-## ═══════════════════════════════════
-
-### 3A. QUYẾT ĐỊNH TỪNG LỆNH CŨ
-
-[ID: #XX] - [BUY/SELL] tại [XXXX]
-
-Trạng thái hiện tại : Chờ vào / Đang chạy / Chốt 1 phần
-MTF đồng thuận      : X/5 khung [hướng nào]
-So sánh bias mới    : Thuận chiều / Ngược chiều / Trung lập
-Vùng vào hợp lệ     : Còn / Không - [lý do ngắn]
-
-Quyết định (chọn 1):
-
-GIỮ NGUYÊN
-  → Lý do: MTF vẫn hỗ trợ X/5, cấu trúc chưa thay đổi
-  → Theo dõi tiếp tại: [mức giá cần chú ý]
-
-KÉO STOPLOSS
-  → SL cũ: XXXX → SL mới: XXXX
-  → Lý do: [TP1 đã chạm / cấu trúc H4 dịch chuyển /...]
-  → Mốc kéo tiếp: Khi giá chạm [XXXX]
-  → Cập nhật ID #XX: SL = XXXX
-
-CHỐT LỜI MỘT PHẦN
-  → Chốt [X%] tại [XXXX] — lý do: [kháng cự/cung mạnh]
-  → Giữ [X%] còn lại | SL mới: [XXXX]
-  → Cập nhật ID #XX: Trạng thái = Chốt 1 phần
-
-HỦY LỆNH CHỜ
-  → Lý do: [khung nào phá cấu trúc / bias đảo chiều]
-  → Cập nhật ID #XX: Trạng thái = Đã hủy
-  → Thay thế: [setup mới nếu có / không có]
-
-CẮT LỖ NGAY
-  → Mức cắt: [XXXX]
-  → Lý do: [MTF đảo chiều X/5 / phá cấu trúc chính]
-  → Cập nhật ID #XX: Trạng thái = Cắt lỗ
-
-GIỮ NHƯNG HẠ ƯU TIÊN
-  → MTF chưa rõ, chờ thêm tín hiệu từ [khung nào]
-  → Điều kiện kích hoạt lại: [mô tả]
-
----
-
-### 3B. QUYẾT ĐỊNH LỆNH MỚI
-
-Số lệnh hiện tại (còn hoạt động) : [X] / tối đa 2
-Slot còn trống                   : Có [X slot] / Không
-Bias MTF mới                     : BUY / SELL / NEUTRAL
-MTF đồng thuận                   : X/5 khung
-Xung đột với lệnh cũ             : Có [giải thích] / Không
-
-#### LỆNH MỚI - BUY (nếu đủ điều kiện):
-
-| Thông số             | Chi tiết                          |
-|----------------------|-----------------------------------|
-| ID mới               | #[Phiên][Số] - ví dụ: #B1         |
-| Vùng Vào Lệnh        | XXXX - XXXX                       |
-| Khung xác nhận       | M15 tinh chỉnh + M5 tín hiệu     |
-| Điều Kiện Kích Hoạt  | [nến + chỉ báo cụ thể]            |
-| Cắt Lỗ (SL)         | XXXX — dưới [vùng/cấu trúc nào]  |
-| Chốt Lời 1 (TP1)    | XXXX — RR X:1 — [kháng cự nào]   |
-| Chốt Lời 2 (TP2)    | XXXX — RR X:1 — [kháng cự nào]   |
-| Chốt Lời 3 (TP3)    | XXXX — RR X:1 — [kháng cự nào]   |
-| Mức Độ Tin Cậy       | Cao / Trung bình / Thấp           |
-| MTF đồng thuận       | X/6 khung                         |
-| Quan hệ lệnh cũ      | Bổ trợ / Độc lập / Thay thế #XX  |
-| Điều Kiện Huỷ Setup  | [mô tả cụ thể]                    |
-
-#### LỆNH MỚI - SELL (nếu đủ điều kiện):
-
-| Thông số             | Chi tiết                          |
-|----------------------|-----------------------------------|
-| ID mới               | #[Phiên][Số] - ví dụ: #B2         |
-| Vùng Vào Lệnh        | XXXX - XXXX                       |
-| Khung xác nhận       | M15 tinh chỉnh + M5 tín hiệu     |
-| Điều Kiện Kích Hoạt  | [nến + chỉ báo cụ thể]            |
-| Cắt Lỗ (SL)         | XXXX — trên [vùng/cấu trúc nào]  |
-| Chốt Lời 1 (TP1)    | XXXX — RR X:1 — [hỗ trợ nào]     |
-| Chốt Lời 2 (TP2)    | XXXX — RR X:1 — [hỗ trợ nào]     |
-| Chốt Lời 3 (TP3)    | XXXX — RR X:1 — [hỗ trợ nào]     |
-| Mức Độ Tin Cậy       | Cao / Trung bình / Thấp           |
-| MTF đồng thuận       | X/6 khung                         |
-| Quan hệ lệnh cũ      | Bổ trợ / Độc lập / Thay thế #XX  |
-| Điều Kiện Huỷ Setup  | [mô tả cụ thể]                    |
-
-Nếu KHÔNG ĐỦ ĐIỀU KIỆN hoặc HẾT SLOT:
-
-KHÔNG MỞ LỆNH MỚI
-  Lý do   : [Hết slot / Không đủ RR / MTF yếu /
-             Cấu trúc không rõ / Sắp có tin tức]
-  Chờ đến : [điều kiện hoặc thời điểm cụ thể]
-
----
-
-### 3C. BẢNG TỔNG QUAN DANH MỤC CẬP NHẬT
-
-| ID  | Loại | Vùng vào  | SL mới | TP còn lại | Trạng thái   | Hành động   |
-|-----|------|-----------|--------|------------|--------------|-------------|
-| #A1 | BUY  | XXXX-XXXX | XXXX   | TP2, TP3   | Kéo SL       | Cập nhật SL |
-| #A2 | SELL | XXXX-XXXX | -      | -          | Đã hủy       | Đánh dấu    |
-| #B1 | BUY  | XXXX-XXXX | XXXX   | TP1,2,3    | Chờ vào      | Mới thêm    |
-
----
-
-## ═══════════════════════════════════
-## TÓM TẮT HÀNH ĐỘNG (30 giây đọc xong)
-## ═══════════════════════════════════
-
-BIAS TỔNG THỂ: [BUY / SELL / NEUTRAL] - [X/6 khung]
-
-VIỆC LÀM NGAY VỚI LỆNH CŨ:
-1. [#XX]: [Hành động] - [lý do 1 câu]
-2. [#XX]: [Hành động] - [lý do 1 câu]
-
-LỆNH MỚI:
-3. [#XX mới]: [Vào/Chờ/Bỏ qua] tại [XXXX-XXXX]
-   Điều kiện: [1 câu điều kiện kích hoạt]
-
-THEO DÕI:
-- Nếu giá vượt [XXXX] → [hành động cụ thể]
-- Nếu giá phá  [XXXX] → [hành động cụ thể]
-
-RỦI RO CẦN CHÚ Ý:
-- [Điểm 1 - khung nào đang cảnh báo]
-- [Điểm 2 - tin tức / mức giá nguy hiểm]
-- [Điểm 3 - xung đột MTF nếu có]
-
----
-
-NGUYÊN TẮC BẮT BUỘC:
-- PHÂN TÍCH MTF TRƯỚC - quyết định lệnh SAU
-- Bias W1+D1 là nền tảng - không giao dịch ngược W1
-- Tối thiểu 4/6 khung đồng thuận mới được vào lệnh
-- RR tối thiểu 1:2 - TP phải khớp mức kháng cự/hỗ trợ MTF
-- Tối đa 2 lệnh hoạt động cùng lúc
-- Sau TP1 bắt buộc dời SL về hòa vốn
-- MTF đảo chiều ngược lệnh cũ → xem xét hủy ngay
-- Có tin tức trong 30 phút → không vào lệnh mới
-- MTF không rõ ràng → ghi rõ KHÔNG GIAO DỊCH
-- ID lệnh bị hủy/đóng → ghi rõ để user cập nhật
-- Bảo vệ vốn trước - lợi nhuận sau`;
+## NGUYÊN TẮC BẮT BUỘC
+- Chỉ vào lệnh khi RR tối thiểu 1:2
+- Ưu tiên vào lệnh thuận chiều M15
+- Không đuổi giá — chờ pullback về vùng
+- M15 và M5 mâu thuẫn → KHÔNG GIAO DỊCH
+- Tránh vào lệnh 30 phút trước/sau tin tức lớn
+- Bảo vệ vốn trước, lợi nhuận sau`;
   }
 
   private buildUserPrompt(
@@ -407,24 +172,29 @@ NGUYÊN TẮC BẮT BUỘC:
     const now = this.formatVnTime(new Date());
 
     const sections: string[] = [
-      '## DỮ LIỆU ĐẦU VÀO\n',
+      '## DATA ĐẦU VÀO\n',
       `**Công cụ:** ${instrument}`,
       `**Thời điểm:** ${now} (Asia/Ho_Chi_Minh)`,
       `**Giá hiện tại:** ${currentPrice}`,
       `**RR tối thiểu:** ${minRr}:1\n`,
     ];
 
+    // M15 trước, M5 sau theo thứ tự phân tích
+    const orderedTf = ['M15', 'M5'];
+    for (const tf of orderedTf) {
+      const candles = candlesByTimeframe[tf];
+      if (candles) sections.push(this.buildTimeframeSection(tf, candles));
+    }
+
+    // Các timeframe khác nếu có (ngoài M15/M5)
     for (const [tf, candles] of Object.entries(candlesByTimeframe)) {
-      sections.push(this.buildTimeframeSection(tf, candles));
+      if (!orderedTf.includes(tf)) sections.push(this.buildTimeframeSection(tf, candles));
     }
 
     sections.push(`
 ---
 
-Hãy thực hiện đầy đủ 3 BƯỚC theo quy trình đã chỉ định trong system prompt:
-- BƯỚC 1: Phân tích kỹ thuật độc lập (1A → 1G) dựa trên dữ liệu nến phía trên
-- BƯỚC 2: Đọc & đánh giá danh sách lệnh cũ (nếu có)
-- BƯỚC 3: Ra quyết định tổng thể (3A → 3E + Tóm tắt hành động)
+Hãy thực hiện đầy đủ phân tích theo cấu trúc mục 1→8 trong system prompt.
 
 Sau khi hoàn thành toàn bộ phân tích, kết thúc response bằng block JSON sau để hệ thống tự động xử lý:
 
@@ -445,21 +215,21 @@ Sau khi hoàn thành toàn bộ phân tích, kết thúc response bằng block J
     "trend_m15": "string — xu hướng M15",
     "trend_m15_detail": "string — mô tả ngắn cấu trúc M15",
     "structure": "string — BOS/CHoCH và ý nghĩa",
-    "ma_position": "string — vị trí so với EMA/HMA/BB",
-    "rsi_m5": "string — giá trị RSI và ý nghĩa",
-    "volume": "string — nhận xét về khối lượng"
+    "ma_position": "string — vị trí so với EMA 20/50/200 và HMA 200",
+    "rsi_m5": "string — giá trị RSI M5 và ý nghĩa",
+    "atr_note": "string — nhận xét về ATR / biến động"
   },
   "key_levels": [
     {
-      "label": "string — tên vùng giá (ví dụ: Kháng cự mạnh nhất (Dải 89 M15))",
-      "value": "string — vùng giá (ví dụ: 4,645 – 4,655)",
+      "label": "string — tên vùng giá",
+      "value": "string — vùng giá hoặc giá cụ thể",
       "type": "resistance hoặc support hoặc neutral"
     }
   ],
   "setups": [
     {
       "direction": "BUY hoặc SELL",
-      "id": "string — ví dụ: SELL1, BUY2",
+      "id": "string — ví dụ: SELL1, BUY1",
       "label": "string — ví dụ: SELL 1",
       "description": "string — mô tả setup ngắn",
       "confidence_label": "Cao hoặc Trung bình hoặc Thấp",
@@ -484,20 +254,52 @@ Sau khi hoàn thành toàn bộ phân tích, kết thúc response bằng block J
     const display = candles.slice(-CANDLE_TABLE_ROWS);
 
     const rsi = this.calculateRsi(candles, 14);
+    const ema20 = this.calculateEma(candles, 20);
+    const ema50 = this.calculateEma(candles, 50);
     const ema200 = this.calculateEma(candles, 200);
     const hma200 = this.calculateHma(candles, 200);
     const bb = this.calculateBB(candles, 34, 2.0);
+    const atr = this.calculateAtr(candles, 14);
 
-    const rsiValues = Object.values(rsi);
-    const lastRsi = rsiValues.length ? round2(rsiValues[rsiValues.length - 1]) : 'N/A';
-    const lastEma = ema200.length ? round2(ema200[ema200.length - 1]) : 'N/A';
-    const lastHma = hma200.length ? round2(hma200[hma200.length - 1]) : 'N/A';
+    const lastRsi = this.lastVal(Object.values(rsi));
+    const lastEma20 = this.lastVal(ema20);
+    const lastEma50 = this.lastVal(ema50);
+    const lastEma200 = this.lastVal(ema200);
+    const lastHma = this.lastVal(hma200);
     const lastBbU = bb ? round2(bb.upper) : 'N/A';
     const lastBbM = bb ? round2(bb.middle) : 'N/A';
     const lastBbL = bb ? round2(bb.lower) : 'N/A';
+    const lastAtr = this.lastVal(atr);
 
     const lastCandle = candles[candles.length - 1];
-    const vol = lastCandle ? lastCandle.volume.toLocaleString() : 'N/A';
+    const patterns = this.detectCandlePatterns(candles.slice(-5));
+
+    // Log toàn bộ dữ liệu timeframe dưới dạng JSON
+    const candleData = candles.map((c) => ({
+      time: c.time,
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+      rsi14: rsi[c.time] !== undefined ? round2(rsi[c.time]) : null,
+    }));
+
+    logger.info(`[${tf}] Market Data`, {
+      timeframe: tf,
+      total,
+      rsi_available_from_index: 15,
+      indicators: {
+        ema20: lastEma20,
+        ema50: lastEma50,
+        ema200: lastEma200,
+        hma200: lastHma,
+        bb34: { upper: lastBbU, middle: lastBbM, lower: lastBbL },
+        rsi14: lastRsi,
+        atr14: lastAtr,
+        candle_patterns: patterns,
+      },
+      candles: candleData,
+    });
 
     const lines: string[] = [
       `\n### [${tf}] — ${total} nến`,
@@ -505,25 +307,27 @@ Sau khi hoàn thành toàn bộ phân tích, kết thúc response bằng block J
       '**Chỉ báo kỹ thuật (nến cuối):**',
       '| Chỉ báo | Giá trị |',
       '|---------|---------|',
-      `| EMA 200 | ${lastEma} |`,
+      `| EMA 20 | ${lastEma20} |`,
+      `| EMA 50 | ${lastEma50} |`,
+      `| EMA 200 | ${lastEma200} |`,
       `| HMA 200 | ${lastHma} |`,
       `| BB(34) Upper | ${lastBbU} |`,
       `| BB(34) Middle | ${lastBbM} |`,
       `| BB(34) Lower | ${lastBbL} |`,
       `| RSI(14) | ${lastRsi} |`,
-      `| Volume nến cuối | ${vol} |`,
+      `| ATR(14) | ${lastAtr} |`,
+      '',
+      `**Pattern 5 nến gần nhất:** ${patterns.join(', ') || 'Không rõ'}`,
       '',
       `**Dữ liệu nến (${display.length} nến gần nhất):**`,
-      '| Thời gian | Open | High | Low | Close | Volume | RSI(14) |',
-      '|-----------|------|------|-----|-------|--------|---------|',
+      '| Thời gian | Open | High | Low | Close | RSI(14) |',
+      '|-----------|------|------|-----|-------|---------|',
     ];
 
     for (const c of display) {
       const rsiVal = rsi[c.time] !== undefined ? round2(rsi[c.time]) : '-';
-      lines.push(`| ${c.time} | ${c.open} | ${c.high} | ${c.low} | ${c.close} | ${c.volume} | ${rsiVal} |`);
+      lines.push(`| ${c.time} | ${c.open} | ${c.high} | ${c.low} | ${c.close} | ${rsiVal} |`);
     }
-
-    logger.debug(`RSI(14) [${tf}]`, rsi);
 
     return lines.join('\n');
   }
@@ -568,6 +372,31 @@ Sau khi hoàn thành toàn bộ phân tích, kết thúc response bằng block J
     for (let i = period; i < n; i++) {
       ema = candles[i].close * k + ema * (1 - k);
       result.push(ema);
+    }
+
+    return result;
+  }
+
+  private calculateAtr(candles: Candle[], period: number = 14): number[] {
+    const n = candles.length;
+    if (n < period + 1) return [];
+
+    const trs: number[] = [];
+    for (let i = 1; i < n; i++) {
+      const tr = Math.max(
+        candles[i].high - candles[i].low,
+        Math.abs(candles[i].high - candles[i - 1].close),
+        Math.abs(candles[i].low - candles[i - 1].close),
+      );
+      trs.push(tr);
+    }
+
+    // Wilder's smoothing
+    let atr = trs.slice(0, period).reduce((s, v) => s + v, 0) / period;
+    const result: number[] = [atr];
+    for (let i = period; i < trs.length; i++) {
+      atr = (atr * (period - 1) + trs[i]) / period;
+      result.push(atr);
     }
 
     return result;
@@ -643,6 +472,46 @@ Sau khi hoàn thành toàn bộ phân tích, kết thúc response bằng block J
     return { upper: sma + mult * std, middle: sma, lower: sma - mult * std };
   }
 
+  private detectCandlePatterns(candles: Candle[]): string[] {
+    const patterns: string[] = [];
+
+    for (let i = 0; i < candles.length; i++) {
+      const c = candles[i];
+      const body = Math.abs(c.close - c.open);
+      const range = c.high - c.low;
+      if (range === 0) continue;
+
+      const upperWick = c.high - Math.max(c.open, c.close);
+      const lowerWick = Math.min(c.open, c.close) - c.low;
+      const isBull = c.close > c.open;
+
+      if (body / range < 0.1) {
+        patterns.push('Doji');
+      } else if (lowerWick > body * 2 && upperWick < body * 0.5) {
+        patterns.push(isBull ? 'Hammer' : 'Hanging Man');
+      } else if (upperWick > body * 2 && lowerWick < body * 0.5) {
+        patterns.push(isBull ? 'Inverted Hammer' : 'Shooting Star');
+      } else if (i > 0) {
+        const prev = candles[i - 1];
+        const prevBull = prev.close > prev.open;
+        const prevBody = Math.abs(prev.close - prev.open);
+        if (!prevBull && isBull && c.open < prev.close && c.close > prev.open && body > prevBody) {
+          patterns.push('Bullish Engulfing');
+        } else if (prevBull && !isBull && c.open > prev.close && c.close < prev.open && body > prevBody) {
+          patterns.push('Bearish Engulfing');
+        }
+      }
+    }
+
+    return [...new Set(patterns)];
+  }
+
+  // ─── Helpers ──────────────────────────────────────────────────────────────
+
+  private lastVal(arr: number[]): number | 'N/A' {
+    return arr.length ? round2(arr[arr.length - 1]) : 'N/A';
+  }
+
   // ─── HTTP / parsing ───────────────────────────────────────────────────────
 
   private async postWithRetry(url: string, body: Record<string, unknown>): Promise<Record<string, any>> {
@@ -680,14 +549,12 @@ Sau khi hoàn thành toàn bộ phân tích, kết thúc response bằng block J
   }
 
   private extractJson(text: string): Record<string, unknown> {
-    // Try every ```json...``` block (prefer last — that's where the result block lives)
     const blocks = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)\s*```/gi)];
     for (const block of [...blocks].reverse()) {
       const parsed = this.tryParseJson(block[1].trim());
       if (parsed) return parsed;
     }
 
-    // Fallback: scan backwards for the last balanced {...} object
     const lastClose = text.lastIndexOf('}');
     if (lastClose !== -1) {
       let depth = 0;
@@ -716,8 +583,6 @@ Sau khi hoàn thành toàn bộ phân tích, kết thúc response bằng block J
     } catch { /* ignore */ }
     return null;
   }
-
-  // ─── Helpers ──────────────────────────────────────────────────────────────
 
   private formatVnTime(date: Date): string {
     const parts = new Intl.DateTimeFormat('en-GB', {

@@ -213,7 +213,6 @@ export class TelegramNotifier {
         ['Cấu trúc',         ms.structure],
         ['Vị trí so với MA', ms.ma_position],
         ['RSI (M5)',         ms.rsi_m5],
-        ['Khối lượng',       ms.volume],
       ];
 
       for (const [label, val] of rows) {

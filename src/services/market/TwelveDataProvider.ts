@@ -32,21 +32,22 @@ export class TwelveDataProvider implements MarketDataProvider {
       apikey: this.apiKey,
     });
 
-    logger.debug('TwelveData time_series', { instrument, timeframe, count: data.values?.length ?? 0 });
-
     if (data.status === 'error') throw new Error(`TwelveData error: ${data.message ?? 'unknown'}`);
 
     const values: Record<string, string>[] = data.values ?? [];
     if (!values.length) throw new Error(`TwelveData returned no candles for ${instrument} ${timeframe}.`);
 
-    return values.map((row) => new Candle(
+    logger.info(JSON.stringify(data));
+
+    const candles = values.map((row) => new Candle(
       row.datetime ?? '',
       parseFloat(row.open ?? '0'),
       parseFloat(row.high ?? '0'),
       parseFloat(row.low ?? '0'),
       parseFloat(row.close ?? '0'),
-      parseInt(row.volume ?? '0', 10),
     ));
+
+    return candles;
   }
 
   async fetchCurrentPrice(instrument: string): Promise<number> {

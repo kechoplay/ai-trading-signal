@@ -41,7 +41,6 @@ export class OandaProvider implements MarketDataProvider {
         parseFloat(mid.h ?? '0'),
         parseFloat(mid.l ?? '0'),
         parseFloat(mid.c ?? '0'),
-        parseInt(item.volume ?? '0', 10),
       );
     });
   }

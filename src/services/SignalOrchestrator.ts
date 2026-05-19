@@ -39,7 +39,7 @@ export class SignalOrchestrator {
 
     const signal = await this.persistSignal(instrument, currentPrice, result, candlesByTf);
 
-    await this.notify(signal, result);
+    // await this.notify(signal, result);
 
     return prisma.tradingSignal.findUniqueOrThrow({ where: { id: signal.id } });
   }

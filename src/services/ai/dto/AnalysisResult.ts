@@ -10,7 +10,7 @@ export interface MarketStructure {
   structure?: string;
   ma_position?: string;
   rsi_m5?: string;
-  volume?: string;
+  atr_note?: string;
 }
 
 export interface KeyLevel {
