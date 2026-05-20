@@ -1,4 +1,4 @@
-import { GeminiAnalystService } from './ai/GeminiAnalystService';
+import { ClaudeAnalystService } from './ai/ClaudeAnalystService';
 import { AnalysisResult } from './ai/dto/AnalysisResult';
 import { Candle } from './market/Candle';
 import { makeMarketDataProvider } from './market/MarketDataProviderFactory';
@@ -9,14 +9,14 @@ import { logger } from '../logger';
 export class SignalOrchestrator {
   constructor(
     private readonly market: ReturnType<typeof makeMarketDataProvider>,
-    private readonly gemini: GeminiAnalystService,
+    private readonly claude: ClaudeAnalystService,
     private readonly telegram: TelegramNotifier,
   ) {}
 
   static fromConfig(): SignalOrchestrator {
     return new SignalOrchestrator(
       makeMarketDataProvider(),
-      GeminiAnalystService.fromConfig(),
+      ClaudeAnalystService.fromConfig(),
       TelegramNotifier.fromConfig(),
     );
   }
@@ -40,7 +40,7 @@ export class SignalOrchestrator {
     }
 
     const currentPrice = await this.market.fetchCurrentPrice(instrument);
-    const { result, rawText } = await this.gemini.analyze(instrument, candlesByTf, currentPrice, minRr);
+    const { result, rawText } = await this.claude.analyze(instrument, candlesByTf, currentPrice, minRr);
 
     await this.notify(result, rawText, instrument, currentPrice, candlesByTf);
 

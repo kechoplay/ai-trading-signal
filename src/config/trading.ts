@@ -34,10 +34,9 @@ export const config = {
     },
   },
 
-  gemini: {
-    apiKey: process.env.GEMINI_API_KEY ?? '',
-    model: process.env.GEMINI_MODEL ?? 'gemini-2.0-flash',
-    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+  claude: {
+    apiKey: process.env.CLAUDE_API_KEY ?? '',
+    model: process.env.CLAUDE_MODEL ?? 'claude-sonnet-4-6',
   },
 
   telegram: {

@@ -9,7 +9,8 @@
       "Bash(npx tsc *)",
       "Bash(dir /b)",
       "Bash(docker --version)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(Remove-Item \"d:\\\\Work\\\\ai-trading-signal\\\\src\\\\services\\\\ai\\\\GeminiAnalystService.ts\")"
     ]
   }
 }

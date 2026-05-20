@@ -1,4 +1,4 @@
-import axios from 'axios';
+import Anthropic from '@anthropic-ai/sdk';
 import { Candle } from '../market/Candle';
 import { AnalysisResult, ConditionalSetup } from './dto/AnalysisResult';
 import { config } from '../../config/trading';
@@ -11,16 +11,19 @@ const CANDLES_BY_TF: Record<string, number> = {
   M5:  60,
 };
 
-export class GeminiAnalystService {
-  constructor(
-    private readonly apiKey: string,
-    private readonly model: string,
-    private readonly baseUrl: string,
-  ) {}
+export class ClaudeAnalystService {
+  private readonly client: Anthropic;
 
-  static fromConfig(): GeminiAnalystService {
-    if (!config.gemini.apiKey) throw new Error('GEMINI_API_KEY is not configured.');
-    return new GeminiAnalystService(config.gemini.apiKey, config.gemini.model, config.gemini.baseUrl);
+  constructor(private readonly model: string) {
+    this.client = new Anthropic({
+      apiKey: config.claude.apiKey,
+      maxRetries: 4,
+    });
+  }
+
+  static fromConfig(): ClaudeAnalystService {
+    if (!config.claude.apiKey) throw new Error('CLAUDE_API_KEY is not configured.');
+    return new ClaudeAnalystService(config.claude.model);
   }
 
   async analyze(
@@ -32,17 +35,28 @@ export class GeminiAnalystService {
     const systemPrompt = this.buildSystemPrompt();
     const userPrompt = this.buildOhlcPrompt(instrument, candlesByTimeframe, currentPrice, minRr);
 
-    const url = `${this.baseUrl}/models/${this.model}:generateContent?key=${this.apiKey}`;
+    logger.info('[Claude] User prompt', { prompt: userPrompt });
 
-    const requestBody = {
-      systemInstruction: { parts: [{ text: systemPrompt }] },
-      contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
-      generationConfig: { temperature: 0.2, maxOutputTokens: 8192 },
-    };
+    // Stream due to large input (candle data) + up to 8K output tokens
+    const stream = this.client.messages.stream({
+      model: this.model,
+      max_tokens: 8192,
+      thinking: { type: 'disabled' }, // adaptive là có sử dụng thinking
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userPrompt }],
+    });
 
-    const payload = await this.postWithRetry(url, requestBody);
-    const rawText = this.extractText(payload);
-    logger.info('[Gemini] Raw response', { text: rawText });
+    const message = await stream.finalMessage();
+
+    // Extract only text blocks (skip thinking blocks)
+    const rawText = message.content
+      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+      .map((b) => b.text)
+      .join('');
+
+    if (!rawText) throw new Error('Claude returned empty text content.');
+
+    logger.info('[Claude] Raw response', { text: rawText });
 
     const result = this.parseAnalysisResult(rawText);
     return { result, rawText };
@@ -331,33 +345,6 @@ Analyze thoroughly using the exact structure below.
 
   // ─── Indicator calculations ───────────────────────────────────────────────
 
-  private calculateRsi(candles: Candle[], period: number = 14): Record<string, number> {
-    const result: Record<string, number> = {};
-    const n = candles.length;
-    if (n < period + 1) return result;
-
-    let avgGain = 0;
-    let avgLoss = 0;
-
-    for (let i = 1; i <= period; i++) {
-      const diff = candles[i].close - candles[i - 1].close;
-      if (diff > 0) avgGain += diff;
-      else avgLoss += Math.abs(diff);
-    }
-    avgGain /= period;
-    avgLoss /= period;
-
-    for (let i = period + 1; i < n; i++) {
-      const diff = candles[i].close - candles[i - 1].close;
-      avgGain = (avgGain * (period - 1) + Math.max(0, diff)) / period;
-      avgLoss = (avgLoss * (period - 1) + Math.max(0, -diff)) / period;
-      const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-      result[candles[i].time] = Math.round((100 - 100 / (1 + rs)) * 100) / 100;
-    }
-
-    return result;
-  }
-
   private calculateEma(candles: Candle[], period: number): number[] {
     const n = candles.length;
     if (n < period) return [];
@@ -509,42 +496,6 @@ Analyze thoroughly using the exact structure below.
     return arr.length ? round2(arr[arr.length - 1]) : 'N/A';
   }
 
-  // ─── HTTP / parsing ───────────────────────────────────────────────────────
-
-  private async postWithRetry(url: string, body: Record<string, unknown>): Promise<Record<string, any>> {
-    const maxAttempts = 4;
-    const transientStatuses = [429, 500, 502, 503, 504];
-    let lastErr: unknown;
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        const { data } = await axios.post(url, body, { timeout: 120_000 });
-        return data;
-      } catch (err: any) {
-        lastErr = err;
-        const status: number | undefined = err.response?.status;
-
-        if (status !== undefined && !transientStatuses.includes(status)) {
-          throw new Error(`Gemini API request failed (${status}): ${JSON.stringify(err.response?.data)}`);
-        }
-
-        if (attempt === maxAttempts) break;
-
-        const sleepMs = attempt * 3_000;
-        logger.warn('Gemini transient error, retrying', { attempt, status, sleepMs });
-        await new Promise((r) => setTimeout(r, sleepMs));
-      }
-    }
-
-    throw lastErr ?? new Error('Gemini request failed after max attempts');
-  }
-
-  private extractText(payload: Record<string, any>): string {
-    const text: string = payload?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-    if (!text) throw new Error('Gemini returned empty text content.');
-    return text;
-  }
-
   private formatVnTime(date: Date): string {
     const parts = new Intl.DateTimeFormat('en-GB', {
       day: '2-digit', month: '2-digit', year: 'numeric',
@@ -560,32 +511,15 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-/**
- * Format candle timestamp to "Y-m-d H:i" (strip seconds).
- * Input:  "2026-05-20 10:30:00"  →  Output: "2026-05-20 10:30"
- * Input:  "2026-05-20T10:30:00Z" →  Output: "2026-05-20 10:30"
- */
 function formatCandleTime(time: string): string {
   const normalised = time.replace('T', ' ').replace(/Z$/, '');
   return normalised.length >= 16 ? normalised.slice(0, 16) : normalised;
 }
 
-function extractFirstNum(text: string, re: RegExp): number | null {
-  const outer = text.match(re);
-  if (!outer) return null;
-  const inner = outer[1].match(/[\d,.]+/);
-  return inner ? parseFloat(inner[0].replace(',', '')) : null;
-}
-
-/**
- * Tìm dòng chứa keyword, rồi lấy số đầu tiên có ≥3 chữ số trên dòng đó.
- * Tránh bắt nhầm "2 pip", "3 lần"... — giá vàng/forex luôn ≥ 100.
- */
 function extractPriceFromLine(text: string, keyword: string): number | null {
   const re   = new RegExp(`^[^\\n]*\\b${keyword}\\b[^\\n]*$`, 'im');
   const line = text.match(re)?.[0];
   if (!line) return null;
-  // Số có ≥3 chữ số (có thể kèm dấu thập phân)
   const nums = line.match(/\b\d{3,}(?:[.,]\d+)?\b/g);
   if (!nums) return null;
   return parseFloat(nums[0].replace(',', ''));

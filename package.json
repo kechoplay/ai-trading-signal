@@ -15,6 +15,7 @@
     "server:dev": "tsx watch src/server.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.97.1",
     "@prisma/client": "^5.22.0",
     "@types/express": "^5.0.6",
     "axios": "^1.7.7",
