@@ -1,9 +1,15 @@
 import axios from 'axios';
 import { Candle } from '../market/Candle';
+import { AnalysisResult, ConditionalSetup } from './dto/AnalysisResult';
 import { config } from '../../config/trading';
 import { logger } from '../../logger';
 
-const CANDLE_TABLE_ROWS = 50;
+/** Max candles to include in the prompt per timeframe. */
+const CANDLES_BY_TF: Record<string, number> = {
+  H1:  100,
+  M15: 96,
+  M5:  60,
+};
 
 export class GeminiAnalystService {
   constructor(
@@ -22,7 +28,7 @@ export class GeminiAnalystService {
     candlesByTimeframe: Record<string, Candle[]>,
     currentPrice: number,
     minRr: number,
-  ): Promise<string> {
+  ): Promise<{ result: AnalysisResult; rawText: string }> {
     const systemPrompt = this.buildSystemPrompt();
     const userPrompt = this.buildOhlcPrompt(instrument, candlesByTimeframe, currentPrice, minRr);
 
@@ -35,125 +41,216 @@ export class GeminiAnalystService {
     };
 
     const payload = await this.postWithRetry(url, requestBody);
-    const text = this.extractText(payload);
-    logger.info('[Gemini] Raw response', { text });
+    const rawText = this.extractText(payload);
+    logger.info('[Gemini] Raw response', { text: rawText });
 
-    return text;
+    const result = this.parseAnalysisResult(rawText);
+    return { result, rawText };
+  }
+
+  private parseAnalysisResult(text: string): AnalysisResult {
+    const action           = this.extractAction(text);
+    const trendBias        = this.extractBias(text);
+    const conditionalSetups = this.extractAllSetups(text);
+
+    if (action === 'NO_TRADE') {
+      return new AnalysisResult(
+        'NO_TRADE', null, null, null, null,
+        this.extractConfidence(text), trendBias, text,
+        {}, null, null, null, conditionalSetups,
+      );
+    }
+
+    const section    = this.extractSection(text, action);
+    const entry      = extractPriceFromLine(section, 'entry');
+    const stopLoss   = extractPriceFromLine(section, 'sl');
+    const takeProfit = extractPriceFromLine(section, 'tp1');
+    const riskReward = this.extractRRFromLine(section, 'tp1') ?? this.extractRR(section);
+    const confidence = this.extractConfidence(section) ?? this.extractConfidence(text);
+
+    return new AnalysisResult(
+      action, entry, stopLoss, takeProfit, riskReward,
+      confidence, trendBias, text,
+      {}, null, null, null, conditionalSetups,
+    );
+  }
+
+  private extractAllSetups(text: string): ConditionalSetup[] {
+    const setups: ConditionalSetup[] = [];
+
+    for (const direction of ['BUY', 'SELL'] as const) {
+      const label = direction === 'BUY' ? 'BUY\\s+ORDER' : 'SELL\\s+ORDER';
+      const re    = new RegExp(`${label}[\\s\\S]*?(?=####\\s*(?:BUY|SELL)\\s+ORDER|###\\s|---|\n{3,}|$)`, 'i');
+      const raw   = text.match(re)?.[0]?.trim();
+      if (!raw) continue;
+
+      setups.push({ direction, rawText: raw });
+    }
+
+    return setups;
+  }
+
+  private extractAction(text: string): 'BUY' | 'SELL' | 'NO_TRADE' {
+    // "Patience level: No trade" is the final decision — check first
+    if (/patience\s+level[^:\n]*:\s*no\s+trade/i.test(text)) return 'NO_TRADE';
+
+    // "Best opportunity: BUY|SELL" from section 8 SUMMARY
+    const m = text.match(/best\s+opportunity[^:\n]*:\s*(BUY|SELL)/i);
+    if (m) return m[1].toUpperCase() as 'BUY' | 'SELL';
+
+    // Fallback: only one direction has a section header
+    const hasBuy  = /####\s*BUY\s+ORDER/i.test(text);
+    const hasSell = /####\s*SELL\s+ORDER/i.test(text);
+    if (hasBuy && !hasSell) return 'BUY';
+    if (hasSell && !hasBuy) return 'SELL';
+
+    return 'NO_TRADE';
+  }
+
+  private extractSection(text: string, action: 'BUY' | 'SELL'): string {
+    const label = action === 'BUY' ? 'BUY\\s+ORDER' : 'SELL\\s+ORDER';
+    const re    = new RegExp(`${label}[\\s\\S]*?(?=####\\s*(?:BUY|SELL)\\s+ORDER|###\\s|---|\n{3,}|$)`, 'i');
+    return text.match(re)?.[0] ?? text;
+  }
+
+  private extractRR(section: string): number | null {
+    const m1 = section.match(/\bRR\s+(\d+(?:\.\d+)?)\s*:\s*1/i);
+    if (m1) return parseFloat(m1[1]);
+    const m2 = section.match(/\bRR\s+1\s*:\s*(\d+(?:\.\d+)?)/i);
+    if (m2) return parseFloat(m2[1]);
+    return null;
+  }
+
+  /** Extract RR từ dòng TP cụ thể (tp1/tp2/tp3) — handle "RR khoảng 1:1.5", "RR 2:1" */
+  private extractRRFromLine(section: string, tp: 'tp1' | 'tp2' | 'tp3'): number | null {
+    const re = new RegExp(`\\b${tp}[^\\n]*RR[^0-9\\n]*(\\d+(?:[.,]\\d+)?)\\s*:\\s*(\\d+(?:[.,]\\d+)?)`, 'i');
+    const m  = section.match(re);
+    if (!m) return null;
+    const a = parseFloat(m[1].replace(',', '.'));
+    const b = parseFloat(m[2].replace(',', '.'));
+    // Reward side: nếu a=1 thì b là reward, nếu b=1 thì a là reward, không thì lấy số lớn hơn
+    if (a === 1) return b;
+    if (b === 1) return a;
+    return Math.max(a, b);
+  }
+
+  private extractConfidence(text: string): number | null {
+    const m = text.match(/confidence[^:\n]*:\s*(High|Medium|Low)/i);
+    if (!m) return null;
+    const c = m[1].toLowerCase();
+    if (c === 'high') return 85;
+    if (c === 'low')  return 45;
+    return 65;
+  }
+
+  private extractBias(text: string): string | null {
+    const m = text.match(/Bias\s+(?:H1|M15|M5|Overall)[^:\n]*:\s*(BULLISH|BEARISH|NEUTRAL)/i);
+    return m ? m[1].toUpperCase() : null;
   }
 
   // ─── Prompt builders ──────────────────────────────────────────────────────
 
   private buildSystemPrompt(): string {
-    return `Bạn là trader vàng chuyên nghiệp 15 năm kinh nghiệm.
+    return `You are a professional XAU/USD (gold) trader with 15 years of experience.
 
-Tôi cung cấp data OHLC của XAUUSD cho 2 khung thời gian M5 và M15, kèm theo các indicator đã tính sẵn.
-Hãy phân tích hoàn chỉnh theo đúng cấu trúc sau.
+I provide OHLC data for XAU/USD across M5, M15 and H1 timeframes with pre-calculated indicators.
+Analyze thoroughly using the exact structure below.
 
 ---
 
-### 1. PHÂN TÍCH ĐA KHUNG THỜI GIAN (MTF)
+### 1. MULTI-TIMEFRAME ANALYSIS (MTF)
 
-#### M15 — Xác nhận xu hướng:
-- Xu hướng: Tăng / Giảm / Đi ngang
-- Vị trí giá so với EMA 20/50/200 và HMA 200
-- RSI 14: giá trị + tín hiệu (OB/OS/phân kỳ)
-- Swing High & Swing Low quan trọng
-- BOS hoặc CHoCH nếu có
-- Vùng Hỗ trợ & Kháng cự M15 quan trọng nhất
+#### H1 — Higher Timeframe Bias:
+- Trend: Up / Down / Sideways
+- Price position vs EMA 20/50/200 and HMA 200
+- Key Swing High & Swing Low
+- BOS or CHoCH if present
+- Major H1 Support & Resistance zones
+- Bias H1: BULLISH / BEARISH / NEUTRAL
+
+#### M15 — Trend Confirmation:
+- Trend: Up / Down / Sideways
+- Price position vs EMA 20/50/200 and HMA 200
+- Key Swing High & Swing Low
+- BOS or CHoCH if present
+- Most important M15 Support & Resistance zones
 - Bias M15: BULLISH / BEARISH / NEUTRAL
 
-#### M5 — Tín hiệu vào lệnh:
-- Xu hướng ngắn hạn
-- Vị trí giá so với EMA 20/50/200 và HMA 200
-- RSI 14: giá trị + tín hiệu
-- ATR 14: mức biến động hiện tại
-- Hình dạng 5 nến gần nhất: tên pattern + ý nghĩa
-- BOS hoặc CHoCH nếu có
+#### M5 — Entry Signal:
+- Short-term trend
+- Price position vs EMA 20/50/200 and HMA 200
+- ATR 14: current volatility
+- Last 5 candle shapes: pattern name + significance
+- BOS or CHoCH if present
 - Bias M5: BULLISH / BEARISH / NEUTRAL
 
-#### Tổng hợp MTF:
-- M15 và M5 đồng thuận hay mâu thuẫn?
-- Bias tổng thể: BULLISH / BEARISH / NEUTRAL
-- Nếu mâu thuẫn → ghi rõ lý do và khuyến nghị KHÔNG GIAO DỊCH
+#### MTF Summary:
+- Do H1, M15 and M5 align or conflict?
+- Overall Bias: BULLISH / BEARISH / NEUTRAL
+- If conflicting → state reasons clearly and recommend NO TRADE
 
 ---
 
-### 2. CẤU TRÚC THỊ TRƯỜNG
-- Swing High & Swing Low quan trọng nhất (tổng hợp 2 khung)
-- Chuỗi HH-HL hoặc LH-LL
-- BOS hoặc CHoCH gần nhất
+### 2. MARKET STRUCTURE
+- Most important Swing High & Swing Low (across both timeframes)
+- HH-HL or LH-LL sequence
+- Most recent BOS or CHoCH
 
 ---
 
-### 3. CÁC MỨC GIÁ QUAN TRỌNG
-- Hỗ trợ & Kháng cự chính (tổng hợp M5 + M15)
-- Số tròn gần nhất
-- FVG (Fair Value Gap) nếu phát hiện được
-- Order Block tăng & giảm
+### 3. KEY PRICE LEVELS
+- Major Support & Resistance (M5 + M15 combined)
+- Nearest round number
+- FVG (Fair Value Gap) if detected
+- Bullish and Bearish Order Blocks
 
 ---
 
-### 4. VÙNG CUNG & CẦU
-- Vùng Cung hoạt động (SELL tiềm năng) — đánh giá Mạnh/TB/Yếu
-- Vùng Cầu hoạt động (BUY tiềm năng) — đánh giá Mạnh/TB/Yếu
+### 4. SUPPLY & DEMAND ZONES
+- Active Supply Zone (potential SELL) — rate as Strong/Medium/Weak
+- Active Demand Zone (potential BUY) — rate as Strong/Medium/Weak
 
 ---
 
-### 5. XÁC NHẬN CHỈ BÁO
-- EMA 20/50/200: vị trí và hướng của đường EMA
-- HMA 200: đang dốc lên / dốc xuống / phẳng
-- RSI 14: giá trị, phân kỳ dương/âm nếu có
-- ATR 14: cơ sở tính SL/TP
+### 5. INDICATOR CONFIRMATION
+- EMA 20/50/200: position and direction
+- HMA 200: sloping up / sloping down / flat
+- RSI 14: value, positive/negative divergence if any
+- ATR 14: basis for SL/TP sizing
 
 ---
 
-### 6. THIẾT LẬP LỆNH GIAO DỊCH
+### 6. TRADE SETUPS
 
-#### LỆNH BUY (nếu có):
-- Vùng vào lệnh: [giá]
-- Điều kiện kích hoạt: [cụ thể]
-- SL: [giá] — lý do — khoảng cách [X pip]
-- TP1: [giá] — RR [X:1]
-- TP2: [giá] — RR [X:1]
-- TP3: [giá] — RR [X:1]
-- Độ tin cậy: Cao / TB / Thấp
-- Điều kiện huỷ setup: [cụ thể]
+#### BUY ORDER (if applicable):
+- Entry zone: [price]
+- Trigger condition: [specific]
+- SL: [price] — reason — distance [X pip]
+- TP1: [price] — RR [X:1]
+- TP2: [price] — RR [X:1]
+- TP3: [price] — RR [X:1]
+- Confidence: High / Medium / Low
+- Cancel condition: [specific]
 
-#### LỆNH SELL (nếu có):
-- Vùng vào lệnh: [giá]
-- Điều kiện kích hoạt: [cụ thể]
-- SL: [giá] — lý do — khoảng cách [X pip]
-- TP1: [giá] — RR [X:1]
-- TP2: [giá] — RR [X:1]
-- TP3: [giá] — RR [X:1]
-- Độ tin cậy: Cao / TB / Thấp
-- Điều kiện huỷ setup: [cụ thể]
-
----
-
-### 7. QUẢN LÝ VỐN
-- Rủi ro mỗi lệnh: 1%
-- Lot size gợi ý = (Vốn × 1%) / (SL_pip × pip_value)
-- Số lệnh tối đa cùng lúc: 1
+#### SELL ORDER (if applicable):
+- Entry zone: [price]
+- Trigger condition: [specific]
+- SL: [price] — reason — distance [X pip]
+- TP1: [price] — RR [X:1]
+- TP2: [price] — RR [X:1]
+- TP3: [price] — RR [X:1]
+- Confidence: High / Medium / Low
+- Cancel condition: [specific]
 
 ---
 
-### 8. TÓM TẮT
+### 7. SUMMARY
+- Bias H1: BULLISH / BEARISH / NEUTRAL
 - Bias M15: BULLISH / BEARISH / NEUTRAL
 - Bias M5: BULLISH / BEARISH / NEUTRAL
-- Cơ hội tốt nhất: BUY hay SELL
-- Mức độ kiên nhẫn: Vào ngay / Chờ retest / Không giao dịch
-- Lý do ngắn gọn 1-2 câu
-
----
-
-## NGUYÊN TẮC BẮT BUỘC
-- Chỉ vào lệnh khi RR tối thiểu 1:2
-- Ưu tiên vào lệnh thuận chiều M15
-- Không đuổi giá — chờ pullback về vùng
-- M15 và M5 mâu thuẫn → KHÔNG GIAO DỊCH
-- Tránh vào lệnh 30 phút trước/sau tin tức lớn
-- Bảo vệ vốn trước, lợi nhuận sau`;
+- Best opportunity: BUY or SELL
+- Patience level: Enter now / Wait for retest / No trade
+- Brief reason in 1-2 sentences`;
   }
 
   private buildOhlcPrompt(
@@ -163,60 +260,73 @@ Hãy phân tích hoàn chỉnh theo đúng cấu trúc sau.
     minRr: number,
   ): string {
     const now = this.formatVnTime(new Date());
-    const orderedTf = ['M15', 'M5'];
+    const orderedTf = ['H1', 'M15', 'M5'];
     const allTf = [
-      ...orderedTf,
+      ...orderedTf.filter((tf) => tf in candlesByTimeframe),
       ...Object.keys(candlesByTimeframe).filter((tf) => !orderedTf.includes(tf)),
     ];
 
-    const timeframes: Record<string, unknown> = {};
+    const lines: string[] = [
+      `INSTRUMENT: ${instrument}`,
+      `CURRENT PRICE: ${currentPrice}`,
+      `MIN R:R: ${minRr}`,
+      `TIMESTAMP: ${now}`,
+      '',
+    ];
+
     for (const tf of allTf) {
       const candles = candlesByTimeframe[tf];
       if (!candles) continue;
 
-      const rsi = this.calculateRsi(candles, 14);
-      const ema20 = this.calculateEma(candles, 20);
-      const ema50 = this.calculateEma(candles, 50);
-      const ema200 = this.calculateEma(candles, 200);
-      const hma200 = this.calculateHma(candles, 200);
-      const bb = this.calculateBB(candles, 34, 2.0);
-      const atr = this.calculateAtr(candles, 14);
+      const ema20   = this.calculateEma(candles, 20);
+      const ema50   = this.calculateEma(candles, 50);
+      const ema200  = this.calculateEma(candles, 200);
+      const hma200  = this.calculateHma(candles, 200);
+      const bb      = this.calculateBB(candles, 34, 2.0);
+      const atr     = this.calculateAtr(candles, 14);
       const patterns = this.detectCandlePatterns(candles.slice(-5));
 
       const indicators = {
-        ema20: this.lastVal(ema20),
-        ema50: this.lastVal(ema50),
-        ema200: this.lastVal(ema200),
-        hma200: this.lastVal(hma200),
-        bb_upper: bb ? round2(bb.upper) : null,
+        ema20:     this.lastVal(ema20),
+        ema50:     this.lastVal(ema50),
+        ema200:    this.lastVal(ema200),
+        hma200:    this.lastVal(hma200),
+        bb_upper:  bb ? round2(bb.upper)  : null,
         bb_middle: bb ? round2(bb.middle) : null,
-        bb_lower: bb ? round2(bb.lower) : null,
-        rsi14: this.lastVal(Object.values(rsi)),
-        atr14: this.lastVal(atr),
+        bb_lower:  bb ? round2(bb.lower)  : null,
+        atr14:     this.lastVal(atr),
         patterns,
       };
 
-      const candleRows = candles.slice(-CANDLE_TABLE_ROWS).map((c) => ({
-        time: c.time,
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close,
-        rsi14: rsi[c.time] !== undefined ? round2(rsi[c.time]) : null,
-      }));
+      logger.info(`[${tf}] Market Data`, { timeframe: tf, total: candles.length, indicators });
 
-      logger.info(`[${tf}] Market Data`, { timeframe: tf, total: candles.length, indicators, candles: candleRows });
+      const limit = CANDLES_BY_TF[tf] ?? 100;
+      const candleSlice = candles.slice(-limit);
+      const csvRows = candleSlice.map((c) =>
+        `${formatCandleTime(c.time)},${c.open},${c.high},${c.low},${c.close}`,
+      );
+      const candleCsv = ['time,open,high,low,close', ...csvRows].join('\n');
 
-      timeframes[tf] = { indicators, candles: candleRows };
+      lines.push(`=== ${tf} DATA ===`);
+      lines.push('INDICATORS:');
+      lines.push(`  EMA20:     ${indicators.ema20}`);
+      lines.push(`  EMA50:     ${indicators.ema50}`);
+      lines.push(`  EMA200:    ${indicators.ema200}`);
+      lines.push(`  HMA200:    ${indicators.hma200}`);
+      lines.push(`  BB Upper:  ${indicators.bb_upper ?? 'N/A'}`);
+      lines.push(`  BB Middle: ${indicators.bb_middle ?? 'N/A'}`);
+      lines.push(`  BB Lower:  ${indicators.bb_lower ?? 'N/A'}`);
+      lines.push(`  ATR14:     ${indicators.atr14}`);
+      if (patterns.length > 0) {
+        lines.push(`  Patterns (last 5 candles): ${patterns.join(', ')}`);
+      }
+      lines.push('');
+      lines.push(`OHLC (${candleSlice.length} candles):`);
+      lines.push(candleCsv);
+      lines.push('');
     }
 
-    const ohlc = JSON.stringify(
-      { instrument, current_price: currentPrice, min_rr: minRr, timestamp: now, timeframes },
-      null,
-      2,
-    );
-
-    return `${ohlc}`;
+    return lines.join('\n');
   }
 
   // ─── Indicator calculations ───────────────────────────────────────────────
@@ -448,4 +558,35 @@ Hãy phân tích hoàn chỉnh theo đúng cấu trúc sau.
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+/**
+ * Format candle timestamp to "Y-m-d H:i" (strip seconds).
+ * Input:  "2026-05-20 10:30:00"  →  Output: "2026-05-20 10:30"
+ * Input:  "2026-05-20T10:30:00Z" →  Output: "2026-05-20 10:30"
+ */
+function formatCandleTime(time: string): string {
+  const normalised = time.replace('T', ' ').replace(/Z$/, '');
+  return normalised.length >= 16 ? normalised.slice(0, 16) : normalised;
+}
+
+function extractFirstNum(text: string, re: RegExp): number | null {
+  const outer = text.match(re);
+  if (!outer) return null;
+  const inner = outer[1].match(/[\d,.]+/);
+  return inner ? parseFloat(inner[0].replace(',', '')) : null;
+}
+
+/**
+ * Tìm dòng chứa keyword, rồi lấy số đầu tiên có ≥3 chữ số trên dòng đó.
+ * Tránh bắt nhầm "2 pip", "3 lần"... — giá vàng/forex luôn ≥ 100.
+ */
+function extractPriceFromLine(text: string, keyword: string): number | null {
+  const re   = new RegExp(`^[^\\n]*\\b${keyword}\\b[^\\n]*$`, 'im');
+  const line = text.match(re)?.[0];
+  if (!line) return null;
+  // Số có ≥3 chữ số (có thể kèm dấu thập phân)
+  const nums = line.match(/\b\d{3,}(?:[.,]\d+)?\b/g);
+  if (!nums) return null;
+  return parseFloat(nums[0].replace(',', ''));
 }

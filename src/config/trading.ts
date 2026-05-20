@@ -3,12 +3,12 @@ export const config = {
 
   instrument: process.env.TRADING_INSTRUMENT ?? 'XAU/USD',
 
-  timeframes: (process.env.TRADING_TIMEFRAMES ?? 'M5,M15')
+  timeframes: (process.env.TRADING_TIMEFRAMES ?? 'H1,M15,M5')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean),
 
-  candlesCount: parseInt(process.env.TRADING_CANDLES_COUNT ?? '100', 10),
+  candlesCount: parseInt(process.env.TRADING_CANDLES_COUNT ?? '214', 10),
 
   minRr: parseFloat(process.env.TRADING_MIN_RR ?? '2.0'),
 

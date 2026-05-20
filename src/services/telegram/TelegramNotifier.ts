@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { TradingSignal } from '@prisma/client';
 import { AnalysisResult } from '../ai/dto/AnalysisResult';
+import { Candle } from '../market/Candle';
 import { config } from '../../config/trading';
 import { logger } from '../../logger';
 
@@ -352,6 +353,150 @@ export class TelegramNotifier {
     return lines.join('\n');
   }
 
+  formatSignalCard(result: AnalysisResult, instrument: string, currentPrice?: number): string {
+    const SEP = '━━━━━━━━━━━━━━━━━━━━━';
+    const time = formatDate(new Date());
+
+    const actionLine =
+      result.action === 'BUY'  ? '🟢 <b>MUA (BUY)</b>'  :
+      result.action === 'SELL' ? '🔴 <b>BÁN (SELL)</b>' :
+      '⚪ <b>KHÔNG VÀO LỆNH</b>';
+
+    const lines: string[] = [
+      SEP,
+      `📊 <b>${htmlEscape(instrument)}</b>  ${actionLine}`,
+      SEP,
+      `🕐 ${time} <i>(Giờ VN)</i>`,
+    ];
+
+    if (currentPrice != null) {
+      lines.push(`💵 <b>Giá hiện tại:</b>  ${formatPrice(currentPrice, 2)}`);
+    }
+
+    if (result.trendBias) {
+      const biasLabel =
+        result.trendBias.toUpperCase() === 'BULLISH' ? '📈 Tăng'     :
+        result.trendBias.toUpperCase() === 'BEARISH' ? '📉 Giảm'     :
+        '➖ Trung tính';
+      lines.push(`📐 <b>Xu hướng:</b>      ${biasLabel}`);
+    }
+
+    if (result.action === 'BUY' || result.action === 'SELL') {
+      lines.push('');
+      lines.push('<b>─ Thông số lệnh ──────────────</b>');
+      if (result.entry != null) {
+        lines.push(`🎯 Entry:       <code>${formatPrice(result.entry, 2)}</code>`);
+        if (result.stopLoss != null) {
+          const slPct = Math.abs(result.stopLoss - result.entry) / result.entry * 100;
+          lines.push(`🛡 Stop Loss:   <code>${formatPrice(result.stopLoss, 2)}</code>  <i>(-${slPct.toFixed(2)}%)</i>`);
+        }
+        if (result.takeProfit != null) {
+          const tpPct = Math.abs(result.takeProfit - result.entry) / result.entry * 100;
+          lines.push(`💰 Take Profit: <code>${formatPrice(result.takeProfit, 2)}</code>  <i>(+${tpPct.toFixed(2)}%)</i>`);
+        }
+      } else {
+        if (result.stopLoss   != null) lines.push(`🛡 Stop Loss:   <code>${formatPrice(result.stopLoss, 2)}</code>`);
+        if (result.takeProfit != null) lines.push(`💰 Take Profit: <code>${formatPrice(result.takeProfit, 2)}</code>`);
+      }
+      if (result.riskReward != null) lines.push(`⚖️ R:R:         <code>1 : ${formatPrice(result.riskReward, 2)}</code>`);
+    }
+
+    if (result.confidence != null) {
+      const conf   = result.confidence;
+      const filled = Math.round(conf / 10);
+      const bar    = '█'.repeat(filled) + '░'.repeat(10 - filled);
+      lines.push('');
+      lines.push('<b>─ Đánh giá AI ─────────────────</b>');
+      lines.push(`🔎 Độ tin cậy: <b>${conf}/100</b>`);
+      lines.push(`<code>${bar}</code>`);
+    }
+
+    if (result.conditionalSetups.length > 0) {
+      lines.push('');
+      lines.push('<b>─ Kịch bản tiềm năng ──────────</b>');
+      for (const s of result.conditionalSetups) {
+        const icon = s.direction === 'BUY' ? '🟢' : '🔴';
+        const dir  = s.direction === 'BUY' ? 'MUA' : 'BÁN';
+        lines.push(`${icon} <b>${dir} (${s.direction})</b>`);
+        lines.push(markdownToHtml(s.rawText));
+      }
+    }
+
+    lines.push('');
+    lines.push(SEP);
+    lines.push('<i>⚠️ Tín hiệu tham khảo từ AI, không phải lời khuyên đầu tư.</i>');
+
+    return lines.join('\n');
+  }
+
+  /**
+   * Gửi file CSV nến cho từng timeframe vào discussion thread.
+   */
+  async sendCandleFiles(
+    instrument: string,
+    candlesByTf: Record<string, Candle[]>,
+    channelMessageId: string,
+  ): Promise<void> {
+    const discussionId = await this.getDiscussionId();
+    if (!discussionId) {
+      logger.warn('No discussion group linked, skipping candle files');
+      return;
+    }
+
+    const discussionMsgId = await this.findForwardedMessageId(channelMessageId, discussionId);
+    if (!discussionMsgId) {
+      logger.warn('Could not find forwarded message, skipping candle files');
+      return;
+    }
+
+    for (const [tf, candles] of Object.entries(candlesByTf)) {
+      try {
+        const csv      = this.buildCandleCSV(candles);
+        const stamp    = formatDate(new Date()).replace(/[/: ]/g, '');
+        const filename = `${instrument.replace('/', '')}_${tf}_${stamp}.csv`;
+        const caption  = `📊 <b>${htmlEscape(instrument)} ${htmlEscape(tf)}</b> — ${candles.length} nến`;
+        await this.sendDocument(csv, filename, caption, discussionMsgId, discussionId);
+        logger.info('Candle file sent', { tf, filename });
+      } catch (err: any) {
+        logger.error('Failed to send candle file', { tf, error: err.message });
+      }
+    }
+  }
+
+  private buildCandleCSV(candles: Candle[]): string {
+    const header = 'time,open,high,low,close';
+    const rows   = candles.map(c =>
+      `${c.time},${c.open},${c.high},${c.low},${c.close}`,
+    );
+    return [header, ...rows].join('\n');
+  }
+
+  private async sendDocument(
+    content: string,
+    filename: string,
+    caption: string,
+    replyToMessageId: string,
+    chatId: string,
+  ): Promise<void> {
+    const url  = `${this.baseUrl.replace(/\/$/, '')}/bot${this.botToken}/sendDocument`;
+    const form = new FormData();
+    form.append('chat_id', chatId);
+    form.append('document', new Blob([content], { type: 'text/csv' }), filename);
+    form.append('caption', caption);
+    form.append('parse_mode', 'HTML');
+    form.append('reply_to_message_id', replyToMessageId);
+
+    try {
+      await axios.post(url, form, { timeout: 30_000 });
+    } catch (err: any) {
+      logger.error('Telegram sendDocument failed', {
+        status: err.response?.status,
+        body:   err.response?.data,
+      });
+      throw new Error(`Telegram sendDocument failed: ${err.message}`);
+    }
+  }
+
   // ─── private ──────────────────────────────────────────────────────────────
 
   private async sendPart(text: string, replyToMessageId?: string, chatId?: string): Promise<string | null> {
@@ -506,6 +651,15 @@ function keyLevelEmoji(type?: string): string {
 
 function htmlEscape(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function markdownToHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/^#{1,4}\s+(.+)$/gm, '<b>$1</b>')   // ## heading
+    .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>')   // **bold**
+    .replace(/\*([^*\n]+)\*/g, '<i>$1</i>')        // *italic*
+    .replace(/^[ \t]*[-•*]\s+(.+)$/gm, '  • $1'); // bullet
 }
 
 function formatPrice(n: number, decimals: number): string {

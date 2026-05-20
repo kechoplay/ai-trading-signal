@@ -1,4 +1,9 @@
 export const ACTIONS = ['BUY', 'SELL', 'NO_TRADE'] as const;
+
+export interface ConditionalSetup {
+  direction: 'BUY' | 'SELL';
+  rawText: string;
+}
 export type Action = (typeof ACTIONS)[number];
 
 export interface MarketStructure {
@@ -55,6 +60,7 @@ export class AnalysisResult {
     public readonly marketStructure: MarketStructure | null = null,
     public readonly keyLevels: KeyLevel[] | null = null,
     public readonly setups: TradeSetup[] | null = null,
+    public readonly conditionalSetups: ConditionalSetup[] = [],
   ) {}
 
   static fromAiJson(
