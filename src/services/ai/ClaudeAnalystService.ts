@@ -4,13 +4,6 @@ import { AnalysisResult, ConditionalSetup } from './dto/AnalysisResult';
 import { config } from '../../config/trading';
 import { logger } from '../../logger';
 
-/** Max candles to include in the prompt per timeframe. */
-const CANDLES_BY_TF: Record<string, number> = {
-  H1:  100,
-  M15: 96,
-  M5:  60,
-};
-
 export class ClaudeAnalystService {
   private readonly client: Anthropic;
 
@@ -30,33 +23,43 @@ export class ClaudeAnalystService {
     _instrument: string,
     candlesByTimeframe: Record<string, Candle[]>,
     _currentPrice: number,
-    _minRr: number,
   ): Promise<{ result: AnalysisResult; rawText: string }> {
     const systemPrompt = this.buildSystemPrompt();
     const userPrompt = this.buildOhlcPrompt(candlesByTimeframe);
 
     logger.info('[Claude] User prompt', { prompt: userPrompt });
 
-    // Stream due to large input (candle data) + up to 8K output tokens
+    // max_tokens phải đủ lớn cho cả thinking + text response
+    // thinking: adaptive không có budget_tokens → model tự phân bổ từ max_tokens
+    // Nếu max_tokens quá nhỏ, thinking ăn hết token, text block trả về rỗng
     const stream = this.client.messages.stream({
-      model: this.model,
-      max_tokens: 8192,
-      thinking: { type: 'disabled' }, // adaptive là có sử dụng thinking
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userPrompt }],
+      model:      this.model,
+      max_tokens: 32000,
+      thinking:   { type: 'disabled' },
+      system:     systemPrompt,
+      messages:   [{ role: 'user', content: userPrompt }],
     });
 
     const message = await stream.finalMessage();
 
-    // Extract only text blocks (skip thinking blocks)
+    // Log toàn bộ block types để debug nếu có lỗi
+    const blockTypes = message.content.map((b) => b.type);
+    logger.info('[Claude] Content blocks', { blockTypes, usage: message.usage });
+
+    // Extract text blocks (bỏ qua thinking blocks)
     const rawText = message.content
       .filter((b): b is Anthropic.TextBlock => b.type === 'text')
       .map((b) => b.text)
       .join('');
 
-    if (!rawText) throw new Error('Claude returned empty text content.');
+    if (!rawText) {
+      throw new Error(
+        `Claude returned no text content. Blocks received: [${blockTypes.join(', ')}]. ` +
+        `Usage: input=${message.usage.input_tokens}, output=${message.usage.output_tokens}`,
+      );
+    }
 
-    logger.info('[Claude] Raw response', { text: rawText });
+    logger.info('[Claude] Raw response:\n' + rawText);
 
     const result = this.parseAnalysisResult(rawText);
     return { result, rawText };
@@ -165,10 +168,10 @@ export class ClaudeAnalystService {
   // ─── Prompt builders ──────────────────────────────────────────────────────
 
   private buildSystemPrompt(): string {
-    return `You are a professional XAU/USD (gold) trader with 15 years of experience.
+    return `You are a professional XAU/USD (gold) trader with 15 years of experience specializing in ICT/SMC price action methodology.
 
-I provide OHLC data for XAU/USD across M5, M15 and H1 timeframes with pre-calculated indicators.
-Analyze thoroughly using the exact structure below.
+I provide raw OHLC candlestick data for XAU/USD across H1, M15 and M5 timeframes.
+Analyze purely from price action. Use the exact structure below.
 
 ---
 
@@ -206,14 +209,14 @@ Analyze thoroughly using the exact structure below.
 ---
 
 ### 2. MARKET STRUCTURE
-- Most important Swing High & Swing Low (across both timeframes)
+- Most important Swing High & Swing Low (across all timeframes)
 - HH-HL or LH-LL sequence
 - Most recent BOS or CHoCH
 
 ---
 
 ### 3. KEY PRICE LEVELS
-- Major Support & Resistance (M5 + M15 combined)
+- Major Support & Resistance (combined across all timeframes)
 - Nearest round number
 - FVG (Fair Value Gap) if detected
 - Bullish and Bearish Order Blocks
@@ -282,7 +285,7 @@ Analyze thoroughly using the exact structure below.
 
       logger.info(`[${tf}] Market Data`, { timeframe: tf, total: candles.length });
 
-      const limit = CANDLES_BY_TF[tf] ?? 100;
+      const limit = (config.candlesByTf as Record<string, number>)[tf] ?? config.candlesCount;
       const candleSlice = candles.slice(-limit);
       const csvRows = candleSlice.map((c) =>
         `${formatCandleTime(c.time)},${c.open},${c.high},${c.low},${c.close}`,

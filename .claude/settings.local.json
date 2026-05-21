@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(node -e \"const sdk = require\\('@anthropic-ai/sdk'\\); const k = Object.keys\\(sdk\\); console.log\\(k.slice\\(0,20\\)\\)\")",
+      "Bash(node -e \"const pkg = require\\('./node_modules/@anthropic-ai/sdk/package.json'\\); console.log\\(JSON.stringify\\(pkg.exports, null, 2\\)\\)\")",
+      "Bash(node -e \"const {jsonSchemaOutputFormat} = require\\('@anthropic-ai/sdk/helpers/json-schema'\\); console.log\\(typeof jsonSchemaOutputFormat\\)\")",
+      "Bash(node -e ' *)"
+    ]
+  }
+}

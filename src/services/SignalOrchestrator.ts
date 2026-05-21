@@ -21,26 +21,19 @@ export class SignalOrchestrator {
     );
   }
 
-  /** Number of candles to fetch from market data per timeframe. */
-  private static readonly FETCH_COUNT: Record<string, number> = {
-    H1:  100,
-    M15: 96,
-    M5:  60,
-  };
-
   async run(): Promise<string> {
-    const { instrument, timeframes, candlesCount, minRr } = config;
+    const { instrument, timeframes, candlesByTf: candlesByTfConfig, candlesCount } = config;
 
     logger.info('Signal analysis started', { instrument, timeframes });
 
     const candlesByTf: Record<string, Candle[]> = {};
     for (const tf of timeframes) {
-      const count = SignalOrchestrator.FETCH_COUNT[tf] ?? candlesCount;
+      const count = (candlesByTfConfig as Record<string, number>)[tf] ?? candlesCount;
       candlesByTf[tf] = await this.market.fetchCandles(instrument, tf, count);
     }
 
     const currentPrice = await this.market.fetchCurrentPrice(instrument);
-    const { result, rawText } = await this.claude.analyze(instrument, candlesByTf, currentPrice, minRr);
+    const { result, rawText } = await this.claude.analyze(instrument, candlesByTf, currentPrice);
 
     await this.notify(result, rawText, instrument, currentPrice, candlesByTf);
 

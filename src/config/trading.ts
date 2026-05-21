@@ -10,6 +10,12 @@ export const config = {
 
   candlesCount: parseInt(process.env.TRADING_CANDLES_COUNT ?? '214', 10),
 
+  candlesByTf: {
+    H1:  parseInt(process.env.TRADING_CANDLES_H1  ?? '214', 10),
+    M15: parseInt(process.env.TRADING_CANDLES_M15 ?? '100', 10),
+    M5:  parseInt(process.env.TRADING_CANDLES_M5  ?? '100', 10),
+  },
+
   minRr: parseFloat(process.env.TRADING_MIN_RR ?? '2.0'),
 
   marketHours: {
