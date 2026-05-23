@@ -35,7 +35,7 @@ export class SignalOrchestrator {
     const currentPrice = await this.market.fetchCurrentPrice(instrument);
     const { result, rawText } = await this.claude.analyze(instrument, candlesByTf, currentPrice);
 
-    await this.notify(result, rawText, instrument, currentPrice, candlesByTf);
+    await this.notify(result, rawText, instrument, currentPrice);
 
     return rawText;
   }
@@ -45,7 +45,6 @@ export class SignalOrchestrator {
     rawText: string,
     instrument: string,
     currentPrice: number,
-    candlesByTf: Record<string, Candle[]>,
   ): Promise<void> {
     try {
       // 1. Gửi signal card lên channel
@@ -59,8 +58,6 @@ export class SignalOrchestrator {
         await this.telegram.sendComment(analysisHtml, messageId);
         logger.info('Telegram analysis thread sent', { reply_to: messageId });
 
-        // 3. Gửi file CSV nến từng timeframe vào discussion thread
-        await this.telegram.sendCandleFiles(instrument, candlesByTf, messageId);
       }
     } catch (err: any) {
       logger.error('Failed to send Telegram message', { error: err.message });

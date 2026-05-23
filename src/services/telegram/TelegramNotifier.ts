@@ -1,7 +1,6 @@
 import axios from 'axios';
 import { TradingSignal } from '@prisma/client';
 import { AnalysisResult } from '../ai/dto/AnalysisResult';
-import { Candle } from '../market/Candle';
 import { config } from '../../config/trading';
 import { logger } from '../../logger';
 
@@ -427,74 +426,6 @@ export class TelegramNotifier {
     lines.push('<i>⚠️ Tín hiệu tham khảo từ AI, không phải lời khuyên đầu tư.</i>');
 
     return lines.join('\n');
-  }
-
-  /**
-   * Gửi file CSV nến cho từng timeframe vào discussion thread.
-   */
-  async sendCandleFiles(
-    instrument: string,
-    candlesByTf: Record<string, Candle[]>,
-    channelMessageId: string,
-  ): Promise<void> {
-    const discussionId = await this.getDiscussionId();
-    if (!discussionId) {
-      logger.warn('No discussion group linked, skipping candle files');
-      return;
-    }
-
-    const discussionMsgId = await this.findForwardedMessageId(channelMessageId, discussionId);
-    if (!discussionMsgId) {
-      logger.warn('Could not find forwarded message, skipping candle files');
-      return;
-    }
-
-    for (const [tf, candles] of Object.entries(candlesByTf)) {
-      try {
-        const csv      = this.buildCandleCSV(candles);
-        const stamp    = formatDate(new Date()).replace(/[/: ]/g, '');
-        const filename = `${instrument.replace('/', '')}_${tf}_${stamp}.csv`;
-        const caption  = `📊 <b>${htmlEscape(instrument)} ${htmlEscape(tf)}</b> — ${candles.length} nến`;
-        await this.sendDocument(csv, filename, caption, discussionMsgId, discussionId);
-        logger.info('Candle file sent', { tf, filename });
-      } catch (err: any) {
-        logger.error('Failed to send candle file', { tf, error: err.message });
-      }
-    }
-  }
-
-  private buildCandleCSV(candles: Candle[]): string {
-    const header = 'time,open,high,low,close';
-    const rows   = candles.map(c =>
-      `${c.time},${c.open},${c.high},${c.low},${c.close}`,
-    );
-    return [header, ...rows].join('\n');
-  }
-
-  private async sendDocument(
-    content: string,
-    filename: string,
-    caption: string,
-    replyToMessageId: string,
-    chatId: string,
-  ): Promise<void> {
-    const url  = `${this.baseUrl.replace(/\/$/, '')}/bot${this.botToken}/sendDocument`;
-    const form = new FormData();
-    form.append('chat_id', chatId);
-    form.append('document', new Blob([content], { type: 'text/csv' }), filename);
-    form.append('caption', caption);
-    form.append('parse_mode', 'HTML');
-    form.append('reply_to_message_id', replyToMessageId);
-
-    try {
-      await axios.post(url, form, { timeout: 30_000 });
-    } catch (err: any) {
-      logger.error('Telegram sendDocument failed', {
-        status: err.response?.status,
-        body:   err.response?.data,
-      });
-      throw new Error(`Telegram sendDocument failed: ${err.message}`);
-    }
   }
 
   // ─── private ──────────────────────────────────────────────────────────────
