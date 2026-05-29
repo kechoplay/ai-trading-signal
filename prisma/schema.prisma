@@ -7,6 +7,33 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Symbol {
+  id          Int       @id @default(autoincrement())
+  symbol      String    @unique
+  name        String
+  enabled     Boolean   @default(true)
+  favorite    Boolean   @default(false)
+  created_at  DateTime  @default(now())
+
+  analyses    AnalysisLog[]
+
+  @@map("symbols")
+}
+
+model AnalysisLog {
+  id            Int      @id @default(autoincrement())
+  symbol        String
+  analyzed_at   DateTime @default(now())
+  duration_ms   Int
+  setup         String?
+  reasoning     String?
+
+  symbolRef     Symbol   @relation(fields: [symbol], references: [symbol])
+
+  @@index([symbol, analyzed_at])
+  @@map("analysis_logs")
+}
+
 model TradingSignal {
   id                  Int       @id @default(autoincrement())
   instrument          String

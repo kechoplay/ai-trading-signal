@@ -34,7 +34,7 @@ export class ClaudeAnalystService {
     // Nếu max_tokens quá nhỏ, thinking ăn hết token, text block trả về rỗng
     const stream = this.client.messages.stream({
       model:      this.model,
-      max_tokens: 32000,
+      max_tokens: 64000,
       thinking:   { type: 'adaptive' },  // disabled
       system:     systemPrompt,
       messages:   [{ role: 'user', content: userPrompt }],

@@ -21,8 +21,9 @@ export class SignalOrchestrator {
     );
   }
 
-  async run(): Promise<string> {
-    const { instrument, timeframes, candlesByTf: candlesByTfConfig, candlesCount } = config;
+  async run(instrument?: string): Promise<{ result: AnalysisResult; rawText: string; instrument: string; currentPrice: number }> {
+    const { instrument: defaultInstrument, timeframes, candlesByTf: candlesByTfConfig, candlesCount } = config;
+    instrument = instrument ?? defaultInstrument;
 
     logger.info('Signal analysis started', { instrument, timeframes });
 
@@ -37,7 +38,7 @@ export class SignalOrchestrator {
 
     await this.notify(result, rawText, instrument, currentPrice);
 
-    return rawText;
+    return { result, rawText, instrument, currentPrice };
   }
 
   private async notify(

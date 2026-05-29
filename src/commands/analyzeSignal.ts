@@ -15,8 +15,8 @@ export async function analyzeSignal(options: { force?: boolean } = {}): Promise<
   }
 
   try {
-    const analysis = await SignalOrchestrator.fromConfig().run();
-    logger.info('Analysis complete', { analysis });
+    const { result } = await SignalOrchestrator.fromConfig().run();
+    logger.info('Analysis complete', { action: result.action, confidence: result.confidence });
   } catch (err: any) {
     logger.error('Analysis failed: ' + err.message, { stack: err.stack });
     throw err;

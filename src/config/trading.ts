@@ -51,4 +51,9 @@ export const config = {
     discussionId: process.env.TELEGRAM_DISCUSSION_ID ?? '',
     baseUrl: 'https://api.telegram.org',
   },
+
+  server: {
+    port: parseInt(process.env.PORT ?? '3000', 10),
+    apiKey: process.env.API_SERVER_KEY ?? '',
+  },
 };
