@@ -1,58 +1,32 @@
-# AI Trading Signal — API Documentation
+# API Reference — AI Trading Signal
 
 Base URL: `http://localhost:3000`
 
----
-
 ## Authentication
 
-Tất cả endpoint có ký hiệu 🔒 đều yêu cầu API key. Truyền key theo một trong hai cách:
+Nếu biến môi trường `API_SERVER_KEY` được set, mọi endpoint có `requireApiKey` đều yêu cầu xác thực qua một trong hai cách:
 
 ```
-X-API-Key: your_api_key
-```
-hoặc
-```
-Authorization: Bearer your_api_key
+X-Api-Key: <API_SERVER_KEY>
+# hoặc
+Authorization: Bearer <API_SERVER_KEY>
 ```
 
-Cấu hình key trong `.env`:
-```env
-API_SERVER_KEY=your_api_key
-```
-
-> Nếu `API_SERVER_KEY` để trống, tất cả endpoint đều public, không cần xác thực.
+Nếu `API_SERVER_KEY` để trống, xác thực bị bỏ qua.
 
 ---
 
 ## Analyze
 
-### POST /api/analyze 🔒
+### POST `/api/analyze`
 
-Chạy phân tích AI cho một symbol, gửi tín hiệu lên Telegram và lưu kết quả vào DB.
+Chạy phân tích AI cho một symbol và trả về signal card + reasoning. Kết quả cũng được lưu vào bảng `analysis_logs`.
 
-> ⏱ Thời gian phản hồi thường từ **30–90 giây** do phải fetch dữ liệu nến + gọi AI.
+**Request body** (JSON, tùy chọn):
 
-**Request body:**
-
-| Field | Type | Required | Mô tả |
-|-------|------|----------|-------|
-| `symbol` | string | Không | Symbol cần phân tích. Mặc định lấy từ `TRADING_INSTRUMENT` trong `.env` |
-
-**Ví dụ request:**
-
-```bash
-# Dùng symbol mặc định
-curl -X POST http://localhost:3000/api/analyze \
-  -H "X-API-Key: your_key" \
-  -H "Content-Type: application/json"
-
-# Chỉ định symbol
-curl -X POST http://localhost:3000/api/analyze \
-  -H "X-API-Key: your_key" \
-  -H "Content-Type: application/json" \
-  -d '{"symbol": "XAU/USD"}'
-```
+| Field | Type | Mô tả |
+|-------|------|-------|
+| `symbol` | string | Symbol cần phân tích (vd: `XAU/USD`). Mặc định: giá trị `TRADING_INSTRUMENT` trong `.env` |
 
 **Response 200:**
 
@@ -60,42 +34,25 @@ curl -X POST http://localhost:3000/api/analyze \
 {
   "ok": true,
   "symbol": "XAU/USD",
-  "duration_ms": 42381,
-  "setup": "━━━━━━━━━━━━━━━━━━━━━\n📊 <b>XAU/USD</b>  🟢 <b>MUA (BUY)</b>\n...",
-  "reasoning": "📋 <b>PHÂN TÍCH CHI TIẾT</b>\n━━━━━━━━━━━━━━━━━━━━━\n..."
+  "duration_ms": 4200,
+  "setup": "<HTML signal card>",
+  "reasoning": "<HTML analysis text>"
 }
 ```
 
-| Field | Type | Mô tả |
-|-------|------|-------|
-| `ok` | boolean | `true` nếu thành công |
-| `symbol` | string | Symbol đã phân tích |
-| `duration_ms` | number | Thời gian xử lý (milliseconds) |
-| `setup` | string | Signal card dạng HTML (giống tin nhắn Telegram channel) |
-| `reasoning` | string | Phân tích chi tiết dạng HTML (giống comment trong Telegram thread) |
-
-**Response 401:**
-```json
-{ "error": "Unauthorized" }
-```
-
 **Response 500:**
+
 ```json
-{ "error": "mô tả lỗi" }
+{ "error": "Analysis failed" }
 ```
 
 ---
 
 ## Symbols
 
-### GET /api/symbols 🔒
+### GET `/api/symbols`
 
-Lấy danh sách tất cả symbols. Favorite được hiển thị trước, sau đó sắp xếp theo tên.
-
-```bash
-curl http://localhost:3000/api/symbols \
-  -H "X-API-Key: your_key"
-```
+Lấy danh sách tất cả symbols, sắp xếp: favorite trước, rồi theo tên A-Z.
 
 **Response 200:**
 
@@ -104,225 +61,224 @@ curl http://localhost:3000/api/symbols \
   {
     "id": 1,
     "symbol": "XAU/USD",
-    "name": "Vàng",
+    "name": "Gold",
     "enabled": true,
     "favorite": true,
-    "created_at": "2026-05-27T10:00:00.000Z"
-  },
-  {
-    "id": 3,
-    "symbol": "BTC/USD",
-    "name": "Bitcoin",
-    "enabled": true,
-    "favorite": false,
-    "created_at": "2026-05-27T10:00:00.000Z"
+    "created_at": "2026-05-29T00:00:00.000Z"
   }
 ]
 ```
 
 ---
 
-### POST /api/symbols 🔒
+### POST `/api/symbols`
 
 Thêm symbol mới.
 
 **Request body:**
 
-| Field | Type | Required | Mô tả |
+| Field | Type | Bắt buộc | Mô tả |
 |-------|------|----------|-------|
-| `symbol` | string | Có | Mã symbol (tự động chuyển thành chữ hoa). Ví dụ: `XAU/USD` |
-| `name` | string | Có | Tên hiển thị. Ví dụ: `Vàng` |
+| `symbol` | string | Có | Mã symbol, sẽ được uppercase (vd: `EUR/USD`) |
+| `name` | string | Có | Tên hiển thị (vd: `Euro / US Dollar`) |
 
-```bash
-curl -X POST http://localhost:3000/api/symbols \
-  -H "X-API-Key: your_key" \
-  -H "Content-Type: application/json" \
-  -d '{"symbol": "XAU/USD", "name": "Vàng"}'
-```
+**Response 201:** Object symbol vừa tạo.
 
-**Response 201:**
+**Response 400:** `symbol` hoặc `name` bị thiếu.
 
-```json
-{
-  "id": 1,
-  "symbol": "XAU/USD",
-  "name": "Vàng",
-  "enabled": true,
-  "favorite": false,
-  "created_at": "2026-05-27T10:00:00.000Z"
-}
-```
-
-**Response 400** — thiếu field bắt buộc:
-```json
-{ "error": "symbol and name are required" }
-```
-
-**Response 409** — symbol đã tồn tại:
-```json
-{ "error": "Symbol 'XAU/USD' already exists" }
-```
+**Response 409:** Symbol đã tồn tại.
 
 ---
 
-### DELETE /api/symbols/:symbol 🔒
+### DELETE `/api/symbols/:symbol`
 
-Xóa symbol. Toàn bộ lịch sử phân tích (`analysis_logs`) của symbol này cũng bị xóa theo (cascade).
-
-> ⚠️ Symbol trong URL phải encode `/` thành `%2F`.
-
-```bash
-curl -X DELETE "http://localhost:3000/api/symbols/XAU%2FUSD" \
-  -H "X-API-Key: your_key"
-```
+Xóa symbol theo mã (case-insensitive, tự động uppercase).
 
 **Response 200:**
+
 ```json
 { "ok": true, "deleted": "XAU/USD" }
 ```
 
-**Response 404:**
-```json
-{ "error": "Symbol 'XAU/USD' not found" }
-```
+**Response 404:** Symbol không tồn tại.
 
 ---
 
-### PATCH /api/symbols/:symbol/favorite 🔒
+### PATCH `/api/symbols/:symbol/favorite`
 
-Thêm hoặc bỏ symbol khỏi danh sách favorite.
+Cập nhật trạng thái yêu thích của symbol.
 
 **Request body:**
 
-| Field | Type | Required | Mô tả |
-|-------|------|----------|-------|
-| `favorite` | boolean | Không | `true` để thêm favorite, `false` để bỏ. Mặc định `true` nếu không truyền |
+| Field | Type | Mô tả |
+|-------|------|-------|
+| `favorite` | boolean | `true` để đánh dấu yêu thích, `false` để bỏ. Mặc định: `true` |
 
-```bash
-# Thêm favorite
-curl -X PATCH "http://localhost:3000/api/symbols/XAU%2FUSD/favorite" \
-  -H "X-API-Key: your_key" \
-  -H "Content-Type: application/json" \
-  -d '{"favorite": true}'
+**Response 200:** Object symbol đã cập nhật.
 
-# Bỏ favorite
-curl -X PATCH "http://localhost:3000/api/symbols/XAU%2FUSD/favorite" \
-  -H "X-API-Key: your_key" \
-  -H "Content-Type: application/json" \
-  -d '{"favorite": false}'
-```
-
-**Response 200:**
-```json
-{
-  "id": 1,
-  "symbol": "XAU/USD",
-  "name": "Vàng",
-  "enabled": true,
-  "favorite": true,
-  "created_at": "2026-05-27T10:00:00.000Z"
-}
-```
-
-**Response 404:**
-```json
-{ "error": "Symbol 'XAU/USD' not found" }
-```
+**Response 404:** Symbol không tồn tại.
 
 ---
 
-### GET /api/symbols/:symbol/signals 🔒
+## Symbol Groups
 
-Lấy lịch sử phân tích của một symbol, mới nhất lên đầu.
+### GET `/api/groups`
 
-**Query params:**
-
-| Param | Type | Default | Mô tả |
-|-------|------|---------|-------|
-| `limit` | number | `20` | Số bản ghi trả về. Tối đa `100` |
-
-```bash
-curl "http://localhost:3000/api/symbols/XAU%2FUSD/signals?limit=10" \
-  -H "X-API-Key: your_key"
-```
+Lấy danh sách tất cả nhóm symbol, kèm mảng `symbols` chứa các mã trong nhóm.
 
 **Response 200:**
 
 ```json
 [
   {
-    "id": 7,
-    "symbol": "XAU/USD",
-    "analyzed_at": "2026-05-27T10:30:00.000Z",
-    "duration_ms": 42381,
-    "setup": "━━━━━━━━━━━━━━━━━━━━━\n📊 <b>XAU/USD</b>  🟢 <b>MUA (BUY)</b>\n...",
-    "reasoning": "📋 <b>PHÂN TÍCH CHI TIẾT</b>\n━━━━━━━━━━━━━━━━━━━━━\n..."
+    "id": 1,
+    "name": "Metals",
+    "created_at": "2026-05-29T00:00:00.000Z",
+    "symbols": ["XAU/USD", "XAG/USD"]
   }
 ]
 ```
 
-| Field | Type | Mô tả |
-|-------|------|-------|
-| `id` | number | ID bản ghi |
-| `symbol` | string | Symbol |
-| `analyzed_at` | string | Thời điểm phân tích (ISO 8601) |
-| `duration_ms` | number | Thời gian AI xử lý (milliseconds) |
-| `setup` | string | Signal card HTML |
-| `reasoning` | string | Phân tích chi tiết HTML |
+---
+
+### POST `/api/groups`
+
+Tạo nhóm mới.
+
+**Request body:**
+
+| Field | Type | Bắt buộc | Mô tả |
+|-------|------|----------|-------|
+| `name` | string | Có | Tên nhóm |
+
+**Response 201:** `{ id, name, created_at, symbols: [] }`
+
+**Response 400:** `name` bị thiếu.
+
+**Response 409:** Nhóm đã tồn tại.
 
 ---
 
-## Signals (Legacy)
+### GET `/api/groups/:id`
 
-### GET /api/signals
+Lấy chi tiết một nhóm, kèm danh sách đầy đủ object symbol.
 
-Lấy danh sách tín hiệu giao dịch từ bảng `trading_signals` (cron job ghi vào).
+**Response 200:**
+
+```json
+{
+  "id": 1,
+  "name": "Metals",
+  "created_at": "2026-05-29T00:00:00.000Z",
+  "symbols": [
+    { "id": 1, "symbol": "XAU/USD", "name": "Gold", "enabled": true, "favorite": true, "created_at": "..." }
+  ]
+}
+```
+
+**Response 400:** `id` không hợp lệ.
+
+**Response 404:** Nhóm không tồn tại.
+
+---
+
+### DELETE `/api/groups/:id`
+
+Xóa nhóm (cascade xóa cả các `symbol_group_items`).
+
+**Response 200:**
+
+```json
+{ "ok": true, "deleted": 1 }
+```
+
+**Response 404:** Nhóm không tồn tại.
+
+---
+
+### POST `/api/groups/:id/symbols`
+
+Thêm symbol vào nhóm.
+
+**Request body:**
+
+| Field | Type | Bắt buộc | Mô tả |
+|-------|------|----------|-------|
+| `symbol` | string | Có | Mã symbol đã có trong bảng `symbols` |
+
+**Response 201:** Object `SymbolGroupItem` vừa tạo.
+
+**Response 400:** `id` hoặc `symbol` không hợp lệ.
+
+**Response 404:** Nhóm hoặc symbol không tồn tại.
+
+**Response 409:** Symbol đã có trong nhóm.
+
+---
+
+### DELETE `/api/groups/:id/symbols/:symbol`
+
+Xóa symbol khỏi nhóm.
+
+**Response 200:**
+
+```json
+{ "ok": true, "group_id": 1, "removed": "XAU/USD" }
+```
+
+---
+
+## Analysis Logs
+
+### GET `/api/symbols/:symbol/signals`
+
+Lấy lịch sử phân tích của một symbol **trong ngày hôm nay** (theo giờ VN, UTC+7).
 
 **Query params:**
 
-| Param | Type | Default | Mô tả |
-|-------|------|---------|-------|
-| `limit` | number | `20` | Số bản ghi. Tối đa `100` |
+| Param | Type | Mô tả |
+|-------|------|-------|
+| `limit` | number | Số bản ghi tối đa (mặc định: `20`, tối đa: `100`) |
 
-```bash
-curl "http://localhost:3000/api/signals?limit=5"
+**Response 200:**
+
+```json
+[
+  {
+    "id": 42,
+    "symbol": "XAU/USD",
+    "analyzed_at": "2026-05-29T10:30:00.000Z",
+    "duration_ms": 4200,
+    "setup": "<HTML signal card>",
+    "reasoning": "<HTML analysis text>"
+  }
+]
 ```
 
 ---
 
-## Symbols mặc định
+## Trading Signals (Legacy)
 
-Hệ thống seed sẵn 4 symbols khi khởi tạo DB:
+### GET `/api/signals`
 
-| Symbol | Tên |
-|--------|-----|
-| `XAU/USD` | Vàng |
-| `XAG/USD` | Bạc |
-| `BTC/USD` | Bitcoin |
-| `ETH/USD` | Ethereum |
+Lấy danh sách trading signals từ bảng `trading_signals` **trong ngày hôm nay** (theo giờ VN). Endpoint này **không yêu cầu API key**.
 
----
+**Query params:**
 
-## Mã lỗi HTTP
+| Param | Type | Mô tả |
+|-------|------|-------|
+| `limit` | number | Số bản ghi tối đa (mặc định: `20`, tối đa: `100`) |
 
-| Status | Ý nghĩa |
-|--------|---------|
-| `200` | Thành công |
-| `201` | Tạo mới thành công |
-| `400` | Request không hợp lệ (thiếu field bắt buộc) |
-| `401` | Sai hoặc thiếu API key |
-| `404` | Không tìm thấy resource |
-| `409` | Conflict (symbol đã tồn tại) |
-| `500` | Lỗi server |
+**Response 200:** Mảng signal objects, mỗi phần tử gồm tất cả cột trong `trading_signals` cộng thêm các field được parse từ `raw_ai_response`:
+
+| Field bổ sung | Mô tả |
+|--------------|-------|
+| `market_structure` | Cấu trúc thị trường từ AI response |
+| `key_levels` | Vùng cung cầu / key levels |
+| `setups` | Setup giao dịch chi tiết |
 
 ---
 
-## Khởi động server
+## Static Files
 
-```bash
-# Development (auto-reload)
-npm run server:dev
-
-# Production
-npm run server
-```
+Thư mục `public/` được serve tĩnh tại `/`. Dashboard web (nếu có) truy cập qua `http://localhost:3000/`.

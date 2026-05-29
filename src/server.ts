@@ -116,6 +116,98 @@ app.patch('/api/symbols/:symbol/favorite', requireApiKey, async (req, res) => {
   }
 });
 
+// ─── Symbol Groups ────────────────────────────────────────────────────────────
+
+app.get('/api/groups', requireApiKey, async (_req, res) => {
+  try {
+    const groups = await prisma.symbolGroup.findMany({
+      orderBy: { name: 'asc' },
+      include: { items: { select: { symbol: true } } },
+    });
+    res.json(groups.map(g => ({ ...g, symbols: g.items.map(i => i.symbol) })));
+  } catch (err: any) {
+    logger.error('GET /api/groups failed', { error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/groups', requireApiKey, async (req, res) => {
+  const name: string = (req.body?.name ?? '').trim();
+  if (!name) {
+    res.status(400).json({ error: 'name is required' });
+    return;
+  }
+  try {
+    const created = await prisma.symbolGroup.create({ data: { name } });
+    res.status(201).json({ ...created, symbols: [] });
+  } catch (err: any) {
+    if (err.code === 'P2002') {
+      res.status(409).json({ error: `Group '${name}' already exists` });
+      return;
+    }
+    logger.error('POST /api/groups failed', { error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/groups/:id', requireApiKey, async (req, res) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: 'Invalid group id' }); return; }
+  try {
+    const group = await prisma.symbolGroup.findUnique({
+      where: { id },
+      include: { items: { include: { symbolRef: true } } },
+    });
+    if (!group) { res.status(404).json({ error: `Group ${id} not found` }); return; }
+    res.json({ ...group, symbols: group.items.map(i => i.symbolRef) });
+  } catch (err: any) {
+    logger.error('GET /api/groups/:id failed', { error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.delete('/api/groups/:id', requireApiKey, async (req, res) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: 'Invalid group id' }); return; }
+  try {
+    await prisma.symbolGroup.delete({ where: { id } });
+    res.json({ ok: true, deleted: id });
+  } catch (err: any) {
+    if (err.code === 'P2025') { res.status(404).json({ error: `Group ${id} not found` }); return; }
+    logger.error('DELETE /api/groups/:id failed', { error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/groups/:id/symbols', requireApiKey, async (req, res) => {
+  const id     = parseInt(String(req.params.id), 10);
+  const symbol = (req.body?.symbol ?? '').trim().toUpperCase();
+  if (isNaN(id)) { res.status(400).json({ error: 'Invalid group id' }); return; }
+  if (!symbol)   { res.status(400).json({ error: 'symbol is required' }); return; }
+  try {
+    const item = await prisma.symbolGroupItem.create({ data: { group_id: id, symbol } });
+    res.status(201).json(item);
+  } catch (err: any) {
+    if (err.code === 'P2002') { res.status(409).json({ error: `Symbol '${symbol}' already in group` }); return; }
+    if (err.code === 'P2003') { res.status(404).json({ error: `Group ${id} or symbol '${symbol}' not found` }); return; }
+    logger.error('POST /api/groups/:id/symbols failed', { error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.delete('/api/groups/:id/symbols/:symbol', requireApiKey, async (req, res) => {
+  const id     = parseInt(String(req.params.id), 10);
+  const symbol = String(req.params.symbol).toUpperCase();
+  if (isNaN(id)) { res.status(400).json({ error: 'Invalid group id' }); return; }
+  try {
+    await prisma.symbolGroupItem.deleteMany({ where: { group_id: id, symbol } });
+    res.json({ ok: true, group_id: id, removed: symbol });
+  } catch (err: any) {
+    logger.error('DELETE /api/groups/:id/symbols/:symbol failed', { error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ─── Analysis logs by symbol ───────────────────────────────────────────────────
 
 app.get('/api/symbols/:symbol/signals', requireApiKey, async (req, res) => {

@@ -16,8 +16,31 @@ model Symbol {
   created_at  DateTime  @default(now())
 
   analyses    AnalysisLog[]
+  groupItems  SymbolGroupItem[]
 
   @@map("symbols")
+}
+
+model SymbolGroup {
+  id         Int               @id @default(autoincrement())
+  name       String            @unique
+  created_at DateTime          @default(now())
+
+  items      SymbolGroupItem[]
+
+  @@map("symbol_groups")
+}
+
+model SymbolGroupItem {
+  id       Int         @id @default(autoincrement())
+  group_id Int
+  symbol   String
+
+  group     SymbolGroup @relation(fields: [group_id], references: [id], onDelete: Cascade)
+  symbolRef Symbol      @relation(fields: [symbol], references: [symbol])
+
+  @@unique([group_id, symbol])
+  @@map("symbol_group_items")
 }
 
 model AnalysisLog {
