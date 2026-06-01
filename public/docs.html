@@ -1,0 +1,1078 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Trading Signal — Docs</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --surface2: #1c2128;
+      --border: #30363d;
+      --text: #e6edf3;
+      --muted: #7d8590;
+      --accent: #f0b429;
+      --accent2: #58a6ff;
+      --green: #3fb950;
+      --red: #f85149;
+      --radius: 8px;
+      --sidebar-w: 260px;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.65;
+      display: flex;
+      min-height: 100vh;
+    }
+
+    /* ── Sidebar ── */
+    aside {
+      width: var(--sidebar-w);
+      min-width: var(--sidebar-w);
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+      padding: 24px 0 40px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .sidebar-logo {
+      padding: 0 20px 20px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 8px;
+    }
+    .sidebar-logo h1 {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--accent);
+      letter-spacing: -.3px;
+    }
+    .sidebar-logo span {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .nav-group {
+      padding: 8px 20px 2px;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--muted);
+    }
+
+    aside a {
+      display: block;
+      padding: 6px 20px;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 13px;
+      border-left: 2px solid transparent;
+      transition: color .15s, border-color .15s, background .15s;
+    }
+    aside a:hover { color: var(--text); background: var(--surface2); }
+    aside a.active { color: var(--accent2); border-left-color: var(--accent2); background: rgba(88,166,255,.07); }
+
+    /* ── Main content ── */
+    main {
+      flex: 1;
+      max-width: 860px;
+      padding: 48px 56px 100px;
+      overflow-x: hidden;
+    }
+
+    section { margin-bottom: 64px; scroll-margin-top: 24px; }
+
+    h2 {
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 16px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    h2 .icon { font-size: 20px; }
+
+    h3 {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--accent2);
+      margin: 28px 0 10px;
+    }
+
+    p { color: #c9d1d9; margin-bottom: 12px; }
+
+    strong { color: var(--text); }
+
+    /* ── Callout ── */
+    .callout {
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      background: var(--surface);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      margin-bottom: 20px;
+      color: #c9d1d9;
+      font-size: 13px;
+    }
+
+    /* ── Overview cards ── */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+    }
+    .card-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 4px; }
+    .card-value { font-size: 14px; font-weight: 600; color: var(--text); }
+
+    /* ── Table ── */
+    .table-wrap { overflow-x: auto; margin-bottom: 20px; border-radius: var(--radius); border: 1px solid var(--border); }
+    table { width: 100%; border-collapse: collapse; background: var(--surface); font-size: 13px; }
+    thead th {
+      background: var(--surface2);
+      padding: 10px 14px;
+      text-align: left;
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      border-bottom: 1px solid var(--border);
+    }
+    tbody td {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      color: #c9d1d9;
+      vertical-align: top;
+    }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover td { background: var(--surface2); }
+    code { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; background: rgba(110,118,129,.15); color: #e6edf3; padding: 1px 5px; border-radius: 4px; }
+
+    /* ── Code block ── */
+    pre {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 18px;
+      overflow-x: auto;
+      font-family: 'SFMono-Regular', Consolas, monospace;
+      font-size: 12.5px;
+      line-height: 1.7;
+      color: #e6edf3;
+      margin-bottom: 16px;
+      white-space: pre;
+    }
+    pre .comment { color: #6e7681; }
+    pre .key { color: #79c0ff; }
+    pre .val { color: #a5d6ff; }
+    pre .str { color: #a5d6ff; }
+    pre .kw { color: var(--green); }
+    pre .num { color: #f2cc60; }
+
+    /* ── Directory tree ── */
+    .tree {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 18px;
+      font-family: 'SFMono-Regular', Consolas, monospace;
+      font-size: 12.5px;
+      line-height: 1.8;
+      color: #e6edf3;
+      margin-bottom: 16px;
+      overflow-x: auto;
+    }
+    .tree .dir { color: var(--accent2); font-weight: 600; }
+    .tree .file { color: #e6edf3; }
+    .tree .note { color: #6e7681; }
+
+    /* ── Flow diagram ── */
+    .flow {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      margin-bottom: 16px;
+    }
+    .flow-step {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+    }
+    .flow-step + .flow-step { margin-top: 0; }
+    .flow-connector {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-width: 32px;
+    }
+    .flow-node {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 14px;
+      font-size: 12.5px;
+      font-family: 'SFMono-Regular', Consolas, monospace;
+      color: var(--accent2);
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .flow-arrow {
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1;
+      padding: 2px 0;
+    }
+    .flow-details {
+      background: rgba(88,166,255,.05);
+      border: 1px solid rgba(88,166,255,.15);
+      border-radius: 6px;
+      padding: 8px 12px;
+      margin: 4px 0 4px 46px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+    .flow-details li { list-style: none; padding: 1px 0; }
+    .flow-details li::before { content: '├─ '; color: var(--border); }
+    .flow-details li:last-child::before { content: '└─ '; }
+
+    /* ── API endpoint badge ── */
+    .endpoint {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 16px;
+      margin-bottom: 10px;
+    }
+    .method {
+      font-family: 'SFMono-Regular', Consolas, monospace;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 4px;
+      min-width: 48px;
+      text-align: center;
+    }
+    .method.post { background: rgba(63,185,80,.15); color: var(--green); }
+    .method.get  { background: rgba(88,166,255,.15); color: var(--accent2); }
+    .method.del  { background: rgba(248,81,73,.15);  color: var(--red); }
+    .method.patch{ background: rgba(240,180,41,.15); color: var(--accent); }
+    .endpoint-path {
+      font-family: 'SFMono-Regular', Consolas, monospace;
+      font-size: 13px;
+      color: var(--text);
+    }
+    .endpoint-desc { margin-left: auto; color: var(--muted); font-size: 12px; }
+
+    /* ── Tag ── */
+    .tag {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 4px;
+      background: rgba(240,180,41,.15);
+      color: var(--accent);
+      margin-left: 6px;
+    }
+
+    /* ── Signal card preview ── */
+    .signal-preview {
+      background: #1a1a2e;
+      border: 1px solid #2d2d44;
+      border-radius: var(--radius);
+      padding: 16px 18px;
+      font-family: 'SFMono-Regular', Consolas, monospace;
+      font-size: 12.5px;
+      line-height: 1.75;
+      color: #e2e8f0;
+      margin-bottom: 16px;
+      white-space: pre;
+    }
+
+    /* ── Rules list ── */
+    .rules { list-style: none; display: flex; flex-direction: column; gap: 10px; }
+    .rules li {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 16px;
+      color: #c9d1d9;
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+    }
+    .rules li .num {
+      background: var(--accent);
+      color: #000;
+      font-weight: 700;
+      font-size: 11px;
+      min-width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 1px;
+    }
+
+    /* ── Back to top ── */
+    .back-top {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      text-decoration: none;
+      margin-top: 8px;
+    }
+    .back-top:hover { color: var(--accent2); }
+
+    @media (max-width: 768px) {
+      aside { display: none; }
+      main { padding: 24px 20px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════ SIDEBAR ═══════════════════════════════ -->
+<aside>
+  <div class="sidebar-logo">
+    <h1>AI Trading Signal</h1>
+    <span>Documentation</span>
+  </div>
+
+  <div class="nav-group">Tổng quan</div>
+  <a href="#overview">Giới thiệu</a>
+  <a href="#stack">Tech Stack</a>
+  <a href="#structure">Cấu trúc thư mục</a>
+
+  <div class="nav-group">Kiến trúc</div>
+  <a href="#flow">Luồng dữ liệu</a>
+  <a href="#patterns">Design Patterns</a>
+
+  <div class="nav-group">API Server</div>
+  <a href="#api">REST Endpoints</a>
+  <a href="#api-analyze">POST /api/analyze</a>
+  <a href="#api-signals">GET /api/signals</a>
+  <a href="#api-signals-latest">GET /api/signals/latest</a>
+  <a href="#api-symbols">Symbols</a>
+  <a href="#api-groups">Groups</a>
+
+  <div class="nav-group">Services</div>
+  <a href="#claude">ClaudeAnalystService</a>
+  <a href="#telegram">TelegramNotifier</a>
+  <a href="#market">Market Providers</a>
+
+  <div class="nav-group">Cấu hình</div>
+  <a href="#env">Environment (.env)</a>
+  <a href="#scripts">NPM Scripts</a>
+  <a href="#schema">Database Schema</a>
+
+  <div class="nav-group">Quy tắc</div>
+  <a href="#rules">Coding Rules</a>
+</aside>
+
+<!-- ═══════════════════════════════ MAIN ═══════════════════════════════════ -->
+<main>
+
+  <!-- ── Overview ── -->
+  <section id="overview">
+    <h2><span class="icon">📊</span> Giới thiệu</h2>
+    <div class="callout">
+      Đọc file này trước khi làm bất kỳ việc gì. Đây là nguồn sự thật duy nhất về kiến trúc hệ thống.
+    </div>
+    <p>
+      <strong>AI Trading Signal</strong> là hệ thống phân tích kỹ thuật và phát tín hiệu giao dịch
+      cho cặp <strong>XAU/USD (vàng)</strong> sử dụng Claude AI (Anthropic). Hệ thống lấy dữ liệu nến từ
+      API thị trường, gửi qua Claude để phân tích đa khung thời gian, lưu kết quả vào SQLite và gửi thông
+      báo qua Telegram. Phân tích được trigger thủ công qua REST API (không dùng cron).
+    </p>
+    <div class="cards">
+      <div class="card">
+        <div class="card-label">Ngôn ngữ AI</div>
+        <div class="card-value">Tiếng Việt</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Timeframes</div>
+        <div class="card-value">H1, M15, M5</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Múi giờ</div>
+        <div class="card-value">Asia/Ho_Chi_Minh</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Giờ hoạt động</div>
+        <div class="card-value">06:00 – 22:00</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Prompt AI</div>
+        <div class="card-value">~400 dòng</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Tech Stack ── -->
+  <section id="stack">
+    <h2><span class="icon">⚙️</span> Tech Stack</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Layer</th><th>Công nghệ</th></tr></thead>
+        <tbody>
+          <tr><td>Runtime</td><td><code>Node.js</code> (CommonJS)</td></tr>
+          <tr><td>Language</td><td><code>TypeScript 5.6</code></td></tr>
+          <tr><td>Database</td><td><code>SQLite</code> via Prisma 5.22</td></tr>
+          <tr><td>AI</td><td><code>Claude</code> — Anthropic (claude-sonnet-4-6)</td></tr>
+          <tr><td>Market Data</td><td><code>TwelveData</code> (default) / <code>OANDA</code></td></tr>
+          <tr><td>Notification</td><td><code>Telegram Bot API</code></td></tr>
+          <tr><td>Logging</td><td><code>Winston</code></td></tr>
+          <tr><td>HTTP Client</td><td><code>axios</code></td></tr>
+          <tr><td>API Server</td><td><code>Express</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Directory ── -->
+  <section id="structure">
+    <h2><span class="icon">📁</span> Cấu trúc thư mục</h2>
+    <div class="tree">
+<span class="dir">D:/ai-trading-signal/</span>
+├── <span class="file">CLAUDE.md</span>                          <span class="note">← nguồn sự thật kiến trúc</span>
+├── <span class="file">.env</span>                               <span class="note">← biến môi trường (không commit)</span>
+├── <span class="file">.env.example</span>                       <span class="note">← template cấu hình</span>
+├── <span class="file">package.json</span>
+├── <span class="file">tsconfig.json</span>
+├── <span class="dir">prisma/</span>
+│   ├── <span class="file">schema.prisma</span>                  <span class="note">← schema SQLite</span>
+│   └── <span class="file">data.db</span>                        <span class="note">← database thực tế</span>
+├── <span class="dir">logs/</span>
+│   └── <span class="file">signal.log</span>                     <span class="note">← Winston, rotate 10MB×5</span>
+└── <span class="dir">src/</span>
+    ├── <span class="file">index.ts</span>                       <span class="note">← entry point (khởi động server)</span>
+    ├── <span class="file">server.ts</span>                      <span class="note">← Express REST API server</span>
+    ├── <span class="file">db.ts</span>                          <span class="note">← Prisma client singleton</span>
+    ├── <span class="file">logger.ts</span>                      <span class="note">← Winston logger</span>
+    ├── <span class="dir">config/</span>
+    │   └── <span class="file">trading.ts</span>                 <span class="note">← đọc toàn bộ config từ .env</span>
+    ├── <span class="dir">commands/</span>
+    │   └── <span class="file">analyzeSignal.ts</span>           <span class="note">← CLI entry: check giờ → orchestrate</span>
+    └── <span class="dir">services/</span>
+        ├── <span class="file">SignalOrchestrator.ts</span>      <span class="note">← pipeline chính</span>
+        ├── <span class="file">MarketHoursService.ts</span>      <span class="note">← kiểm tra giờ giao dịch</span>
+        ├── <span class="dir">ai/</span>
+        │   ├── <span class="file">ClaudeAnalystService.ts</span>  <span class="note">← Claude API, build prompt, parse JSON</span>
+        │   └── <span class="dir">dto/</span>
+        │       └── <span class="file">AnalysisResult.ts</span>    <span class="note">← kiểu trả về từ AI</span>
+        ├── <span class="dir">market/</span>
+        │   ├── <span class="file">Candle.ts</span>              <span class="note">← kiểu dữ liệu nến (OHLCV)</span>
+        │   ├── <span class="file">MarketDataProvider.ts</span>  <span class="note">← interface</span>
+        │   ├── <span class="file">MarketDataProviderFactory.ts</span>  <span class="note">← chọn provider</span>
+        │   ├── <span class="file">TwelveDataProvider.ts</span>  <span class="note">← provider mặc định</span>
+        │   └── <span class="file">OandaProvider.ts</span>       <span class="note">← provider thay thế</span>
+        └── <span class="dir">telegram/</span>
+            └── <span class="file">TelegramNotifier.ts</span>   <span class="note">← format + gửi Telegram</span>
+    </div>
+  </section>
+
+  <!-- ── Data Flow ── -->
+  <section id="flow">
+    <h2><span class="icon">🔄</span> Luồng dữ liệu</h2>
+    <div class="flow">
+      <div class="flow-step">
+        <div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+          <div class="flow-node">POST /api/analyze</div>
+          <div class="flow-arrow">↓</div>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+          <div class="flow-node">SignalOrchestrator.run(instrument?, timeframes?)</div>
+          <div class="flow-arrow">↓</div>
+        </div>
+      </div>
+      <div class="flow-details">
+        <li>timeframes: dùng tham số nếu có, fallback về TRADING_TIMEFRAMES trong .env</li>
+        <li>MarketDataProvider.fetchCandles(XAU/USD, H1/M15/M5, 100 nến)</li>
+        <li>MarketDataProvider.fetchCurrentPrice()</li>
+      </div>
+      <div class="flow-step">
+        <div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+          <div class="flow-node">ClaudeAnalystService.analyze()</div>
+          <div class="flow-arrow">↓</div>
+        </div>
+      </div>
+      <div class="flow-details">
+        <li>Tính chỉ báo: RSI(14), EMA(200), HMA(200), BB(34,2.0)</li>
+        <li>Build system prompt (tiếng Việt, ICT/SMC methodology)</li>
+        <li>Build user prompt (bảng nến markdown)</li>
+        <li>POST Claude API (temperature=0.2, maxTokens=8192)</li>
+        <li>Parse JSON từ response (```json block hoặc fallback search)</li>
+      </div>
+      <div class="flow-step">
+        <div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+          <div class="flow-node">Prisma → lưu TradingSignal vào SQLite</div>
+          <div class="flow-arrow">↓</div>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+          <div class="flow-node">TelegramNotifier</div>
+        </div>
+      </div>
+      <div class="flow-details">
+        <li>formatSignalCard() → HTML card</li>
+        <li>send() → kênh Telegram chính (auto-split nếu >4000 ký tự)</li>
+        <li>sendComment() → discussion thread (nếu có BUY/SELL)</li>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Design Patterns ── -->
+  <section id="patterns">
+    <h2><span class="icon">🏗️</span> Design Patterns</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Pattern</th><th>Nơi dùng</th><th>Mô tả</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Factory</strong></td><td><code>MarketDataProviderFactory</code></td><td>Chọn provider theo config</td></tr>
+          <tr><td><strong>Strategy</strong></td><td>TwelveData / OANDA</td><td>Cùng implement interface <code>MarketDataProvider</code></td></tr>
+          <tr><td><strong>Static Factory</strong></td><td><code>Service.fromConfig()</code></td><td>Thay vì DI container</td></tr>
+          <tr><td><strong>DTO</strong></td><td><code>AnalysisResult</code></td><td>Bọc output từ AI</td></tr>
+          <tr><td><strong>Retry + Backoff</strong></td><td>Claude &amp; TwelveData</td><td>4 lần, sleep 3s/6s/9s</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── API Server ── -->
+  <section id="api">
+    <h2><span class="icon">🔌</span> REST API Server</h2>
+    <p>
+      File: <code>src/server.ts</code> — chạy cùng process với scheduler qua <code>src/index.ts</code>,
+      lắng nghe port <code>PORT</code> (mặc định <strong>3000</strong>).
+    </p>
+    <p>
+      <strong>Authentication:</strong> Header <code>x-api-key</code> hoặc <code>Authorization: Bearer &lt;key&gt;</code>.
+      Bỏ qua nếu <code>API_SERVER_KEY</code> không set.
+    </p>
+
+    <h3>Tất cả endpoints</h3>
+    <div class="endpoint"><a href="#api-analyze" style="display:contents"><span class="method post">POST</span><span class="endpoint-path">/api/analyze</span><span class="endpoint-desc">Trigger phân tích thủ công</span></a></div>
+    <div class="endpoint"><a href="#api-signals" style="display:contents"><span class="method get">GET</span><span class="endpoint-path">/api/signals</span><span class="endpoint-desc">Danh sách tín hiệu hôm nay</span></a></div>
+    <div class="endpoint"><a href="#api-signals-latest" style="display:contents"><span class="method get">GET</span><span class="endpoint-path">/api/signals/latest</span><span class="endpoint-desc">Tín hiệu mới nhất</span></a></div>
+    <div class="endpoint"><a href="#api-symbols" style="display:contents"><span class="method get">GET</span><span class="endpoint-path">/api/symbols</span><span class="endpoint-desc">Danh sách symbol theo dõi</span></a></div>
+    <div class="endpoint"><a href="#api-symbols" style="display:contents"><span class="method post">POST</span><span class="endpoint-path">/api/symbols</span><span class="endpoint-desc">Thêm symbol</span></a></div>
+    <div class="endpoint"><a href="#api-symbols" style="display:contents"><span class="method del">DELETE</span><span class="endpoint-path">/api/symbols/:symbol</span><span class="endpoint-desc">Xóa symbol</span></a></div>
+    <div class="endpoint"><a href="#api-symbols" style="display:contents"><span class="method patch">PATCH</span><span class="endpoint-path">/api/symbols/:symbol/favorite</span><span class="endpoint-desc">Toggle yêu thích</span></a></div>
+    <div class="endpoint"><a href="#api-groups" style="display:contents"><span class="method get">GET</span><span class="endpoint-path">/api/groups</span><span class="endpoint-desc">Danh sách nhóm</span></a></div>
+    <div class="endpoint"><a href="#api-groups" style="display:contents"><span class="method post">POST</span><span class="endpoint-path">/api/groups</span><span class="endpoint-desc">Tạo nhóm</span></a></div>
+    <div class="endpoint"><a href="#api-groups" style="display:contents"><span class="method get">GET</span><span class="endpoint-path">/api/groups/:id</span><span class="endpoint-desc">Chi tiết nhóm + symbol</span></a></div>
+    <div class="endpoint"><a href="#api-groups" style="display:contents"><span class="method del">DELETE</span><span class="endpoint-path">/api/groups/:id</span><span class="endpoint-desc">Xóa nhóm</span></a></div>
+    <div class="endpoint"><a href="#api-groups" style="display:contents"><span class="method post">POST</span><span class="endpoint-path">/api/groups/:id/symbols</span><span class="endpoint-desc">Thêm symbol vào nhóm</span></a></div>
+    <div class="endpoint"><a href="#api-groups" style="display:contents"><span class="method del">DELETE</span><span class="endpoint-path">/api/groups/:id/symbols/:symbol</span><span class="endpoint-desc">Xóa symbol khỏi nhóm</span></a></div>
+    <div class="endpoint"><a href="#api-symbols" style="display:contents"><span class="method get">GET</span><span class="endpoint-path">/api/symbols/:symbol/signals</span><span class="endpoint-desc">Analysis logs của symbol</span></a></div>
+  </section>
+
+  <!-- ── POST /api/analyze ── -->
+  <section id="api-analyze">
+    <h2><span class="icon">⚡</span> POST /api/analyze</h2>
+    <p>Trigger phân tích thủ công. Cả <code>symbol</code> và <code>timeframes</code> đều tùy chọn.</p>
+
+    <h3>Request body</h3>
+    <pre>{
+  <span class="key">"symbol"</span>:     <span class="str">"XAU/USD"</span>,        <span class="comment">// tùy chọn — mặc định TRADING_INSTRUMENT</span>
+  <span class="key">"timeframes"</span>: [<span class="str">"H1"</span>, <span class="str">"M15"</span>]   <span class="comment">// tùy chọn — mặc định TRADING_TIMEFRAMES</span>
+}</pre>
+
+    <p>
+      <code>timeframes</code> chấp nhận cả <strong>array</strong> <code>["H1","M15"]</code>
+      lẫn <strong>string phân cách phẩy</strong> <code>"H1,M15"</code>.
+      Nếu không truyền, dùng giá trị <code>TRADING_TIMEFRAMES</code> trong <code>.env</code>.
+    </p>
+
+    <h3>Response</h3>
+    <pre>{
+  <span class="key">"ok"</span>:          <span class="kw">true</span>,
+  <span class="key">"symbol"</span>:      <span class="str">"XAU/USD"</span>,
+  <span class="key">"duration_ms"</span>: <span class="num">4200</span>,
+  <span class="key">"setup"</span>:       <span class="str">"&lt;HTML signal card&gt;"</span>,
+  <span class="key">"reasoning"</span>:   <span class="str">"&lt;HTML analysis&gt;"</span>
+}</pre>
+
+    <h3>Ví dụ cURL</h3>
+    <pre><span class="comment"># Dùng timeframe tùy chỉnh</span>
+curl -X POST http://localhost:3000/api/analyze \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: YOUR_KEY" \
+  -d '{"symbol":"XAU/USD","timeframes":["H1","M15"]}'
+
+<span class="comment"># Dùng string phân cách phẩy</span>
+curl -X POST http://localhost:3000/api/analyze \
+  -d '{"timeframes":"H1,M15"}'
+
+<span class="comment"># Không truyền → dùng TRADING_TIMEFRAMES trong .env</span>
+curl -X POST http://localhost:3000/api/analyze \
+  -d '{}'</pre>
+  </section>
+
+  <!-- ── GET /api/signals ── -->
+  <section id="api-signals">
+    <h2><span class="icon">📋</span> GET /api/signals</h2>
+    <p>Lấy danh sách tín hiệu trong ngày (tính theo giờ Việt Nam, từ 00:00 VN).</p>
+    <p><strong>Auth:</strong> Không yêu cầu.</p>
+
+    <h3>Query parameters</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Param</th><th>Kiểu</th><th>Mặc định</th><th>Mô tả</th></tr></thead>
+        <tbody>
+          <tr><td><code>limit</code></td><td>integer</td><td>20</td><td>Số tín hiệu trả về (tối đa 100)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Response</h3>
+    <pre>[
+  {
+    <span class="key">"id"</span>:                   <span class="num">42</span>,
+    <span class="key">"instrument"</span>:           <span class="str">"XAU/USD"</span>,
+    <span class="key">"action"</span>:               <span class="str">"BUY"</span>,
+    <span class="key">"timeframe"</span>:            <span class="str">"M5"</span>,
+    <span class="key">"entry"</span>:                <span class="num">2343.00</span>,
+    <span class="key">"stop_loss"</span>:            <span class="num">2340.00</span>,
+    <span class="key">"take_profit"</span>:          <span class="num">2350.00</span>,
+    <span class="key">"risk_reward"</span>:          <span class="num">2.33</span>,
+    <span class="key">"confidence"</span>:           <span class="num">82</span>,
+    <span class="key">"current_price"</span>:        <span class="num">2343.50</span>,
+    <span class="key">"trend_bias"</span>:           <span class="str">"BULLISH"</span>,
+    <span class="key">"reasoning"</span>:            <span class="str">"..."</span>,
+    <span class="key">"telegram_message_id"</span>:  <span class="str">"12345"</span>,
+    <span class="key">"sent_at"</span>:              <span class="str">"2026-06-01T03:30:00.000Z"</span>,
+    <span class="key">"created_at"</span>:           <span class="str">"2026-06-01T03:30:00.000Z"</span>,
+    <span class="key">"market_structure"</span>:     { <span class="comment">/* object từ raw_ai_response */</span> },
+    <span class="key">"key_levels"</span>:           [ <span class="comment">/* array */</span> ],
+    <span class="key">"setups"</span>:               [ <span class="comment">/* array */</span> ]
+  }
+]</pre>
+
+    <h3>Ví dụ</h3>
+    <pre>curl http://localhost:3000/api/signals?limit=5</pre>
+  </section>
+
+  <!-- ── GET /api/signals/latest ── -->
+  <section id="api-signals-latest">
+    <h2><span class="icon">⚡</span> GET /api/signals/latest</h2>
+    <p>Lấy tín hiệu mới nhất (không giới hạn theo ngày). Dùng để hiển thị trên dashboard.</p>
+    <p><strong>Auth:</strong> Không yêu cầu.</p>
+
+    <h3>Response</h3>
+    <p>Trả về <strong>một object</strong> cùng cấu trúc với từng phần tử trong <code>GET /api/signals</code>.</p>
+    <pre>HTTP 200 — object tín hiệu mới nhất
+HTTP 404 — <span class="str">"No signals found"</span></pre>
+
+    <h3>Ví dụ</h3>
+    <pre>curl http://localhost:3000/api/signals/latest</pre>
+  </section>
+
+  <!-- ── Symbols ── -->
+  <section id="api-symbols">
+    <h2><span class="icon">💱</span> Symbols</h2>
+    <p>CRUD danh sách symbol theo dõi. <strong>Auth:</strong> Yêu cầu <code>API_SERVER_KEY</code> nếu đã cấu hình.</p>
+
+    <h3>GET /api/symbols</h3>
+    <p>Lấy toàn bộ danh sách, sắp xếp: yêu thích trước, rồi theo tên ABC.</p>
+    <pre>curl http://localhost:3000/api/symbols \
+  -H "x-api-key: YOUR_KEY"</pre>
+    <pre><span class="comment">// Response</span>
+[
+  {
+    <span class="key">"id"</span>:        <span class="num">1</span>,
+    <span class="key">"symbol"</span>:   <span class="str">"XAU/USD"</span>,
+    <span class="key">"name"</span>:     <span class="str">"Gold"</span>,
+    <span class="key">"favorite"</span>: <span class="kw">true</span>,
+    <span class="key">"createdAt"</span>:<span class="str">"2026-06-01T00:00:00.000Z"</span>
+  }
+]</pre>
+
+    <h3>POST /api/symbols</h3>
+    <p>Thêm symbol mới. Trả về <code>409</code> nếu symbol đã tồn tại.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Field</th><th>Kiểu</th><th>Bắt buộc</th><th>Mô tả</th></tr></thead>
+        <tbody>
+          <tr><td><code>symbol</code></td><td>string</td><td>Có</td><td>Mã symbol, tự động uppercase (vd: <code>XAU/USD</code>)</td></tr>
+          <tr><td><code>name</code></td><td>string</td><td>Có</td><td>Tên hiển thị (vd: <code>Gold</code>)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <pre>curl -X POST http://localhost:3000/api/symbols \
+  -H "x-api-key: YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"symbol":"EUR/USD","name":"Euro"}'
+
+<span class="comment">// Response 201</span>
+{ <span class="key">"id"</span>: <span class="num">2</span>, <span class="key">"symbol"</span>: <span class="str">"EUR/USD"</span>, <span class="key">"name"</span>: <span class="str">"Euro"</span>, <span class="key">"favorite"</span>: <span class="kw">false</span> }</pre>
+
+    <h3>DELETE /api/symbols/:symbol</h3>
+    <pre>curl -X DELETE http://localhost:3000/api/symbols/EUR%2FUSD \
+  -H "x-api-key: YOUR_KEY"
+
+<span class="comment">// Response 200</span>
+{ <span class="key">"ok"</span>: <span class="kw">true</span>, <span class="key">"deleted"</span>: <span class="str">"EUR/USD"</span> }
+
+<span class="comment">// Response 404 nếu không tìm thấy</span>
+{ <span class="key">"error"</span>: <span class="str">"Symbol 'EUR/USD' not found"</span> }</pre>
+
+    <h3>PATCH /api/symbols/:symbol/favorite</h3>
+    <p>Toggle trạng thái yêu thích. Mặc định <code>favorite: true</code> nếu không truyền body.</p>
+    <pre>curl -X PATCH http://localhost:3000/api/symbols/XAU%2FUSD/favorite \
+  -H "x-api-key: YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"favorite": false}'
+
+<span class="comment">// Response — object symbol đã cập nhật</span></pre>
+
+    <h3>GET /api/symbols/:symbol/signals</h3>
+    <p>Lấy analysis logs (kết quả từ <code>/api/analyze</code>) của một symbol trong ngày hôm nay (giờ VN).</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Param</th><th>Kiểu</th><th>Mặc định</th><th>Mô tả</th></tr></thead>
+        <tbody>
+          <tr><td><code>limit</code></td><td>integer</td><td>20</td><td>Số bản ghi (tối đa 100)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <pre>curl "http://localhost:3000/api/symbols/XAU%2FUSD/signals?limit=5" \
+  -H "x-api-key: YOUR_KEY"
+
+<span class="comment">// Response</span>
+[
+  {
+    <span class="key">"id"</span>:          <span class="num">1</span>,
+    <span class="key">"symbol"</span>:      <span class="str">"XAU/USD"</span>,
+    <span class="key">"analyzed_at"</span>: <span class="str">"2026-06-01T03:30:00.000Z"</span>,
+    <span class="key">"duration_ms"</span>: <span class="num">4200</span>,
+    <span class="key">"setup"</span>:       <span class="str">"&lt;HTML signal card&gt;"</span>,
+    <span class="key">"reasoning"</span>:   <span class="str">"&lt;HTML analysis&gt;"</span>
+  }
+]</pre>
+  </section>
+
+  <!-- ── Groups ── -->
+  <section id="api-groups">
+    <h2><span class="icon">📁</span> Groups</h2>
+    <p>CRUD nhóm symbol. <strong>Auth:</strong> Yêu cầu <code>API_SERVER_KEY</code> nếu đã cấu hình.</p>
+
+    <h3>GET /api/groups</h3>
+    <p>Lấy tất cả nhóm, mỗi nhóm kèm danh sách <code>symbols</code> (mảng tên symbol).</p>
+    <pre>curl http://localhost:3000/api/groups \
+  -H "x-api-key: YOUR_KEY"
+
+<span class="comment">// Response</span>
+[
+  {
+    <span class="key">"id"</span>:      <span class="num">1</span>,
+    <span class="key">"name"</span>:    <span class="str">"Metals"</span>,
+    <span class="key">"symbols"</span>: [<span class="str">"XAU/USD"</span>, <span class="str">"XAG/USD"</span>]
+  }
+]</pre>
+
+    <h3>POST /api/groups</h3>
+    <p>Tạo nhóm mới. Trả về <code>409</code> nếu tên đã tồn tại.</p>
+    <pre>curl -X POST http://localhost:3000/api/groups \
+  -H "x-api-key: YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Metals"}'
+
+<span class="comment">// Response 201</span>
+{ <span class="key">"id"</span>: <span class="num">1</span>, <span class="key">"name"</span>: <span class="str">"Metals"</span>, <span class="key">"symbols"</span>: [] }</pre>
+
+    <h3>GET /api/groups/:id</h3>
+    <p>Chi tiết một nhóm kèm đầy đủ thông tin từng symbol (id, symbol, name, favorite).</p>
+    <pre>curl http://localhost:3000/api/groups/1 \
+  -H "x-api-key: YOUR_KEY"
+
+<span class="comment">// Response</span>
+{
+  <span class="key">"id"</span>:      <span class="num">1</span>,
+  <span class="key">"name"</span>:    <span class="str">"Metals"</span>,
+  <span class="key">"symbols"</span>: [
+    { <span class="key">"id"</span>: <span class="num">1</span>, <span class="key">"symbol"</span>: <span class="str">"XAU/USD"</span>, <span class="key">"name"</span>: <span class="str">"Gold"</span>, <span class="key">"favorite"</span>: <span class="kw">true</span> }
+  ]
+}
+
+<span class="comment">// Response 404</span>
+{ <span class="key">"error"</span>: <span class="str">"Group 99 not found"</span> }</pre>
+
+    <h3>DELETE /api/groups/:id</h3>
+    <pre>curl -X DELETE http://localhost:3000/api/groups/1 \
+  -H "x-api-key: YOUR_KEY"
+
+<span class="comment">// Response 200</span>
+{ <span class="key">"ok"</span>: <span class="kw">true</span>, <span class="key">"deleted"</span>: <span class="num">1</span> }</pre>
+
+    <h3>POST /api/groups/:id/symbols</h3>
+    <p>Thêm symbol vào nhóm. Symbol phải tồn tại trong bảng <code>symbols</code>. Trả về <code>409</code> nếu đã có trong nhóm, <code>404</code> nếu group hoặc symbol không tồn tại.</p>
+    <pre>curl -X POST http://localhost:3000/api/groups/1/symbols \
+  -H "x-api-key: YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"symbol":"XAU/USD"}'
+
+<span class="comment">// Response 201</span>
+{ <span class="key">"group_id"</span>: <span class="num">1</span>, <span class="key">"symbol"</span>: <span class="str">"XAU/USD"</span> }</pre>
+
+    <h3>DELETE /api/groups/:id/symbols/:symbol</h3>
+    <pre>curl -X DELETE "http://localhost:3000/api/groups/1/symbols/XAU%2FUSD" \
+  -H "x-api-key: YOUR_KEY"
+
+<span class="comment">// Response 200</span>
+{ <span class="key">"ok"</span>: <span class="kw">true</span>, <span class="key">"group_id"</span>: <span class="num">1</span>, <span class="key">"removed"</span>: <span class="str">"XAU/USD"</span> }</pre>
+  </section>
+
+  <!-- ── ClaudeAnalystService ── -->
+  <section id="claude">
+    <h2><span class="icon">🤖</span> ClaudeAnalystService</h2>
+    <p>File: <code>src/services/ai/ClaudeAnalystService.ts</code></p>
+
+    <h3>Prompt strategy (3 bước)</h3>
+    <ol style="padding-left:20px;color:#c9d1d9;display:flex;flex-direction:column;gap:6px;margin-bottom:16px">
+      <li>Phân tích kỹ thuật độc lập từng khung (H1 → M15 → M5)</li>
+      <li>Review lệnh cũ (nếu có)</li>
+      <li>Quyết định tổng thể (BUY / SELL / NO_TRADE)</li>
+    </ol>
+
+    <h3>Cấu trúc prompt</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Mục</th><th>Nội dung</th></tr></thead>
+        <tbody>
+          <tr><td><code>1A</code></td><td>CẤU TRÚC THỊ TRƯỜNG — H1, M15, M5</td></tr>
+          <tr><td><code>1B</code></td><td>VÙNG CUNG CẦU &amp; KEY LEVELS</td></tr>
+          <tr><td><code>1C</code></td><td>CHỈ BÁO KỸ THUẬT</td></tr>
+          <tr><td><code>2</code></td><td>QUYẾT ĐỊNH GIAO DỊCH</td></tr>
+          <tr><td><code>3</code></td><td>KẾ HOẠCH QUẢN LÝ LỆNH</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>JSON output</h3>
+    <pre>{
+  <span class="key">"action"</span>:      <span class="str">"BUY|SELL|NO_TRADE"</span>,
+  <span class="key">"entry"</span>:       <span class="num">2343.00</span>,
+  <span class="key">"stop_loss"</span>:   <span class="num">2340.00</span>,
+  <span class="key">"take_profit"</span>: <span class="num">2350.00</span>,
+  <span class="key">"risk_reward"</span>: <span class="num">2.33</span>,
+  <span class="key">"confidence"</span>:  <span class="num">82</span>,
+  <span class="key">"trend_bias"</span>:  <span class="str">"BULLISH|BEARISH|NEUTRAL"</span>,
+  <span class="key">"reasoning"</span>:   <span class="str">"..."</span>
+}</pre>
+
+    <h3>Retry logic</h3>
+    <p>4 lần, sleep 3s / 6s / 9s, trigger khi HTTP status <code>429</code> / <code>500</code> / <code>502</code> / <code>503</code> / <code>504</code>.</p>
+  </section>
+
+  <!-- ── TelegramNotifier ── -->
+  <section id="telegram">
+    <h2><span class="icon">📨</span> TelegramNotifier</h2>
+    <p>File: <code>src/services/telegram/TelegramNotifier.ts</code></p>
+    <ul style="color:#c9d1d9;padding-left:20px;display:flex;flex-direction:column;gap:6px;margin-bottom:20px">
+      <li>Gửi signal card dạng <strong>HTML</strong> (không dùng Markdown)</li>
+      <li>Auto-split tin nhắn &gt;4000 ký tự</li>
+      <li>Discussion thread: tự resolve DISCUSSION_ID nếu chưa set</li>
+      <li>Chuyển đổi markdown AI → HTML Telegram (bảng, bold, italic, bullet)</li>
+      <li>Thanh confidence: <code>████████░░</code> (10 ký tự)</li>
+    </ul>
+
+    <h3>Format signal card</h3>
+    <div class="signal-preview">━━━━━━━━━━━━━━━━━━━━━
+📊 XAU/USD  🟢 MUA (BUY)
+━━━━━━━━━━━━━━━━━━━━━
+🕐 14/05/2026 10:30 (Giờ VN)
+💵 Giá hiện tại: 2343.50
+📐 Xu hướng: 📈 Tăng
+─ Thông số lệnh ─────────────
+🎯 Entry:       2343.00
+🛡 Stop Loss:   2340.00
+💰 Take Profit: 2350.00
+⚖️ R:R:         1 : 2.33
+─ Đánh giá AI ───────────────
+🔎 Độ tin cậy: 82/100
+████████░░
+━━━━━━━━━━━━━━━━━━━━━
+⚠️ Tín hiệu tham khảo từ AI, không phải lời khuyên đầu tư.</div>
+  </section>
+
+  <!-- ── Market Providers ── -->
+  <section id="market">
+    <h2><span class="icon">📈</span> Market Data Providers</h2>
+
+    <h3>TwelveData <span class="tag">default</span></h3>
+    <pre>GET https://api.twelvedata.com/time_series
+  ?symbol=XAU/USD&interval=5min&outputsize=100&order=ASC&apikey=...
+
+GET https://api.twelvedata.com/price?symbol=XAU/USD&apikey=...</pre>
+    <p>Retry: 2 lần, delay 500ms.</p>
+
+    <h3>OANDA <span class="tag" style="background:rgba(88,166,255,.15);color:var(--accent2)">thay thế</span></h3>
+    <pre>GET https://api-fxpractice.oanda.com/v3/instruments/XAU_USD/candles
+  ?granularity=M5&count=100&price=M
+  Authorization: Bearer ...</pre>
+  </section>
+
+  <!-- ── .env ── -->
+  <section id="env">
+    <h2><span class="icon">🔑</span> Cấu hình (.env)</h2>
+    <pre><span class="comment"># Database</span>
+<span class="key">DATABASE_URL</span>=<span class="str">"file:./prisma/data.db"</span>
+
+<span class="comment"># Logging</span>
+<span class="key">LOG_LEVEL</span>=<span class="val">info</span>
+
+<span class="comment"># Market Data</span>
+<span class="key">MARKET_PROVIDER</span>=<span class="val">twelvedata</span>          <span class="comment"># hoặc "oanda"</span>
+<span class="key">TRADING_INSTRUMENT</span>=<span class="val">XAU/USD</span>
+<span class="key">TRADING_TIMEFRAMES</span>=<span class="val">M5,M15,H1</span>        <span class="comment"># khung thời gian phân tích</span>
+<span class="key">TRADING_CANDLES_COUNT</span>=<span class="num">100</span>
+<span class="key">TRADING_MIN_RR</span>=<span class="num">2.0</span>
+
+<span class="comment"># Market Hours (Asia/Ho_Chi_Minh)</span>
+<span class="key">MARKET_HOURS_OPEN</span>=<span class="num">6</span>
+<span class="key">MARKET_HOURS_CLOSE</span>=<span class="num">22</span>
+<span class="key">MARKET_HOURS_TIMEZONE</span>=<span class="val">Asia/Ho_Chi_Minh</span>
+
+<span class="comment"># API Keys</span>
+<span class="key">TWELVEDATA_API_KEY</span>=<span class="val">...</span>
+<span class="key">OANDA_API_TOKEN</span>=<span class="val">...</span>
+<span class="key">OANDA_ACCOUNT_ID</span>=<span class="val">...</span>
+<span class="key">OANDA_ENV</span>=<span class="val">practice</span>                  <span class="comment"># hoặc "live"</span>
+<span class="key">CLAUDE_API_KEY</span>=<span class="val">...</span>
+<span class="key">CLAUDE_MODEL</span>=<span class="val">claude-sonnet-4-6</span>       <span class="comment"># hoặc claude-opus-4-8, claude-haiku-4-5</span>
+<span class="key">TELEGRAM_BOT_TOKEN</span>=<span class="val">...</span>
+<span class="key">TELEGRAM_CHAT_ID</span>=<span class="val">...</span>
+<span class="key">TELEGRAM_DISCUSSION_ID</span>=<span class="val">...</span>           <span class="comment"># auto-resolve nếu để trống</span>
+
+<span class="comment"># API Server</span>
+<span class="key">PORT</span>=<span class="num">3000</span>
+<span class="key">API_SERVER_KEY</span>=<span class="val">...</span>                   <span class="comment"># để trống = không yêu cầu auth</span></pre>
+  </section>
+
+  <!-- ── NPM Scripts ── -->
+  <section id="scripts">
+    <h2><span class="icon">📦</span> NPM Scripts</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Script</th><th>Mô tả</th></tr></thead>
+        <tbody>
+          <tr><td><code>npm run dev</code></td><td>chạy tsx watch (development)</td></tr>
+          <tr><td><code>npm start</code></td><td>chạy compiled JS (production)</td></tr>
+          <tr><td><code>npm run build</code></td><td>biên dịch TypeScript → dist/</td></tr>
+          <tr><td><code>npm run analyze</code></td><td>chạy phân tích 1 lần (có check giờ)</td></tr>
+          <tr><td><code>npm run analyze:force</code></td><td>chạy phân tích 1 lần (bỏ qua check giờ)</td></tr>
+          <tr><td><code>npm run db:generate</code></td><td>generate Prisma client</td></tr>
+          <tr><td><code>npm run db:push</code></td><td>sync schema → DB</td></tr>
+          <tr><td><code>npm run db:migrate</code></td><td>chạy migration</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── DB Schema ── -->
+  <section id="schema">
+    <h2><span class="icon">🗄️</span> Database Schema</h2>
+    <p>Bảng <code>trading_signals</code> — Index: <code>(instrument, created_at)</code></p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Cột</th><th>Kiểu</th><th>Mô tả</th></tr></thead>
+        <tbody>
+          <tr><td><code>id</code></td><td>INT PK</td><td>Auto increment</td></tr>
+          <tr><td><code>instrument</code></td><td>STRING</td><td>"XAU/USD"</td></tr>
+          <tr><td><code>action</code></td><td>STRING</td><td>"BUY" / "SELL" / "NO_TRADE"</td></tr>
+          <tr><td><code>timeframe</code></td><td>STRING</td><td>"M5"</td></tr>
+          <tr><td><code>entry</code></td><td>FLOAT</td><td>Giá vào lệnh</td></tr>
+          <tr><td><code>stop_loss</code></td><td>FLOAT</td><td>Điểm dừng lỗ</td></tr>
+          <tr><td><code>take_profit</code></td><td>FLOAT</td><td>Chốt lời (TP1)</td></tr>
+          <tr><td><code>risk_reward</code></td><td>FLOAT</td><td>Tỷ lệ R:R (vd: 2.0 = 1:2)</td></tr>
+          <tr><td><code>confidence</code></td><td>INT</td><td>Độ tin cậy AI (0–100)</td></tr>
+          <tr><td><code>current_price</code></td><td>FLOAT</td><td>Giá thị trường lúc phân tích</td></tr>
+          <tr><td><code>reasoning</code></td><td>STRING</td><td>Lý luận AI</td></tr>
+          <tr><td><code>trend_bias</code></td><td>STRING</td><td>"BULLISH" / "BEARISH" / "NEUTRAL"</td></tr>
+          <tr><td><code>raw_ai_response</code></td><td>STRING</td><td>Toàn bộ JSON từ Claude</td></tr>
+          <tr><td><code>indicators_snapshot</code></td><td>STRING</td><td>Nến + metadata JSON</td></tr>
+          <tr><td><code>telegram_message_id</code></td><td>STRING</td><td>ID tin nhắn Telegram</td></tr>
+          <tr><td><code>sent_at</code></td><td>DATETIME</td><td>Thời điểm gửi</td></tr>
+          <tr><td><code>created_at</code></td><td>DATETIME</td><td>Thời điểm tạo</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Rules ── -->
+  <section id="rules">
+    <h2><span class="icon">📋</span> Quy tắc quan trọng khi sửa code</h2>
+    <ul class="rules">
+      <li><span class="num">1</span><span><strong>Khung thời gian:</strong> Hệ thống hiện dùng H1, M15, M5 — KHÔNG thêm lại W1/D1/H4 trừ khi được yêu cầu rõ ràng.</span></li>
+      <li><span class="num">2</span><span><strong>Ngôn ngữ prompt:</strong> Prompt AI viết bằng tiếng Việt — giữ nguyên.</span></li>
+      <li><span class="num">3</span><span><strong>Database:</strong> Dùng Prisma — không dùng raw SQL.</span></li>
+      <li><span class="num">4</span><span><strong>Telegram:</strong> Dùng HTML parse_mode — không dùng MarkdownV2.</span></li>
+      <li><span class="num">5</span><span><strong>Config:</strong> Mọi giá trị cứng phải lấy từ <code>src/config/trading.ts</code>, không hardcode.</span></li>
+      <li><span class="num">6</span><span><strong>Logging:</strong> Dùng <code>logger</code> từ <code>src/logger.ts</code>, không dùng <code>console.log</code>.</span></li>
+    </ul>
+    <br/>
+    <a href="#overview" class="back-top">↑ Lên đầu trang</a>
+  </section>
+
+</main>
+
+<script>
+  // Active nav link on scroll
+  const sections = document.querySelectorAll('section[id]');
+  const links = document.querySelectorAll('aside a');
+
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        links.forEach(l => l.classList.remove('active'));
+        const active = document.querySelector(`aside a[href="#${e.target.id}"]`);
+        if (active) active.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+
+  sections.forEach(s => observer.observe(s));
+</script>
+</body>
+</html>

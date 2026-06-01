@@ -27,13 +27,20 @@ function requireApiKey(req: Request, res: Response, next: NextFunction): void {
   next();
 }
 
+app.get('/docs', (_req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'docs.html')));
+
 app.post('/api/analyze', requireApiKey, async (req, res) => {
   const symbol: string | undefined = req.body?.symbol?.trim() || undefined;
+  const timeframes: string[] | undefined = Array.isArray(req.body?.timeframes)
+    ? req.body.timeframes.map((t: string) => t.trim()).filter(Boolean)
+    : typeof req.body?.timeframes === 'string'
+      ? req.body.timeframes.split(',').map((t: string) => t.trim()).filter(Boolean)
+      : undefined;
 
   const startedAt = Date.now();
   try {
-    logger.info('POST /api/analyze triggered', { symbol: symbol ?? config.instrument });
-    const { result, rawText, instrument: sym, currentPrice } = await SignalOrchestrator.fromConfig().run(symbol);
+    logger.info('POST /api/analyze triggered', { symbol: symbol ?? config.instrument, timeframes: timeframes ?? 'default' });
+    const { result, rawText, instrument: sym, currentPrice } = await SignalOrchestrator.fromConfig().run(symbol, timeframes);
     const durationMs = Date.now() - startedAt;
 
     const notifier = TelegramNotifier.fromConfig();
@@ -227,7 +234,23 @@ app.get('/api/symbols/:symbol/signals', requireApiKey, async (req, res) => {
   }
 });
 
-// ─── Trading signals (legacy) ─────────────────────────────────────────────────
+// ─── Trading signals ──────────────────────────────────────────────────────────
+
+app.get('/api/signals/latest', async (_req, res) => {
+  try {
+    const signal = await prisma.tradingSignal.findFirst({
+      orderBy: { created_at: 'desc' },
+    });
+    if (!signal) {
+      res.status(404).json({ error: 'No signals found' });
+      return;
+    }
+    res.json(parseSignal(signal));
+  } catch (err: any) {
+    logger.error('GET /api/signals/latest failed', { error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 app.get('/api/signals', async (req, res) => {
   try {

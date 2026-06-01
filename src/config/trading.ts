@@ -55,5 +55,8 @@ export const config = {
   server: {
     port: parseInt(process.env.PORT ?? '3000', 10),
     apiKey: process.env.API_SERVER_KEY ?? '',
+    get domain(): string {
+      return process.env.APP_DOMAIN?.trim() || `http://localhost:${this.port}`;
+    },
   },
 };

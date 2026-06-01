@@ -21,14 +21,15 @@ export class SignalOrchestrator {
     );
   }
 
-  async run(instrument?: string): Promise<{ result: AnalysisResult; rawText: string; instrument: string; currentPrice: number }> {
-    const { instrument: defaultInstrument, timeframes, candlesByTf: candlesByTfConfig, candlesCount } = config;
+  async run(instrument?: string, timeframes?: string[]): Promise<{ result: AnalysisResult; rawText: string; instrument: string; currentPrice: number }> {
+    const { instrument: defaultInstrument, timeframes: defaultTimeframes, candlesByTf: candlesByTfConfig, candlesCount } = config;
     instrument = instrument ?? defaultInstrument;
+    const resolvedTimeframes = (timeframes && timeframes.length > 0) ? timeframes : defaultTimeframes;
 
-    logger.info('Signal analysis started', { instrument, timeframes });
+    logger.info('Signal analysis started', { instrument, timeframes: resolvedTimeframes });
 
     const candlesByTf: Record<string, Candle[]> = {};
-    for (const tf of timeframes) {
+    for (const tf of resolvedTimeframes) {
       const count = (candlesByTfConfig as Record<string, number>)[tf] ?? candlesCount;
       candlesByTf[tf] = await this.market.fetchCandles(instrument, tf, count);
     }

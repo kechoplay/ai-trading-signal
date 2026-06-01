@@ -6,7 +6,7 @@
 
 ## Tổng quan
 
-**AI Trading Signal** là hệ thống tự động phân tích kỹ thuật và phát tín hiệu giao dịch cho cặp **XAU/USD (vàng)** sử dụng Google Gemini AI. Hệ thống chạy theo cron 15 phút, lấy dữ liệu nến từ API thị trường, gửi qua Gemini để phân tích đa khung thời gian, lưu kết quả vào SQLite và gửi thông báo qua Telegram.
+**AI Trading Signal** là hệ thống phân tích kỹ thuật và phát tín hiệu giao dịch cho cặp **XAU/USD (vàng)** sử dụng Claude AI (Anthropic). Hệ thống lấy dữ liệu nến từ API thị trường, gửi qua Claude để phân tích đa khung thời gian, lưu kết quả vào SQLite và gửi thông báo qua Telegram. Phân tích được trigger thủ công qua REST API (không dùng cron).
 
 - **Ngôn ngữ phân tích AI**: Tiếng Việt (prompt ~400 dòng)
 - **Khung thời gian phân tích**: H1, M15, M5 (đã bỏ W1, D1, H4)
@@ -30,10 +30,10 @@ D:/ai-trading-signal/
 ├── logs/
 │   └── signal.log                     ← log file (Winston, rotate 10MB×5)
 └── src/
-    ├── index.ts                       ← entry point (khởi động scheduler)
+    ├── index.ts                       ← entry point (khởi động server)
+    ├── server.ts                      ← Express REST API server
     ├── db.ts                          ← Prisma client singleton
     ├── logger.ts                      ← Winston logger (console + file)
-    ├── scheduler.ts                   ← Cron */15 * * * * → analyzeSignal()
     ├── config/
     │   └── trading.ts                 ← đọc toàn bộ config từ .env
     ├── commands/
@@ -42,7 +42,7 @@ D:/ai-trading-signal/
         ├── SignalOrchestrator.ts      ← pipeline chính (fetch→AI→DB→Telegram)
         ├── MarketHoursService.ts      ← kiểm tra giờ giao dịch
         ├── ai/
-        │   ├── GeminiAnalystService.ts  ← gọi Gemini API, build prompt, parse JSON
+        │   ├── ClaudeAnalystService.ts  ← gọi Claude API, build prompt, parse JSON
         │   └── dto/
         │       └── AnalysisResult.ts    ← kiểu trả về từ AI
         ├── market/
@@ -64,10 +64,9 @@ D:/ai-trading-signal/
 | Runtime | Node.js (CommonJS) |
 | Language | TypeScript 5.6 |
 | Database | SQLite via Prisma 5.22 |
-| AI | Google Gemini (gemini-2.0-flash) |
+| AI | Claude (Anthropic, claude-sonnet-4-6) |
 | Market Data | TwelveData (default) / OANDA |
 | Notification | Telegram Bot API |
-| Scheduler | node-cron |
 | Logging | Winston |
 | HTTP Client | axios |
 
@@ -76,19 +75,18 @@ D:/ai-trading-signal/
 ## Luồng dữ liệu
 
 ```
-[Cron mỗi 15 phút]
+[POST /api/analyze]
        ↓
-[analyzeSignal.ts]  → kiểm tra giờ thị trường (6-22h VN)
-       ↓
-[SignalOrchestrator.run()]
+[SignalOrchestrator.run(instrument?, timeframes?)]
+       │  timeframes: dùng tham số nếu có, fallback về TRADING_TIMEFRAMES trong .env
        ├─ MarketDataProvider.fetchCandles(XAU/USD, H1/M15/M5, 100 nến)
        ├─ MarketDataProvider.fetchCurrentPrice()
        ↓
-[GeminiAnalystService.analyze()]
+[ClaudeAnalystService.analyze()]
        ├─ Tính chỉ báo: RSI(14), EMA(200), HMA(200), BB(34,2.0)
        ├─ Build system prompt (tiếng Việt, ICT/SMC methodology)
        ├─ Build user prompt (bảng nến markdown)
-       ├─ POST Gemini API (temperature=0.2, maxTokens=8192)
+       ├─ POST Claude API (temperature=0.2, maxTokens=8192)
        ├─ Parse JSON từ response (```json block hoặc fallback search)
        └─ Trả về AnalysisResult
        ↓
@@ -156,11 +154,15 @@ TWELVEDATA_API_KEY=...
 OANDA_API_TOKEN=...
 OANDA_ACCOUNT_ID=...
 OANDA_ENV=practice                  # hoặc "live"
-GEMINI_API_KEY=...
-GEMINI_MODEL=gemini-2.0-flash       # hoặc gemini-2.5-flash-lite, gemini-1.5-pro
+CLAUDE_API_KEY=...
+CLAUDE_MODEL=claude-sonnet-4-6      # hoặc claude-opus-4-8, claude-haiku-4-5
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_CHAT_ID=...
 TELEGRAM_DISCUSSION_ID=...          # ID nhóm discussion (auto-resolve nếu để trống)
+
+# API Server
+PORT=3000
+API_SERVER_KEY=...                  # để trống = không yêu cầu auth
 ```
 
 ---
@@ -171,8 +173,8 @@ TELEGRAM_DISCUSSION_ID=...          # ID nhóm discussion (auto-resolve nếu đ
 npm run dev            # chạy tsx watch (development)
 npm start              # chạy compiled JS (production)
 npm run build          # biên dịch TypeScript → dist/
-npm run analyze        # chạy 1 lần (có check giờ)
-npm run analyze:force  # chạy 1 lần (bỏ qua check giờ)
+npm run analyze        # chạy phân tích 1 lần (có check giờ)
+npm run analyze:force  # chạy phân tích 1 lần (bỏ qua check giờ)
 npm run db:generate    # generate Prisma client
 npm run db:push        # sync schema → DB
 npm run db:migrate     # chạy migration
@@ -180,9 +182,9 @@ npm run db:migrate     # chạy migration
 
 ---
 
-## GeminiAnalystService — Chi tiết quan trọng
+## ClaudeAnalystService — Chi tiết quan trọng
 
-**File:** `src/services/ai/GeminiAnalystService.ts`
+**File:** `src/services/ai/ClaudeAnalystService.ts`
 
 **Prompt strategy (3 bước):**
 1. Phân tích kỹ thuật độc lập từng khung (H1 → M15 → M5)
@@ -211,6 +213,57 @@ npm run db:migrate     # chạy migration
 ```
 
 **Retry logic:** 4 lần, sleep 3s/6s/9s, trigger khi status 429/500/502/503/504
+
+---
+
+## REST API Server — Chi tiết quan trọng
+
+**File:** `src/server.ts`
+
+Chạy cùng process với scheduler (qua `src/index.ts`), lắng nghe port `PORT` (mặc định 3000).
+
+**Authentication:** Header `x-api-key` hoặc `Authorization: Bearer <key>`. Bỏ qua nếu `API_SERVER_KEY` không set.
+
+### POST /api/analyze
+
+Trigger phân tích thủ công.
+
+**Request body:**
+```json
+{
+  "symbol":     "XAU/USD",          // tùy chọn — mặc định TRADING_INSTRUMENT
+  "timeframes": ["H1", "M15"]       // tùy chọn — mặc định TRADING_TIMEFRAMES
+}
+```
+
+`timeframes` chấp nhận cả array `["H1","M15"]` lẫn string phân cách phẩy `"H1,M15"`. Nếu không truyền, dùng timeframes trong `.env`.
+
+**Response:**
+```json
+{
+  "ok": true,
+  "symbol": "XAU/USD",
+  "duration_ms": 4200,
+  "setup": "<HTML signal card>",
+  "reasoning": "<HTML analysis>"
+}
+```
+
+### GET /api/signals
+
+Lấy danh sách tín hiệu trong ngày (giờ VN). Query param: `?limit=20` (tối đa 100).
+
+### GET /api/symbols / POST /api/symbols / DELETE /api/symbols/:symbol
+
+CRUD danh sách symbol theo dõi.
+
+### GET /api/groups / POST /api/groups / DELETE /api/groups/:id
+
+CRUD nhóm symbol.
+
+### GET /api/symbols/:symbol/signals
+
+Lấy analysis logs của symbol trong ngày.
 
 ---
 
