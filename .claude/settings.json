@@ -12,7 +12,9 @@
       "Bash(npm run *)",
       "Bash(Remove-Item \"d:\\\\Work\\\\ai-trading-signal\\\\src\\\\services\\\\ai\\\\GeminiAnalystService.ts\")",
       "Bash(node -e ' *)",
-      "Bash(del \"d:\\\\Work\\\\ai-trading-signal\\\\src\\\\scheduler.ts\")"
+      "Bash(del \"d:\\\\Work\\\\ai-trading-signal\\\\src\\\\scheduler.ts\")",
+      "Bash(netstat -ano)",
+      "Bash(findstr :3000)"
     ]
   }
 }

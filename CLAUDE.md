@@ -333,7 +333,11 @@ GET https://api-fxpractice.oanda.com/v3/instruments/XAU_USD/candles
 
 1. **Khung thời gian**: Hệ thống hiện dùng H1, M15, M5 — KHÔNG thêm lại W1/D1/H4 trừ khi được yêu cầu rõ ràng
 2. **Ngôn ngữ prompt**: Prompt AI viết bằng tiếng Việt — giữ nguyên
-3. **Database**: Dùng Prisma — không dùng raw SQL
+3. **Database**: Dùng Prisma — không dùng raw SQL. Sau mỗi thay đổi schema (`prisma/schema.prisma`), bắt buộc chạy:
+   ```bash
+   npx prisma generate   # cập nhật Prisma Client
+   npx prisma db push    # sync schema → DB (dev) hoặc db:migrate (prod)
+   ```
 4. **Telegram**: Dùng HTML parse_mode — không dùng MarkdownV2
 5. **Config**: Mọi giá trị cứng phải lấy từ `src/config/trading.ts`, không hardcode
 6. **Logging**: Dùng `logger` từ `src/logger.ts`, không dùng `console.log`
