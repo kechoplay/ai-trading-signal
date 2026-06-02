@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
@@ -48,8 +48,8 @@ model AnalysisLog {
   symbol        String
   analyzed_at   DateTime @default(now())
   duration_ms   Int
-  setup         String?
-  reasoning     String?
+  setup         String?  @db.LongText
+  reasoning     String?  @db.LongText
 
   symbolRef     Symbol   @relation(fields: [symbol], references: [symbol])
 
@@ -68,12 +68,13 @@ model TradingSignal {
   risk_reward         Float?
   confidence          Int?
   current_price       Float?
-  reasoning           String?
+  reasoning           String?  @db.LongText
   trend_bias          String?
-  raw_ai_response     String?
-  indicators_snapshot String?
+  raw_ai_response     String?  @db.LongText
+  indicators_snapshot String?  @db.LongText
   telegram_message_id String?
   sent_at             DateTime?
+  analyze_at          DateTime?
   created_at          DateTime  @default(now())
   updated_at          DateTime  @updatedAt
 

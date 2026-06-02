@@ -66,6 +66,50 @@
     }
     .refresh-btn:hover { background: #f3f4f6; }
 
+    .analyze-btn {
+      background: linear-gradient(90deg, #6366f1, #8b5cf6);
+      color: #fff;
+      border-color: transparent;
+      font-weight: 600;
+    }
+    .analyze-btn:hover { background: linear-gradient(90deg, #4f46e5, #7c3aed); }
+    .analyze-btn:disabled { opacity: .6; cursor: not-allowed; }
+
+    /* spinner */
+    .spinner {
+      display: inline-block;
+      width: 12px; height: 12px;
+      border: 2px solid rgba(255,255,255,.4);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin .6s linear infinite;
+      vertical-align: -1px;
+      margin-right: 4px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* toast */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #1a1d23;
+      color: #fff;
+      padding: 12px 20px;
+      border-radius: 8px;
+      font-size: 13px;
+      box-shadow: 0 4px 12px rgba(0,0,0,.2);
+      z-index: 1000;
+      opacity: 0;
+      transition: opacity .3s, transform .3s;
+      pointer-events: none;
+      max-width: 90vw;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .toast.error { background: #b91c1c; }
+    .toast.success { background: #15803d; }
+
     .grid {
       max-width: 960px;
       margin: 0 auto;
@@ -363,6 +407,7 @@
   <div style="display:flex;gap:8px;align-items:center">
     <a href="/docs" target="_blank" class="refresh-btn" style="text-decoration:none">📖 Docs</a>
     <button class="refresh-btn" onclick="loadLatest()">↻ Refresh</button>
+    <button id="analyzeBtn" class="refresh-btn analyze-btn" onclick="runAnalyze()">⚡ Phân tích ngay</button>
   </div>
 </div>
 
@@ -372,6 +417,8 @@
 </div>
 
 <div id="main"></div>
+
+<div id="toast" class="toast"></div>
 
 <div class="grid" style="max-width:960px;margin:16px auto 0">
   <div class="card col-full" id="historyCard" style="display:none">
@@ -616,6 +663,68 @@ async function loadLatest() {
     renderHistory(all);
   } catch (e) {
     document.getElementById('main').innerHTML = `<div class="grid"><div class="card col-full"><div class="empty">Không thể kết nối server. Hãy chắc chắn server đang chạy.</div></div></div>`;
+  }
+}
+
+let toastTimer;
+function showToast(msg, type = '') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (type ? ' ' + type : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = 'toast'; }, 4000);
+}
+
+function getApiKey() {
+  return localStorage.getItem('apiKey') || '';
+}
+
+function promptApiKey() {
+  const key = prompt('Nhập API key (API_SERVER_KEY) để chạy phân tích:', getApiKey());
+  if (key != null) localStorage.setItem('apiKey', key.trim());
+  return getApiKey();
+}
+
+async function runAnalyze() {
+  const btn = document.getElementById('analyzeBtn');
+  if (btn.disabled) return;
+  const original = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Đang phân tích...';
+  showToast('Đang gửi yêu cầu phân tích, vui lòng đợi...');
+
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    const apiKey = getApiKey();
+    if (apiKey) headers['x-api-key'] = apiKey;
+
+    let res = await fetch('/api/analyze', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({}),
+    });
+
+    // Nếu cần key mà chưa có/sai → hỏi key rồi thử lại 1 lần
+    if (res.status === 401) {
+      const key = promptApiKey();
+      if (!key) throw new Error('Cần API key để chạy phân tích');
+      res = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': key },
+        body: JSON.stringify({}),
+      });
+    }
+
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Phân tích thất bại');
+
+    showToast(`✓ Phân tích hoàn tất (${(data.duration_ms / 1000).toFixed(1)}s)`, 'success');
+    await loadLatest();
+  } catch (e) {
+    showToast('✗ ' + (e.message || 'Phân tích thất bại'), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = original;
   }
 }
 
