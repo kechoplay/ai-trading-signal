@@ -1,11 +1,14 @@
 import 'dotenv/config';
 import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
+import { randomUUID } from 'crypto';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { prisma } from './db';
 import { logger } from './logger';
 import { config } from './config/trading';
 import { SignalOrchestrator } from './services/SignalOrchestrator';
 import { TelegramNotifier } from './services/telegram/TelegramNotifier';
+import { createMcpServer } from './mcp-server';
 
 const app = express();
 app.use(express.json());
@@ -306,7 +309,62 @@ function parseSignal(signal: any) {
   return { ...signal, ...structured };
 }
 
+// ─── MCP (Model Context Protocol) ────────────────────────────────────────────
+// Cho phép claude.ai kết nối qua Settings → Integrations → Add custom integration
+// URL: https://yourdomain.com/mcp
+
+const mcpTransports = new Map<string, StreamableHTTPServerTransport>();
+
+app.all('/mcp', async (req: Request, res: Response) => {
+  try {
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
+
+    if (req.method === 'POST' && !sessionId) {
+      // Khởi tạo session mới
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+      });
+      const mcpServer = createMcpServer();
+
+      transport.onclose = () => {
+        if (transport.sessionId) {
+          mcpTransports.delete(transport.sessionId);
+          logger.info('MCP session closed', { sessionId: transport.sessionId });
+        }
+      };
+
+      await mcpServer.connect(transport);
+
+      if (transport.sessionId) {
+        mcpTransports.set(transport.sessionId, transport);
+        logger.info('MCP session created', { sessionId: transport.sessionId });
+      }
+
+      await transport.handleRequest(req, res, req.body);
+      return;
+    }
+
+    if (sessionId) {
+      const transport = mcpTransports.get(sessionId);
+      if (!transport) {
+        res.status(404).json({ jsonrpc: '2.0', error: { code: -32001, message: 'Session not found or expired' } });
+        return;
+      }
+      await transport.handleRequest(req, res, req.body);
+      return;
+    }
+
+    res.status(400).json({ jsonrpc: '2.0', error: { code: -32600, message: 'Bad request' } });
+  } catch (err: any) {
+    logger.error('MCP request error', { error: err.message });
+    if (!res.headersSent) {
+      res.status(500).json({ jsonrpc: '2.0', error: { code: -32603, message: 'Internal error' } });
+    }
+  }
+});
+
 const { port } = config.server;
 app.listen(port, () => {
   logger.info(`Dashboard running at http://localhost:${port}`);
+  logger.info(`MCP endpoint: http://localhost:${port}/mcp`);
 });

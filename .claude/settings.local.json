@@ -8,7 +8,9 @@
       "Bash(node -e ' *)",
       "Bash(ls -la *.db)",
       "Bash(ls -la prisma/*.db)",
-      "Bash(find . -name \"*.db\")"
+      "Bash(find . -name \"*.db\")",
+      "Bash(git restore *)",
+      "Bash(node -e \"const {McpServer} = require\\('@modelcontextprotocol/sdk/server/mcp.js'\\); console.log\\(typeof McpServer\\)\")"
     ]
   }
 }
