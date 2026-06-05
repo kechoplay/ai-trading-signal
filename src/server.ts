@@ -99,27 +99,28 @@ app.post('/api/analyze', requireApiKey, async (req, res) => {
     const setup     = notifier.formatSignalCard(result, sym, currentPrice);
     const reasoning = notifier.formatAnalysis(rawText);
 
-    await prisma.tradingSignal.create({
-      data: {
-        instrument:      sym,
-        action:          result.action,
-        timeframe:       (timeframes ?? config.timeframes)[0] ?? null,
-        entry:           result.entry,
-        stop_loss:       result.stopLoss,
-        take_profit:     result.takeProfit,
-        risk_reward:     result.riskReward,
-        confidence:      result.confidence,
-        current_price:   currentPrice,
-        reasoning:       result.reasoning,
-        trend_bias:      result.trendBias,
-        raw_ai_response: JSON.stringify(result.raw ?? {}),
-        analyze_at:      new Date(startedAt),
-      },
-    });
-
-    await prisma.analysisLog.create({
-      data: { symbol: sym, duration_ms: durationMs, setup, reasoning },
-    });
+    await prisma.$transaction([
+      prisma.tradingSignal.create({
+        data: {
+          instrument:      sym,
+          action:          result.action,
+          timeframe:       (timeframes ?? config.timeframes)[0] ?? null,
+          entry:           result.entry,
+          stop_loss:       result.stopLoss,
+          take_profit:     result.takeProfit,
+          risk_reward:     result.riskReward,
+          confidence:      result.confidence,
+          current_price:   currentPrice,
+          reasoning:       result.reasoning,
+          trend_bias:      result.trendBias,
+          raw_ai_response: JSON.stringify(result.raw ?? {}),
+          analyze_at:      new Date(startedAt),
+        },
+      }),
+      prisma.analysisLog.create({
+        data: { symbol: sym, duration_ms: durationMs, setup, reasoning },
+      }),
+    ]);
 
     res.json({ ok: true, symbol: sym, duration_ms: durationMs, setup, reasoning });
   } catch (err: any) {
@@ -285,7 +286,8 @@ app.delete('/api/groups/:id/symbols/:symbol', requireApiKey, async (req, res) =>
   }
 });
 
-// ─── Analysis logs by symbol ───────────────────────────────────────────────────
+
+// ─── Analysis logs by symbol ──────────────────────────────────────────────────
 
 app.get('/api/symbols/:symbol/signals', requireApiKey, async (req, res) => {
   try {
