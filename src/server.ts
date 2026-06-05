@@ -3,16 +3,65 @@ import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
+import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { prisma } from './db';
 import { logger } from './logger';
 import { config } from './config/trading';
 import { SignalOrchestrator } from './services/SignalOrchestrator';
 import { TelegramNotifier } from './services/telegram/TelegramNotifier';
 import { createMcpServer } from './mcp-server';
+import { McpOAuthProvider, createAuthCode } from './services/auth/McpOAuthProvider';
 
 const app = express();
 app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
+
+// ─── MCP OAuth ────────────────────────────────────────────────────────────────
+const mcpOAuth = new McpOAuthProvider();
+const issuerUrl = new URL(config.server.domain);
+
+app.use(mcpAuthRouter({
+  provider:  mcpOAuth,
+  issuerUrl,
+  resourceName: 'AI Trading Signal MCP',
+}));
+
+// Form submission from the login page rendered by provider.authorize()
+app.post('/authorize/submit', (req: Request, res: Response) => {
+  const { client_id, redirect_uri, code_challenge, state, scopes, password } = req.body ?? {};
+
+  if (!client_id || !redirect_uri || !code_challenge) {
+    res.status(400).send('Missing required parameters');
+    return;
+  }
+
+  // Validate password when API_SERVER_KEY is set
+  const required = config.server.apiKey;
+  if (required && password !== required) {
+    const back = new URL(`${config.server.domain}/authorize`);
+    back.searchParams.set('error', '1');
+    back.searchParams.set('client_id',      client_id);
+    back.searchParams.set('redirect_uri',   redirect_uri);
+    back.searchParams.set('code_challenge', code_challenge);
+    if (state) back.searchParams.set('state', state);
+    res.redirect(back.toString());
+    return;
+  }
+
+  const code = createAuthCode(
+    client_id,
+    code_challenge,
+    redirect_uri,
+    scopes ? String(scopes).split(' ').filter(Boolean) : [],
+  );
+
+  const redirectUrl = new URL(redirect_uri);
+  redirectUrl.searchParams.set('code', code);
+  if (state) redirectUrl.searchParams.set('state', state);
+  res.redirect(redirectUrl.toString());
+});
 
 function requireApiKey(req: Request, res: Response, next: NextFunction): void {
   const { apiKey } = config.server;
@@ -315,7 +364,7 @@ function parseSignal(signal: any) {
 
 const mcpTransports = new Map<string, StreamableHTTPServerTransport>();
 
-app.all('/mcp', async (req: Request, res: Response) => {
+app.all('/mcp', requireBearerAuth({ verifier: mcpOAuth }), async (req: Request, res: Response) => {
   try {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
