@@ -6,6 +6,7 @@ import { logger } from '../../logger';
 
 export class ClaudeAnalystService {
   private readonly client: Anthropic;
+  protected readonly tfOrder: string[] = ['H1', 'M15', 'M5'];
 
   constructor(private readonly model: string) {
     this.client = new Anthropic({
@@ -161,13 +162,13 @@ export class ClaudeAnalystService {
   }
 
   private extractBias(text: string): string | null {
-    const m = text.match(/Bias\s+(?:H1|M15|M5|Overall)[^:\n]*:\s*(BULLISH|BEARISH|NEUTRAL)/i);
+    const m = text.match(/Bias\s+(?:W|D|H4|H1|M15|M5|Overall)[^:\n]*:\s*(BULLISH|BEARISH|NEUTRAL)/i);
     return m ? m[1].toUpperCase() : null;
   }
 
   // ─── Prompt builders ──────────────────────────────────────────────────────
 
-  private buildSystemPrompt(): string {
+  protected buildSystemPrompt(): string {
     return `Bạn là trader chuyên nghiệp XAU/USD với 15 năm kinh nghiệm, chuyên phương pháp ICT/SMC price action.
 
 Tôi cung cấp dữ liệu nến OHLC thô của XAU/USD trên các khung H1, M15 và M5.
@@ -211,8 +212,8 @@ Nếu có setup hợp lệ, chỉ ghi các block lệnh phù hợp:
 - Lý do ngắn gọn trong 1-2 câu`;
   }
 
-  private buildOhlcPrompt(candlesByTimeframe: Record<string, Candle[]>): string {
-    const orderedTf = ['H1', 'M15', 'M5'];
+  protected buildOhlcPrompt(candlesByTimeframe: Record<string, Candle[]>): string {
+    const orderedTf = this.tfOrder;
     const allTf = [
       ...orderedTf.filter((tf) => tf in candlesByTimeframe),
       ...Object.keys(candlesByTimeframe).filter((tf) => !orderedTf.includes(tf)),

@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Phân Tích Dài Hạn — XAU/USD</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #f0f2f5;
+      --card: #ffffff;
+      --border: #e8eaed;
+      --text: #1a1d23;
+      --muted: #6b7280;
+      --sell-accent: #ef4444;
+      --buy-accent: #22c55e;
+      --neutral-accent: #f59e0b;
+      --teal: #0d9488;
+      --teal-dark: #0f766e;
+      --teal-light: #ccfbf1;
+      --tag-down-bg: #fee2e2;
+      --tag-down-text: #b91c1c;
+      --tag-up-bg: #dcfce7;
+      --tag-up-text: #15803d;
+      --tag-neutral-bg: #fef3c7;
+      --tag-neutral-text: #b45309;
+      --radius: 12px;
+      --shadow: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.04);
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 24px 16px 60px;
+    }
+
+    /* ── Header ── */
+    .page-header {
+      max-width: 960px;
+      margin: 0 auto 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .header-left { display: flex; align-items: center; gap: 12px; }
+
+    .back-link {
+      display: flex; align-items: center; gap: 5px;
+      color: var(--muted); font-size: 13px; text-decoration: none;
+      padding: 5px 10px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--card);
+      transition: background .15s;
+    }
+    .back-link:hover { background: #f3f4f6; color: var(--text); }
+
+    .page-title { font-size: 20px; font-weight: 700; letter-spacing: -.3px; }
+    .page-title .badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      background: var(--teal-light); color: var(--teal-dark);
+      font-size: 11px; font-weight: 700; letter-spacing: .4px;
+      padding: 2px 8px; border-radius: 20px; margin-left: 8px;
+      vertical-align: middle;
+    }
+
+    .btn {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 14px;
+      font-size: 13px;
+      cursor: pointer;
+      color: var(--text);
+      transition: background .15s;
+    }
+    .btn:hover { background: #f3f4f6; }
+
+    .btn-teal {
+      background: linear-gradient(90deg, #0d9488, #0891b2);
+      color: #fff; border-color: transparent; font-weight: 600;
+    }
+    .btn-teal:hover { background: linear-gradient(90deg, #0f766e, #0e7490); }
+    .btn-teal:disabled { opacity: .6; cursor: not-allowed; }
+
+    /* spinner */
+    .spinner {
+      display: inline-block; width: 12px; height: 12px;
+      border: 2px solid rgba(255,255,255,.4); border-top-color: #fff;
+      border-radius: 50%; animation: spin .6s linear infinite;
+      vertical-align: -1px; margin-right: 4px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* toast */
+    .toast {
+      position: fixed; bottom: 24px; left: 50%;
+      transform: translateX(-50%);
+      background: #1a1d23; color: #fff;
+      padding: 12px 20px; border-radius: 8px;
+      font-size: 13px; box-shadow: 0 4px 12px rgba(0,0,0,.2);
+      z-index: 1000; opacity: 0;
+      transition: opacity .3s, transform .3s;
+      pointer-events: none; max-width: 90vw;
+    }
+    .toast.show  { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .toast.error { background: #b91c1c; }
+    .toast.success { background: #0f766e; }
+
+    /* ── Meta row ── */
+    .meta-row {
+      max-width: 960px; margin: 0 auto 16px;
+      display: flex; align-items: center; gap: 8px;
+      font-size: 12px; color: var(--muted);
+    }
+    .meta-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--teal); animation: pulse 2s infinite;
+    }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
+
+    /* ── Grid ── */
+    .grid {
+      max-width: 960px; margin: 0 auto;
+      display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+    }
+    @media (max-width: 680px) { .grid { grid-template-columns: 1fr; } }
+    .col-full { grid-column: 1 / -1; }
+
+    /* ── Card ── */
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .card-header {
+      display: flex; align-items: center; gap: 8px;
+      padding: 14px 18px 12px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px; font-weight: 600;
+      letter-spacing: .3px; text-transform: uppercase;
+      color: var(--muted);
+    }
+    .card-header .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--muted); flex-shrink: 0;
+    }
+    .card-header.sell   .dot { background: var(--sell-accent); }
+    .card-header.buy    .dot { background: var(--buy-accent); }
+    .card-header.teal   .dot { background: var(--teal); }
+    .card-header.amber  .dot { background: var(--neutral-accent); }
+
+    /* ── Signal Banner ── */
+    .signal-banner {
+      padding: 20px 22px;
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 12px;
+      background: linear-gradient(135deg, #f0fdfa 0%, #f0f9ff 100%);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .signal-left { display: flex; align-items: center; gap: 12px; }
+
+    .instrument { font-size: 24px; font-weight: 800; letter-spacing: -.5px; }
+
+    .action-badge {
+      padding: 5px 16px; border-radius: 20px;
+      font-size: 14px; font-weight: 700; letter-spacing: .4px;
+    }
+    .action-badge.sell     { background: var(--tag-down-bg); color: var(--tag-down-text); }
+    .action-badge.buy      { background: var(--tag-up-bg);   color: var(--tag-up-text); }
+    .action-badge.no_trade { background: #f3f4f6; color: var(--muted); }
+
+    .tf-chips { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+    .tf-chip {
+      background: #e0f2fe; color: #0369a1;
+      font-size: 11px; font-weight: 700; letter-spacing: .3px;
+      padding: 2px 8px; border-radius: 4px;
+    }
+
+    .signal-right { text-align: right; }
+    .current-price { font-size: 26px; font-weight: 800; letter-spacing: -.8px; }
+    .price-label   { font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+
+    /* ── KPI row ── */
+    .kpi-row {
+      display: grid; grid-template-columns: repeat(4, 1fr);
+      border-top: 1px solid var(--border);
+    }
+    @media (max-width: 480px) { .kpi-row { grid-template-columns: repeat(2, 1fr); } }
+
+    .kpi {
+      padding: 14px 16px;
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .kpi:last-child { border-right: none; }
+    .kpi-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+    .kpi-value { font-size: 17px; font-weight: 700; }
+    .kpi-value.sell { color: var(--sell-accent); }
+    .kpi-value.buy  { color: var(--buy-accent); }
+    .kpi-sub { font-size: 10px; color: var(--muted); margin-top: 1px; }
+
+    /* ── Confidence bar ── */
+    .conf-row {
+      padding: 12px 18px 14px;
+      border-top: 1px solid var(--border);
+      display: flex; align-items: center; gap: 12px;
+    }
+    .conf-label { font-size: 12px; color: var(--muted); white-space: nowrap; }
+    .conf-track {
+      flex: 1; height: 6px; border-radius: 3px;
+      background: #e5e7eb; overflow: hidden;
+    }
+    .conf-fill {
+      height: 100%; border-radius: 3px;
+      background: linear-gradient(90deg, #0d9488, #0891b2);
+      transition: width .4s ease;
+    }
+    .conf-pct { font-size: 13px; font-weight: 600; white-space: nowrap; }
+
+    /* ── Bias cards ── */
+    .bias-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr);
+    }
+    @media (max-width: 480px) { .bias-grid { grid-template-columns: 1fr; } }
+
+    .bias-cell {
+      padding: 16px 18px;
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .bias-cell:last-child { border-right: none; }
+    .bias-tf   { font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .4px; }
+    .bias-val  { font-size: 15px; font-weight: 700; }
+    .bias-val.bull { color: var(--buy-accent); }
+    .bias-val.bear { color: var(--sell-accent); }
+    .bias-val.neut { color: var(--neutral-accent); }
+
+    /* ── KV table ── */
+    .kv-table { width: 100%; border-collapse: collapse; }
+    .kv-table tr { border-bottom: 1px solid var(--border); }
+    .kv-table tr:last-child { border-bottom: none; }
+    .kv-table td { padding: 11px 18px; font-size: 13.5px; vertical-align: middle; }
+    .kv-table td:first-child { color: var(--muted); width: 44%; font-size: 13px; }
+    .kv-table td:last-child  { font-weight: 500; text-align: right; }
+
+    /* ── Analysis reasoning ── */
+    .reasoning-body {
+      padding: 18px 20px;
+      font-size: 13.5px;
+      line-height: 1.7;
+      color: #374151;
+    }
+    .reasoning-body b, .reasoning-body strong { font-weight: 700; color: var(--text); }
+    .reasoning-body i, .reasoning-body em { color: var(--muted); }
+    .reasoning-body table {
+      width: 100%; border-collapse: collapse;
+      margin: 10px 0; font-size: 12.5px;
+    }
+    .reasoning-body th, .reasoning-body td {
+      border: 1px solid var(--border); padding: 7px 10px;
+      text-align: left;
+    }
+    .reasoning-body th { background: #f9fafb; font-weight: 600; }
+    .reasoning-body ul, .reasoning-body ol { padding-left: 20px; margin: 6px 0; }
+    .reasoning-body li { margin-bottom: 3px; }
+    .reasoning-body pre {
+      background: #f9fafb; border: 1px solid var(--border);
+      border-radius: 6px; padding: 12px; overflow-x: auto;
+      font-size: 12px; white-space: pre-wrap;
+    }
+
+    /* ── History table ── */
+    .history-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .history-table th {
+      padding: 10px 14px; text-align: left;
+      font-size: 11px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: .4px;
+      color: var(--muted); border-bottom: 1px solid var(--border);
+    }
+    .history-table td { padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    .history-table tr:last-child td { border-bottom: none; }
+    .history-table tr:hover td { background: #f9fafb; }
+
+    /* ── Tag ── */
+    .tag {
+      display: inline-block; padding: 2px 8px;
+      border-radius: 4px; font-size: 11px; font-weight: 700;
+      letter-spacing: .3px; white-space: nowrap;
+    }
+    .tag.up      { background: var(--tag-up-bg);      color: var(--tag-up-text); }
+    .tag.down    { background: var(--tag-down-bg);    color: var(--tag-down-text); }
+    .tag.neutral { background: var(--tag-neutral-bg); color: var(--tag-neutral-text); }
+
+    /* ── Empty state ── */
+    .empty {
+      text-align: center; padding: 60px 20px;
+      color: var(--muted); font-size: 14px;
+      line-height: 1.8;
+    }
+    .empty-icon { font-size: 40px; margin-bottom: 12px; }
+
+    /* ── Tabs ── */
+    .tab-bar {
+      display: flex; gap: 0;
+      border-bottom: 1px solid var(--border);
+      padding: 0 18px;
+    }
+    .tab-btn {
+      background: none; border: none; cursor: pointer;
+      padding: 12px 14px; font-size: 13px; font-weight: 600;
+      color: var(--muted); border-bottom: 2px solid transparent;
+      margin-bottom: -1px; transition: color .15s;
+    }
+    .tab-btn.active { color: var(--teal); border-bottom-color: var(--teal); }
+    .tab-btn:hover  { color: var(--text); }
+
+    .tab-pane { display: none; }
+    .tab-pane.active { display: block; }
+
+    /* ── Skeleton loader ── */
+    .skeleton {
+      background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.4s infinite;
+      border-radius: 6px; height: 14px;
+    }
+    @keyframes shimmer { to { background-position: -200% 0; } }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ───────────────────────────────────────────── -->
+<div class="page-header">
+  <div class="header-left">
+    <a href="/" class="back-link">← Intraday</a>
+    <div class="page-title">
+      Phân Tích Dài Hạn
+      <span class="badge">⏳ SWING W · D · H4</span>
+    </div>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center">
+    <button class="btn" onclick="loadData()">↻ Refresh</button>
+    <button id="analyzeBtn" class="btn btn-teal" onclick="runAnalyze()">📊 Phân tích ngay</button>
+  </div>
+</div>
+
+<!-- ── Meta row ──────────────────────────────────────────── -->
+<div id="metaRow" class="meta-row" style="display:none">
+  <div class="meta-dot"></div>
+  <span id="metaText"></span>
+</div>
+
+<!-- ── Main content ──────────────────────────────────────── -->
+<div id="main"></div>
+
+<!-- ── Toast ─────────────────────────────────────────────── -->
+<div id="toast" class="toast"></div>
+
+<script>
+const fmt = (n, d = 2) => n == null ? '—' : Number(n).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const TF_LABELS = { W: 'Weekly', D: 'Daily', H4: '4-Hour' };
+
+// ── Bias helpers ─────────────────────────────────────────
+function parseBiasLines(reasoning) {
+  if (!reasoning) return {};
+  const lines = reasoning.replace(/<[^>]+>/g, ' ');
+  const result = {};
+  const re = /Bias\s+(W|D|H4|H1|M15|M5|Overall)\s*[:\-–]\s*(BULLISH|BEARISH|NEUTRAL)/gi;
+  let m;
+  while ((m = re.exec(lines)) !== null) {
+    const tf = m[1].toUpperCase();
+    if (!result[tf]) result[tf] = m[2].toUpperCase();
+  }
+  return result;
+}
+
+function biasClass(val) {
+  if (!val) return '';
+  if (val === 'BULLISH') return 'bull';
+  if (val === 'BEARISH') return 'bear';
+  return 'neut';
+}
+
+function biasIcon(val) {
+  if (val === 'BULLISH') return '📈 ';
+  if (val === 'BEARISH') return '📉 ';
+  return '➖ ';
+}
+
+// ── Render signal banner ─────────────────────────────────
+function renderBanner(s, bias) {
+  const actionCls   = s.action === 'BUY' ? 'buy' : s.action === 'SELL' ? 'sell' : 'no_trade';
+  const actionLabel = s.action === 'BUY' ? '🟢 MUA (BUY)' : s.action === 'SELL' ? '🔴 BÁN (SELL)' : '⚪ KHÔNG VÀO LỆNH';
+  const tf = s.timeframe ?? 'W';
+  const tfList = ['W', 'D', 'H4'];
+
+  const biasW = bias['W'] ?? '—';
+  const biasD = bias['D'] ?? '—';
+  const biasH4 = bias['H4'] ?? '—';
+
+  return `
+  <div class="card col-full">
+    <div class="signal-banner">
+      <div class="signal-left">
+        <div>
+          <div class="instrument">${esc(s.instrument)}</div>
+          <div class="tf-chips">
+            ${tfList.map(t => `<span class="tf-chip">${t} · ${TF_LABELS[t] ?? t}</span>`).join('')}
+          </div>
+        </div>
+        <div class="action-badge ${actionCls}">${actionLabel}</div>
+      </div>
+      <div class="signal-right">
+        <div class="price-label">Giá hiện tại</div>
+        <div class="current-price">${fmt(s.current_price, 2)}</div>
+      </div>
+    </div>
+
+    <!-- Bias row -->
+    <div class="bias-grid">
+      <div class="bias-cell">
+        <div class="bias-tf">Weekly (W)</div>
+        <div class="bias-val ${biasClass(biasW)}">${biasIcon(biasW)}${biasW}</div>
+      </div>
+      <div class="bias-cell">
+        <div class="bias-tf">Daily (D)</div>
+        <div class="bias-val ${biasClass(biasD)}">${biasIcon(biasD)}${biasD}</div>
+      </div>
+      <div class="bias-cell">
+        <div class="bias-tf">4-Hour (H4)</div>
+        <div class="bias-val ${biasClass(biasH4)}">${biasIcon(biasH4)}${biasH4}</div>
+      </div>
+    </div>
+
+    ${s.action !== 'NO_TRADE' ? `
+    <div class="kpi-row">
+      <div class="kpi">
+        <div class="kpi-label">Entry</div>
+        <div class="kpi-value">${fmt(s.entry, 2)}</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Stop Loss</div>
+        <div class="kpi-value sell">${fmt(s.stop_loss, 2)}</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Take Profit 1</div>
+        <div class="kpi-value buy">${fmt(s.take_profit, 2)}</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">R : R</div>
+        <div class="kpi-value">1 : ${fmt(s.risk_reward, 2)}</div>
+      </div>
+    </div>` : ''}
+
+    ${s.confidence != null ? `
+    <div class="conf-row">
+      <div class="conf-label">Độ tin cậy AI</div>
+      <div class="conf-track"><div class="conf-fill" style="width:${s.confidence}%"></div></div>
+      <div class="conf-pct">${s.confidence}/100</div>
+    </div>` : ''}
+  </div>`;
+}
+
+// ── Render analysis tabs (Setup card + Reasoning) ────────
+function renderAnalysis(s) {
+  if (!s.setup && !s.reasoning_html && !s.reasoning) return '';
+
+  const setupHtml    = s.setup ?? '';
+  const reasonHtml   = s.reasoning_html ?? (s.reasoning ? `<pre style="white-space:pre-wrap;font-size:12.5px;line-height:1.7">${esc(s.reasoning)}</pre>` : '');
+
+  return `
+  <div class="card col-full">
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="switchTab(this,'tab-reason')">📝 Phân tích AI</button>
+      ${setupHtml ? `<button class="tab-btn" onclick="switchTab(this,'tab-setup')">📌 Signal Card</button>` : ''}
+    </div>
+    <div id="tab-reason" class="tab-pane active">
+      <div class="reasoning-body">${reasonHtml || '<div class="empty"><div class="empty-icon">📭</div>Chưa có dữ liệu phân tích.</div>'}</div>
+    </div>
+    ${setupHtml ? `
+    <div id="tab-setup" class="tab-pane">
+      <div class="reasoning-body">${setupHtml}</div>
+    </div>` : ''}
+  </div>`;
+}
+
+// ── Render history table ──────────────────────────────────
+function renderHistory(signals) {
+  if (!signals || !signals.length) return '';
+  return `
+  <div class="card col-full" style="margin-top:0">
+    <div class="card-header teal"><div class="dot"></div>Lịch sử tín hiệu dài hạn</div>
+    <div style="overflow-x:auto">
+      <table class="history-table">
+        <thead>
+          <tr>
+            <th>Thời gian</th><th>Hành động</th><th>Giá vào</th>
+            <th>SL</th><th>TP1</th><th>R:R</th><th>Tin cậy</th><th>Bias</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${signals.map(s => {
+            const actionCls = s.action === 'BUY' ? 'up' : s.action === 'SELL' ? 'down' : 'neutral';
+            const timeStr = new Date(s.created_at).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour12: false });
+            const bias = (s.trend_bias ?? '').toUpperCase();
+            const biasTag = bias === 'BULLISH' ? '<span class="tag up">BULLISH</span>' :
+                            bias === 'BEARISH' ? '<span class="tag down">BEARISH</span>' :
+                            bias ? `<span class="tag neutral">${bias}</span>` : '—';
+            return `<tr>
+              <td style="color:var(--muted);font-size:12px;white-space:nowrap">${timeStr}</td>
+              <td><span class="tag ${actionCls}">${s.action}</span></td>
+              <td>${fmt(s.entry, 2)}</td>
+              <td style="color:var(--sell-accent)">${fmt(s.stop_loss, 2)}</td>
+              <td style="color:var(--buy-accent)">${fmt(s.take_profit, 2)}</td>
+              <td>${s.risk_reward ? '1:' + fmt(s.risk_reward, 2) : '—'}</td>
+              <td>${s.confidence != null ? s.confidence + '%' : '—'}</td>
+              <td>${biasTag}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+// ── Tab switch ────────────────────────────────────────────
+function switchTab(btn, paneId) {
+  btn.closest('.card').querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  btn.closest('.card').querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById(paneId)?.classList.add('active');
+}
+
+// ── Load data ─────────────────────────────────────────────
+async function loadData() {
+  try {
+    const [latest, history] = await Promise.all([
+      fetch('/api/longterm/latest').then(r => r.json()),
+      fetch('/api/longterm/history?limit=20').then(r => r.json()),
+    ]);
+
+    if (latest.error) {
+      document.getElementById('main').innerHTML = `
+        <div class="grid">
+          <div class="card col-full">
+            <div class="empty">
+              <div class="empty-icon">📊</div>
+              Chưa có phân tích dài hạn nào.<br>
+              Nhấn <strong>📊 Phân tích ngay</strong> để chạy phân tích W / D / H4 đầu tiên.
+            </div>
+          </div>
+        </div>`;
+      return;
+    }
+
+    const analyzedAt = new Date(latest.analyzed_at ?? latest.created_at)
+      .toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour12: false });
+
+    document.getElementById('metaRow').style.display = 'flex';
+    document.getElementById('metaText').textContent =
+      `Phân tích gần nhất: ${analyzedAt} (Giờ VN)${latest.duration_ms ? ' · ' + (latest.duration_ms / 1000).toFixed(1) + 's' : ''}`;
+
+    const bias = parseBiasLines(latest.reasoning_html ?? latest.reasoning ?? '');
+
+    document.getElementById('main').innerHTML = `
+      <div class="grid">
+        ${renderBanner(latest, bias)}
+        ${renderAnalysis(latest)}
+        ${renderHistory(Array.isArray(history) ? history : [])}
+      </div>`;
+  } catch (e) {
+    document.getElementById('main').innerHTML = `
+      <div class="grid">
+        <div class="card col-full">
+          <div class="empty">
+            <div class="empty-icon">⚠️</div>
+            Không thể kết nối server. Hãy chắc chắn server đang chạy.
+          </div>
+        </div>
+      </div>`;
+  }
+}
+
+// ── Toast ─────────────────────────────────────────────────
+let toastTimer;
+function showToast(msg, type = '') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (type ? ' ' + type : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = 'toast'; }, 5000);
+}
+
+// ── API key helpers ───────────────────────────────────────
+function getApiKey() { return localStorage.getItem('apiKey') || ''; }
+function promptApiKey() {
+  const key = prompt('Nhập API key (API_SERVER_KEY) để chạy phân tích:', getApiKey());
+  if (key != null) localStorage.setItem('apiKey', key.trim());
+  return getApiKey();
+}
+
+// ── Run analyze ───────────────────────────────────────────
+async function runAnalyze() {
+  const btn = document.getElementById('analyzeBtn');
+  if (btn.disabled) return;
+  const original = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Đang phân tích W/D/H4...';
+  showToast('Đang phân tích dài hạn W / D / H4 — có thể mất 30–60 giây...');
+
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    const apiKey = getApiKey();
+    if (apiKey) headers['x-api-key'] = apiKey;
+
+    let res = await fetch('/api/analyze/longterm', { method: 'POST', headers, body: JSON.stringify({}) });
+
+    if (res.status === 401) {
+      const key = promptApiKey();
+      if (!key) throw new Error('Cần API key để chạy phân tích');
+      res = await fetch('/api/analyze/longterm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': key },
+        body: JSON.stringify({}),
+      });
+    }
+
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Phân tích thất bại');
+
+    showToast(`✓ Phân tích dài hạn hoàn tất (${(data.duration_ms / 1000).toFixed(1)}s)`, 'success');
+    await loadData();
+  } catch (e) {
+    showToast('✗ ' + (e.message || 'Phân tích dài hạn thất bại'), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = original;
+  }
+}
+
+// ── Init ──────────────────────────────────────────────────
+loadData();
+setInterval(loadData, 60_000);
+</script>
+</body>
+</html>

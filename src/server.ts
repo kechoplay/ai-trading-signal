@@ -9,6 +9,8 @@ import { prisma } from './db';
 import { logger } from './logger';
 import { config } from './config/trading';
 import { SignalOrchestrator } from './services/SignalOrchestrator';
+import { makeMarketDataProvider } from './services/market/MarketDataProviderFactory';
+import { LongTermAnalystService } from './services/ai/LongTermAnalystService';
 import { TelegramNotifier } from './services/telegram/TelegramNotifier';
 import { createMcpServer } from './mcp-server';
 import { McpOAuthProvider, createAuthCode } from './services/auth/McpOAuthProvider';
@@ -104,6 +106,7 @@ app.post('/api/analyze', requireApiKey, async (req, res) => {
         instrument:      sym,
         action:          result.action,
         timeframe:       (timeframes ?? config.timeframes)[0] ?? null,
+        analysis_type:   'intraday',
         entry:           result.entry,
         stop_loss:       result.stopLoss,
         take_profit:     result.takeProfit,
@@ -118,13 +121,71 @@ app.post('/api/analyze', requireApiKey, async (req, res) => {
     });
 
     await prisma.analysisLog.create({
-      data: { symbol: sym, duration_ms: durationMs, setup, reasoning },
+      data: { symbol: sym, duration_ms: durationMs, setup, reasoning, analysis_type: 'intraday' },
     });
 
     res.json({ ok: true, symbol: sym, duration_ms: durationMs, setup, reasoning });
   } catch (err: any) {
     logger.error('POST /api/analyze failed', { error: err.message, duration_ms: Date.now() - startedAt });
     res.status(500).json({ error: err.message ?? 'Analysis failed' });
+  }
+});
+
+app.post('/api/analyze/longterm', requireApiKey, async (req, res) => {
+  const symbol: string | undefined = req.body?.symbol?.trim() || undefined;
+  const timeframes: string[] | undefined = Array.isArray(req.body?.timeframes)
+    ? req.body.timeframes.map((t: string) => t.trim()).filter(Boolean)
+    : typeof req.body?.timeframes === 'string'
+      ? req.body.timeframes.split(',').map((t: string) => t.trim()).filter(Boolean)
+      : undefined;
+
+  const resolvedTimeframes = (timeframes && timeframes.length > 0)
+    ? timeframes
+    : config.longtermTimeframes;
+
+  const startedAt = Date.now();
+  try {
+    logger.info('POST /api/analyze/longterm triggered', { symbol: symbol ?? config.instrument, timeframes: resolvedTimeframes });
+
+    const orchestrator = new SignalOrchestrator(
+      makeMarketDataProvider(),
+      LongTermAnalystService.fromConfig(),
+      TelegramNotifier.fromConfig(),
+    );
+    const { result, rawText, instrument: sym, currentPrice } = await orchestrator.run(symbol, resolvedTimeframes);
+    const durationMs = Date.now() - startedAt;
+
+    const notifier = TelegramNotifier.fromConfig();
+    const setup     = notifier.formatSignalCard(result, sym, currentPrice);
+    const reasoning = notifier.formatAnalysis(rawText);
+
+    await prisma.tradingSignal.create({
+      data: {
+        instrument:      sym,
+        action:          result.action,
+        timeframe:       resolvedTimeframes[0] ?? null,
+        analysis_type:   'longterm',
+        entry:           result.entry,
+        stop_loss:       result.stopLoss,
+        take_profit:     result.takeProfit,
+        risk_reward:     result.riskReward,
+        confidence:      result.confidence,
+        current_price:   currentPrice,
+        reasoning:       result.reasoning,
+        trend_bias:      result.trendBias,
+        raw_ai_response: JSON.stringify(result.raw ?? {}),
+        analyze_at:      new Date(startedAt),
+      },
+    });
+
+    await prisma.analysisLog.create({
+      data: { symbol: sym, duration_ms: durationMs, setup, reasoning, analysis_type: 'longterm' },
+    });
+
+    res.json({ ok: true, symbol: sym, timeframes: resolvedTimeframes, duration_ms: durationMs, setup, reasoning });
+  } catch (err: any) {
+    logger.error('POST /api/analyze/longterm failed', { error: err.message, duration_ms: Date.now() - startedAt });
+    res.status(500).json({ error: err.message ?? 'Long-term analysis failed' });
   }
 });
 
@@ -357,6 +418,49 @@ function parseSignal(signal: any) {
 
   return { ...signal, ...structured };
 }
+
+// ─── Long-term data endpoints ────────────────────────────────────────────────
+
+app.get('/longterm', (_req, res) =>
+  res.sendFile(path.join(__dirname, '..', 'public', 'longterm.html')),
+);
+
+app.get('/api/longterm/latest', async (_req, res) => {
+  try {
+    const signal = await prisma.tradingSignal.findFirst({
+      where:   { analysis_type: 'longterm' },
+      orderBy: { created_at: 'desc' },
+    });
+    const log = await prisma.analysisLog.findFirst({
+      where:   { analysis_type: 'longterm' },
+      orderBy: { analyzed_at: 'desc' },
+      select:  { setup: true, reasoning: true, analyzed_at: true, duration_ms: true },
+    });
+    if (!signal) {
+      res.status(404).json({ error: 'No long-term signals found' });
+      return;
+    }
+    res.json({ ...parseSignal(signal), setup: log?.setup ?? null, reasoning_html: log?.reasoning ?? null, analyzed_at: log?.analyzed_at ?? signal.created_at, duration_ms: log?.duration_ms ?? null });
+  } catch (err: any) {
+    logger.error('GET /api/longterm/latest failed', { error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/longterm/history', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(String(req.query.limit ?? '20'), 10), 100);
+    const signals = await prisma.tradingSignal.findMany({
+      where:   { analysis_type: 'longterm' },
+      orderBy: { created_at: 'desc' },
+      take:    limit,
+    });
+    res.json(signals.map(parseSignal));
+  } catch (err: any) {
+    logger.error('GET /api/longterm/history failed', { error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 // ─── MCP (Model Context Protocol) ────────────────────────────────────────────
 // Cho phép claude.ai kết nối qua Settings → Integrations → Add custom integration

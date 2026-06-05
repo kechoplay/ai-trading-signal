@@ -75,6 +75,15 @@
     .analyze-btn:hover { background: linear-gradient(90deg, #4f46e5, #7c3aed); }
     .analyze-btn:disabled { opacity: .6; cursor: not-allowed; }
 
+    .longterm-btn {
+      background: linear-gradient(90deg, #0d9488, #0891b2);
+      color: #fff;
+      border-color: transparent;
+      font-weight: 600;
+    }
+    .longterm-btn:hover { background: linear-gradient(90deg, #0f766e, #0e7490); }
+    .longterm-btn:disabled { opacity: .6; cursor: not-allowed; }
+
     /* spinner */
     .spinner {
       display: inline-block;
@@ -408,6 +417,7 @@
     <a href="/docs" target="_blank" class="refresh-btn" style="text-decoration:none">📖 Docs</a>
     <button class="refresh-btn" onclick="loadLatest()">↻ Refresh</button>
     <button id="analyzeBtn" class="refresh-btn analyze-btn" onclick="runAnalyze()">⚡ Phân tích ngay</button>
+    <a href="/longterm" class="refresh-btn longterm-btn" style="text-decoration:none">📊 Dài hạn</a>
   </div>
 </div>
 

@@ -44,16 +44,18 @@ model SymbolGroupItem {
 }
 
 model AnalysisLog {
-  id            Int      @id @default(autoincrement())
-  symbol        String
-  analyzed_at   DateTime @default(now())
-  duration_ms   Int
-  setup         String?  @db.LongText
-  reasoning     String?  @db.LongText
+  id              Int      @id @default(autoincrement())
+  symbol          String
+  analyzed_at     DateTime @default(now())
+  duration_ms     Int
+  setup           String?  @db.LongText
+  reasoning       String?  @db.LongText
+  analysis_type   String   @default("intraday")
 
   symbolRef     Symbol   @relation(fields: [symbol], references: [symbol])
 
   @@index([symbol, analyzed_at])
+  @@index([analysis_type, analyzed_at])
   @@map("analysis_logs")
 }
 
@@ -62,6 +64,7 @@ model TradingSignal {
   instrument          String
   action              String
   timeframe           String?
+  analysis_type       String    @default("intraday")
   entry               Float?
   stop_loss           Float?
   take_profit         Float?
@@ -79,5 +82,6 @@ model TradingSignal {
   updated_at          DateTime  @updatedAt
 
   @@index([instrument, created_at])
+  @@index([analysis_type, created_at])
   @@map("trading_signals")
 }

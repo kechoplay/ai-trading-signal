@@ -8,12 +8,20 @@ export const config = {
     .map((s) => s.trim())
     .filter(Boolean),
 
+  longtermTimeframes: (process.env.TRADING_LONGTERM_TIMEFRAMES ?? 'W,D,H4')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
+
   candlesCount: parseInt(process.env.TRADING_CANDLES_COUNT ?? '214', 10),
 
   candlesByTf: {
     H1:  parseInt(process.env.TRADING_CANDLES_H1  ?? '214', 10),
     M15: parseInt(process.env.TRADING_CANDLES_M15 ?? '100', 10),
     M5:  parseInt(process.env.TRADING_CANDLES_M5  ?? '100', 10),
+    W:   parseInt(process.env.TRADING_CANDLES_W   ?? '104', 10),
+    D:   parseInt(process.env.TRADING_CANDLES_D   ?? '200', 10),
+    H4:  parseInt(process.env.TRADING_CANDLES_H4  ?? '200', 10),
   },
 
   minRr: parseFloat(process.env.TRADING_MIN_RR ?? '2.0'),
