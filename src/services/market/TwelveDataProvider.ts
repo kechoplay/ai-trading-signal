@@ -29,6 +29,7 @@ export class TwelveDataProvider implements MarketDataProvider {
       interval,
       outputsize: count,
       order: 'ASC',
+      timezone: config.marketHours.timezone,
       apikey: this.apiKey,
     });
 

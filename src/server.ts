@@ -402,9 +402,15 @@ app.get('/api/signals', async (req, res) => {
 
 
 function startOfTodayVN(): Date {
+  const tz = config.marketHours.timezone;
   const now = new Date();
-  const vnMidnight = new Date(now.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }) + 'T00:00:00+07:00');
-  return vnMidnight;
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).formatToParts(now);
+  const h = parseInt(parts.find(p => p.type === 'hour')?.value   ?? '0', 10);
+  const m = parseInt(parts.find(p => p.type === 'minute')?.value ?? '0', 10);
+  const s = parseInt(parts.find(p => p.type === 'second')?.value ?? '0', 10);
+  return new Date(now.getTime() - (h * 3600 + m * 60 + s) * 1000 - now.getMilliseconds());
 }
 
 function parseSignal(signal: any) {
