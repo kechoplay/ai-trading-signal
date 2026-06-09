@@ -17,8 +17,8 @@ export const config = {
 
   candlesByTf: {
     H1:  parseInt(process.env.TRADING_CANDLES_H1  ?? '214', 10),
-    M15: parseInt(process.env.TRADING_CANDLES_M15 ?? '100', 10),
-    M5:  parseInt(process.env.TRADING_CANDLES_M5  ?? '100', 10),
+    M15: parseInt(process.env.TRADING_CANDLES_M15 ?? '240', 10),
+    M5:  parseInt(process.env.TRADING_CANDLES_M5  ?? '180', 10),
     W:   parseInt(process.env.TRADING_CANDLES_W   ?? '104', 10),
     D:   parseInt(process.env.TRADING_CANDLES_D   ?? '200', 10),
     H4:  parseInt(process.env.TRADING_CANDLES_H4  ?? '200', 10),

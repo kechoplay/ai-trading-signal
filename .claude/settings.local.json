@@ -11,7 +11,9 @@
       "Bash(find . -name \"*.db\")",
       "Bash(git restore *)",
       "Bash(node -e \"const {McpServer} = require\\('@modelcontextprotocol/sdk/server/mcp.js'\\); console.log\\(typeof McpServer\\)\")",
-      "Bash(node -e \"const {OAuthTokensSchema} = require\\('@modelcontextprotocol/sdk/shared/auth.js'\\); console.log\\(JSON.stringify\\(Object.keys\\(OAuthTokensSchema?.shape ?? {}\\)\\)\\)\")"
+      "Bash(node -e \"const {OAuthTokensSchema} = require\\('@modelcontextprotocol/sdk/shared/auth.js'\\); console.log\\(JSON.stringify\\(Object.keys\\(OAuthTokensSchema?.shape ?? {}\\)\\)\\)\")",
+      "WebFetch(domain:claude.ai)",
+      "WebFetch(domain:twelvedata.com)"
     ]
   }
 }
