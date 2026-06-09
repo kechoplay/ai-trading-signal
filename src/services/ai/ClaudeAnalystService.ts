@@ -285,17 +285,34 @@ Nếu có setup hợp lệ, xuất ĐÚNG MỘT block (BUY hoặc SELL):
 }
 
 function toUnixTimestamp(time: string): number {
-  return Math.floor(parseUtc(time).getTime() / 1000);
+  return Math.floor(parseMarketTime(time).getTime() / 1000);
 }
 
 /**
- * Parse chuỗi thời gian thành Date. TwelveData trả "YYYY-MM-DD HH:mm:ss" theo UTC
- * nhưng KHÔNG có hậu tố Z → ép hiểu là UTC để tránh lệch theo giờ máy.
+ * Parse chuỗi thời gian nến thành Date (instant chuẩn xác).
+ * TwelveData được gọi với param `timezone=MARKET_HOURS_TIMEZONE` nên trả về
+ * "YYYY-MM-DD HH:mm:ss" theo GIỜ ĐỊA PHƯƠNG của timezone đó, KHÔNG có hậu tố.
+ * → cần gắn đúng offset của timezone cấu hình thay vì ép thành UTC (Z).
  */
-function parseUtc(time: string): Date {
+function parseMarketTime(time: string): Date {
   if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(time)) return new Date(time); // đã có timezone
   const iso = time.trim().replace(' ', 'T');
-  return new Date(`${iso}Z`);
+  const naiveUtc = new Date(`${iso}Z`);
+  const offsetMin = tzOffsetMinutes(config.marketHours.timezone, naiveUtc);
+  return new Date(naiveUtc.getTime() - offsetMin * 60_000);
+}
+
+/** Offset (phút) của một IANA timezone tại một thời điểm. VD Asia/Ho_Chi_Minh → 420. */
+function tzOffsetMinutes(tz: string, at: Date): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(at);
+  const m: Record<string, number> = {};
+  for (const p of parts) if (p.type !== 'literal') m[p.type] = parseInt(p.value, 10);
+  const asUtc = Date.UTC(m.year, m.month - 1, m.day, m.hour, m.minute, m.second);
+  return (asUtc - at.getTime()) / 60_000;
 }
 
 function extractPriceFromLine(text: string, keyword: string): number | null {

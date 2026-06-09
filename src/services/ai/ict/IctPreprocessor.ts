@@ -9,14 +9,15 @@
  *
  * Mảng nến phải sắp xếp CŨ -> MỚI (nến mới nhất ở cuối).
  *
- * Giả định timestamp là UTC. Kill zone tính theo giờ VN (UTC+7).
- * Nếu data đã là giờ VN, set UTC_OFFSET = 0.
+ * TwelveData được gọi với param timezone=MARKET_HOURS_TIMEZONE (Asia/Ho_Chi_Minh)
+ * nên timestamp ĐÃ LÀ giờ VN → UTC_OFFSET = 0. Kill zone vốn cũng tính theo giờ VN.
+ * Nếu sau này data trả về UTC, đổi UTC_OFFSET = 7.
  * -----------------------------------------------------------------------------
  */
 
 import { Candle } from '../../market/Candle';
 
-const UTC_OFFSET = 7; // giờ VN so với UTC. Đổi về 0 nếu data đã là giờ VN.
+const UTC_OFFSET = 0; // data đã là giờ VN (TwelveData timezone=Asia/Ho_Chi_Minh). Đổi về 7 nếu data là UTC.
 
 // ─── Kiểu dữ liệu output ────────────────────────────────────────────────────
 
@@ -95,8 +96,9 @@ export interface IctFacts {
 // ─── Tiện ích cơ bản ────────────────────────────────────────────────────────
 
 /**
- * Parse chuỗi thời gian thành Date. TwelveData trả "YYYY-MM-DD HH:mm:ss" theo UTC
- * nhưng KHÔNG có hậu tố Z → ép hiểu là UTC để tránh lệch theo giờ máy.
+ * Parse chuỗi "YYYY-MM-DD HH:mm:ss" thành Date bằng cách ép gắn Z (đọc nguyên
+ * giờ-phút trong chuỗi qua getUTC*). Dùng cho so sánh tương đối & lấy wall-clock
+ * giờ VN (vì data đã là giờ VN, xem UTC_OFFSET=0). KHÔNG dùng cho instant tuyệt đối.
  */
 function toDate(t: string): Date {
   if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(t)) return new Date(t); // đã có timezone
