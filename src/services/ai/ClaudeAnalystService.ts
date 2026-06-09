@@ -3,6 +3,7 @@ import { Candle } from '../market/Candle';
 import { AnalysisResult, ConditionalSetup } from './dto/AnalysisResult';
 import { config } from '../../config/trading';
 import { logger } from '../../logger';
+import { preprocess } from './ict/IctPreprocessor';
 
 export class ClaudeAnalystService {
   private readonly client: Anthropic;
@@ -171,8 +172,15 @@ export class ClaudeAnalystService {
   protected buildSystemPrompt(): string {
     return `Bạn là trader chuyên nghiệp XAU/USD với 15 năm kinh nghiệm, chuyên phương pháp ICT/SMC price action.
 
-Tôi cung cấp dữ liệu nến OHLC thô của XAU/USD trên 3 khung: H1, M15, M5 (có timestamp).
+Tôi cung cấp dữ liệu nến OHLC thô của XAU/USD trên 3 khung: H1, M15, M5 (có timestamp Unix giây, UTC).
+Kèm theo là khối "CÁC MỨC ĐÃ TÍNH SẴN BẰNG CODE" (JSON): swing high/low, range + fib (premium/discount/equilibrium),
+ATR, FVG, order block, liquidity (equal highs/lows) và kill zone của nến mới nhất.
 Phân tích THUẦN TÚY từ price action. Bỏ qua mọi bình luận ngoài cấu trúc output bên dưới.
+
+## CÁCH DÙNG SỐ LIỆU
+- TIN TƯỞNG TUYỆT ĐỐI các con số trong khối JSON đã tính sẵn — KHÔNG tự "bấm máy" tính lại swing/fib/ATR/FVG/OB.
+- Dùng các mức đó làm POI, SL, TP, xác định premium/discount và kill zone.
+- Chỉ dùng data OHLC thô để đọc thêm context price action (displacement, rejection, nến xác nhận).
 
 ## QUY ƯỚC
 - Đơn vị giá dùng USD trực tiếp (KHÔNG dùng "pip"). Ví dụ: "SL cách 3.5 USD".
@@ -234,16 +242,33 @@ Nếu có setup hợp lệ, xuất ĐÚNG MỘT block (BUY hoặc SELL):
       ...Object.keys(candlesByTimeframe).filter((tf) => !orderedTf.includes(tf)),
     ];
 
-    const lines: string[] = [];
-
+    // Cắt nến theo limit từng khung trước, để ICT facts & data thô đồng nhất.
+    const slicedByTf: Record<string, Candle[]> = {};
     for (const tf of allTf) {
       const candles = candlesByTimeframe[tf];
       if (!candles) continue;
-
-      logger.info(`[${tf}] Market Data`, { timeframe: tf, total: candles.length });
-
       const limit = (config.candlesByTf as Record<string, number>)[tf] ?? config.candlesCount;
-      const candleSlice = candles.slice(-limit);
+      slicedByTf[tf] = candles.slice(-limit);
+    }
+
+    // Tính sẵn các "facts" ICT/SMC (swing, fib, ATR, FVG, OB, liquidity, kill zone).
+    const ictFacts = preprocess(slicedByTf);
+    logger.info('[Claude] ICT facts', { killZone: ictFacts.meta.killZone, timeframes: Object.keys(ictFacts.timeframes) });
+
+    const lines: string[] = [];
+    lines.push('## CÁC MỨC ĐÃ TÍNH SẴN BẰNG CODE (tin tưởng tuyệt đối, KHÔNG tự tính lại):');
+    lines.push('```json');
+    lines.push(JSON.stringify(ictFacts, null, 2));
+    lines.push('```');
+    lines.push('');
+    lines.push('## DATA OHLC THÔ (time = Unix timestamp giây, UTC):');
+
+    for (const tf of allTf) {
+      const candleSlice = slicedByTf[tf];
+      if (!candleSlice) continue;
+
+      logger.info(`[${tf}] Market Data`, { timeframe: tf, total: candlesByTimeframe[tf].length, used: candleSlice.length });
+
       const csvRows = candleSlice.map((c) =>
         `${toUnixTimestamp(c.time)},${c.open},${c.high},${c.low},${c.close}`,
       );
@@ -260,7 +285,17 @@ Nếu có setup hợp lệ, xuất ĐÚNG MỘT block (BUY hoặc SELL):
 }
 
 function toUnixTimestamp(time: string): number {
-  return Math.floor(new Date(time).getTime() / 1000);
+  return Math.floor(parseUtc(time).getTime() / 1000);
+}
+
+/**
+ * Parse chuỗi thời gian thành Date. TwelveData trả "YYYY-MM-DD HH:mm:ss" theo UTC
+ * nhưng KHÔNG có hậu tố Z → ép hiểu là UTC để tránh lệch theo giờ máy.
+ */
+function parseUtc(time: string): Date {
+  if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(time)) return new Date(time); // đã có timezone
+  const iso = time.trim().replace(' ', 'T');
+  return new Date(`${iso}Z`);
 }
 
 function extractPriceFromLine(text: string, keyword: string): number | null {
