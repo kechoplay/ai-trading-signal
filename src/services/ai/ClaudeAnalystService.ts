@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { Agent } from 'undici';
 import { Candle } from '../market/Candle';
 import { AnalysisResult, ConditionalSetup } from './dto/AnalysisResult';
 import { config } from '../../config/trading';
@@ -10,9 +11,21 @@ export class ClaudeAnalystService {
   protected readonly tfOrder: string[] = ['H1', 'M15', 'M5'];
 
   constructor(private readonly model: string) {
+    // Stream phân tích có thể chạy nhiều phút (adaptive thinking).
+    // undici (engine của fetch) mặc định cắt kết nối nếu không nhận chunk nào
+    // trong ~300s (bodyTimeout) hoặc chờ headers >300s (headersTimeout) →
+    // ném "terminated". Nới rộng cả hai để stream dài không bị ngắt sớm.
+    const TEN_MIN = 0;
+    const dispatcher = new Agent({
+      headersTimeout: TEN_MIN,
+      bodyTimeout:    TEN_MIN,
+    });
+
     this.client = new Anthropic({
-      apiKey: config.claude.apiKey,
+      apiKey:     config.claude.apiKey,
       maxRetries: 4,
+      timeout:    TEN_MIN,             // hard cap ở tầng SDK (abort) khớp với undici
+      fetchOptions: { dispatcher },    // áp dụng timeout undici cho mọi request
     });
   }
 

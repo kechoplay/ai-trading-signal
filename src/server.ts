@@ -524,6 +524,27 @@ app.all('/mcp', requireBearerAuth({ verifier: mcpOAuth }), async (req: Request, 
   }
 });
 
+// ─── Error handler (cuối cùng) ────────────────────────────────────────────────
+// Bắt các lỗi cấp request do client gửi sai, tránh văng stack trace ra log.
+app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+  // Body JSON sai cú pháp (express.json) → 400
+  if (err?.type === 'entity.parse.failed' || err instanceof SyntaxError) {
+    logger.warn('Invalid JSON body', { path: req.path, error: err.message });
+    if (!res.headersSent) res.status(400).json({ error: 'Invalid JSON body' });
+    return;
+  }
+
+  // Header Range không hợp lệ khi tải file tĩnh (send) → 416
+  if (err?.status === 416 || err?.statusCode === 416 || err?.name === 'RangeNotSatisfiableError') {
+    logger.warn('Range not satisfiable', { path: req.path });
+    if (!res.headersSent) res.status(416).end();
+    return;
+  }
+
+  logger.error('Unhandled request error', { path: req.path, error: err?.message });
+  if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
+});
+
 const { port } = config.server;
 app.listen(port, () => {
   logger.info(`Dashboard running at http://localhost:${port}`);
