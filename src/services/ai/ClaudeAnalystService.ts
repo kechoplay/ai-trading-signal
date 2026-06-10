@@ -14,18 +14,22 @@ export class ClaudeAnalystService {
     // Stream phân tích có thể chạy nhiều phút (adaptive thinking).
     // undici (engine của fetch) mặc định cắt kết nối nếu không nhận chunk nào
     // trong ~300s (bodyTimeout) hoặc chờ headers >300s (headersTimeout) →
-    // ném "terminated". Nới rộng cả hai để stream dài không bị ngắt sớm.
-    const TEN_MIN = 0;
+    // ném "terminated". Đặt 0 = VÔ HẠN ở tầng undici để stream dài không bị
+    // ngắt sớm; chặn an toàn bằng timeout của SDK bên dưới.
     const dispatcher = new Agent({
-      headersTimeout: TEN_MIN,
-      bodyTimeout:    TEN_MIN,
+      headersTimeout: 0,   // 0 = không giới hạn (hợp lệ với undici)
+      bodyTimeout:    0,
     });
+
+    // ⚠️ SDK timeout KHÁC undici: 0 ở đây nghĩa là ~0ms (timeout tức thì), KHÔNG
+    // phải vô hạn. Phải đặt số dương — đây là trần cứng tổng thể của request.
+    const SDK_TIMEOUT = 10 * 60 * 1000; // 10 phút
 
     this.client = new Anthropic({
       apiKey:     config.claude.apiKey,
       maxRetries: 4,
-      timeout:    TEN_MIN,             // hard cap ở tầng SDK (abort) khớp với undici
-      fetchOptions: { dispatcher },    // áp dụng timeout undici cho mọi request
+      timeout:    SDK_TIMEOUT,
+      fetchOptions: { dispatcher },
     });
   }
 
