@@ -1,4 +1,4 @@
-export const ACTIONS = ['BUY', 'SELL', 'NO_TRADE'] as const;
+export const ACTIONS = ['BUY', 'SELL', 'NO_TRADE', 'WATCHLIST'] as const;
 
 export interface ConditionalSetup {
   direction: 'BUY' | 'SELL';

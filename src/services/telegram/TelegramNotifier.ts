@@ -299,6 +299,7 @@ export class TelegramNotifier {
     const actionLine =
       signal.action === 'BUY' ? '🟢 <b>MUA (BUY)</b>' :
       signal.action === 'SELL' ? '🔴 <b>BÁN (SELL)</b>' :
+      signal.action === 'WATCHLIST' ? '👁 <b>ĐANG CANH (WATCHLIST)</b>' :
       '⚪ <b>KHÔNG VÀO LỆNH</b>';
 
     const SEP = '━━━━━━━━━━━━━━━━━━━━━';
@@ -359,6 +360,7 @@ export class TelegramNotifier {
     const actionLine =
       result.action === 'BUY'  ? '🟢 <b>MUA (BUY)</b>'  :
       result.action === 'SELL' ? '🔴 <b>BÁN (SELL)</b>' :
+      result.action === 'WATCHLIST' ? '👁 <b>ĐANG CANH (WATCHLIST)</b>' :
       '⚪ <b>KHÔNG VÀO LỆNH</b>';
 
     const lines: string[] = [

@@ -116,7 +116,7 @@ app.post('/api/analyze', requireApiKey, async (req, res) => {
           current_price:   currentPrice,
           reasoning:       result.reasoning,
           trend_bias:      result.trendBias,
-          raw_ai_response: JSON.stringify(result.raw ?? {}),
+          raw_ai_response: JSON.stringify({ ...(result.raw ?? {}), conditional_setups: result.conditionalSetups }),
           analyze_at:      new Date(startedAt),
         },
       }),
@@ -421,6 +421,7 @@ function parseSignal(signal: any) {
       market_structure: raw.market_structure ?? null,
       key_levels: raw.key_levels ?? null,
       setups: raw.setups ?? null,
+      conditional_setups: raw.conditional_setups ?? null,
     };
   } catch {}
 

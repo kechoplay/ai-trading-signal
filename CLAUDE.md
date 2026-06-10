@@ -6,10 +6,11 @@
 
 ## Tổng quan
 
-**AI Trading Signal** là hệ thống phân tích kỹ thuật và phát tín hiệu giao dịch cho cặp **XAU/USD (vàng)** sử dụng Claude AI (Anthropic). Hệ thống lấy dữ liệu nến từ API thị trường, gửi qua Claude để phân tích đa khung thời gian, lưu kết quả vào SQLite và gửi thông báo qua Telegram. Phân tích được trigger thủ công qua REST API (không dùng cron).
+**AI Trading Signal** là hệ thống phân tích kỹ thuật và phát tín hiệu giao dịch cho **XAU/USD (vàng)** và các cặp **crypto (BTC/USD, ETH/USD…)** sử dụng Claude AI (Anthropic). Hệ thống lấy dữ liệu nến từ API thị trường, gửi qua Claude để phân tích đa khung thời gian, lưu kết quả vào SQLite và gửi thông báo qua Telegram. Phân tích được trigger thủ công qua REST API / dashboard (không dùng cron).
 
-- **Ngôn ngữ phân tích AI**: Tiếng Việt (prompt ~400 dòng)
-- **Khung thời gian phân tích**: H1, M15, M5 (đã bỏ W1, D1, H4)
+- **Ngôn ngữ phân tích AI**: Tiếng Việt
+- **Khung thời gian phân tích**: H4 (context), H1 (bias), M15 (POI), M5 (entry/confirmation)
+- **Tài sản hỗ trợ**: Vàng (prompt scalp ICT/SMC, từ vựng BUY/SELL) và crypto (prompt riêng, từ vựng LONG/SHORT → map về BUY/SELL). Provider tự động chọn `exchange=Binance` cho cặp crypto.
 - **Múi giờ hoạt động**: Asia/Ho_Chi_Minh (6:00 – 22:00)
 - **Môi trường**: Node.js + TypeScript, SQLite, chạy trên Windows
 
@@ -38,11 +39,16 @@ D:/ai-trading-signal/
     │   └── trading.ts                 ← đọc toàn bộ config từ .env
     ├── commands/
     │   └── analyzeSignal.ts           ← CLI entry: check giờ → orchestrate
+    ├── public/                        ← dashboard tĩnh (Express static)
+    │   ├── index.html                 ← bảng tín hiệu intraday + nút phân tích XAU / BTC
+    │   ├── longterm.html              ← bảng tín hiệu dài hạn (W/D/H4)
+    │   └── docs.html                  ← trang tài liệu
     └── services/
         ├── SignalOrchestrator.ts      ← pipeline chính (fetch→AI→DB→Telegram)
         ├── MarketHoursService.ts      ← kiểm tra giờ giao dịch
         ├── ai/
-        │   ├── ClaudeAnalystService.ts  ← gọi Claude API, build prompt, parse JSON
+        │   ├── ClaudeAnalystService.ts  ← gọi Claude API, build prompt (vàng/crypto), parse text
+        │   ├── LongTermAnalystService.ts ← prompt swing W/D/H4 (override tfOrder)
         │   └── dto/
         │       └── AnalysisResult.ts    ← kiểu trả về từ AI
         ├── market/
@@ -75,27 +81,27 @@ D:/ai-trading-signal/
 ## Luồng dữ liệu
 
 ```
-[POST /api/analyze]
+[POST /api/analyze]  (symbol tùy chọn — XAU/USD hoặc BTC/USD…)
        ↓
 [SignalOrchestrator.run(instrument?, timeframes?)]
        │  timeframes: dùng tham số nếu có, fallback về TRADING_TIMEFRAMES trong .env
-       ├─ MarketDataProvider.fetchCandles(XAU/USD, H1/M15/M5, 100 nến)
+       ├─ MarketDataProvider.fetchCandles(symbol, H4/H1/M15/M5)  (crypto → exchange=Binance)
        ├─ MarketDataProvider.fetchCurrentPrice()
        ↓
-[ClaudeAnalystService.analyze()]
-       ├─ Tính chỉ báo: RSI(14), EMA(200), HMA(200), BB(34,2.0)
-       ├─ Build system prompt (tiếng Việt, ICT/SMC methodology)
-       ├─ Build user prompt (bảng nến markdown)
-       ├─ POST Claude API (temperature=0.2, maxTokens=8192)
-       ├─ Parse JSON từ response (```json block hoặc fallback search)
-       └─ Trả về AnalysisResult
+[ClaudeAnalystService.analyze(instrument, …)]
+       ├─ Chọn prompt theo instrument: vàng (buildGoldSystemPrompt) hoặc crypto (buildCryptoSystemPrompt)
+       ├─ Build user prompt (bảng nến CSV theo tfOrder H4→H1→M15→M5)
+       ├─ Stream Claude API (thinking adaptive, max_tokens 64000)
+       ├─ Parse TEXT (regex) → action BUY/SELL/NO_TRADE/WATCHLIST
+       │    LONG→BUY, SHORT→SELL; WATCHLIST = canh setup, chưa vào lệnh
+       └─ Trả về AnalysisResult (+ conditionalSetups)
        ↓
-[Prisma] → lưu TradingSignal vào SQLite
+[Prisma] → lưu TradingSignal vào SQLite (raw_ai_response chứa conditional_setups)
        ↓
 [TelegramNotifier]
-       ├─ formatSignal() → HTML card
+       ├─ formatSignalCard() → HTML card (badge BUY/SELL/WATCHLIST/NO_TRADE)
        ├─ send() → kênh Telegram chính (auto-split nếu >4000 ký tự)
-       └─ sendComment() → discussion thread (nếu có BUY/SELL)
+       └─ sendComment() → discussion thread
 ```
 
 ---
@@ -108,7 +114,7 @@ D:/ai-trading-signal/
 |-----|------|-------|
 | id | INT PK | Auto increment |
 | instrument | STRING | "XAU/USD" |
-| action | STRING | "BUY" / "SELL" / "NO_TRADE" |
+| action | STRING | "BUY" / "SELL" / "NO_TRADE" / "WATCHLIST" |
 | timeframe | STRING | "M5" |
 | entry | FLOAT | Giá vào lệnh |
 | stop_loss | FLOAT | Điểm dừng lỗ |
@@ -118,7 +124,7 @@ D:/ai-trading-signal/
 | current_price | FLOAT | Giá thị trường lúc phân tích |
 | reasoning | STRING | Lý luận AI |
 | trend_bias | STRING | "BULLISH" / "BEARISH" / "NEUTRAL" |
-| raw_ai_response | STRING | Toàn bộ JSON từ Gemini |
+| raw_ai_response | STRING | JSON `{ conditional_setups, … }` — dùng để web hiển thị chi tiết WATCHLIST/kịch bản |
 | indicators_snapshot | STRING | Nến + metadata JSON |
 | telegram_message_id | STRING | ID tin nhắn Telegram |
 | sent_at | DATETIME | Thời điểm gửi |
@@ -140,8 +146,12 @@ LOG_LEVEL=info
 # Market Data
 MARKET_PROVIDER=twelvedata          # hoặc "oanda"
 TRADING_INSTRUMENT=XAU/USD
-TRADING_TIMEFRAMES=M5,M15,H1        # khung thời gian phân tích
-TRADING_CANDLES_COUNT=100
+TRADING_TIMEFRAMES=H4,H1,M15,M5    # H4 context → M5 entry
+TRADING_CANDLES_COUNT=214
+TRADING_CANDLES_H4=30               # H4 chỉ làm context → ít nến
+TRADING_CANDLES_H1=214
+TRADING_CANDLES_M15=240
+TRADING_CANDLES_M5=180
 TRADING_MIN_RR=2.0
 
 # Market Hours (Asia/Ho_Chi_Minh)
@@ -186,33 +196,24 @@ npm run db:migrate     # chạy migration
 
 **File:** `src/services/ai/ClaudeAnalystService.ts`
 
-**Prompt strategy (3 bước):**
-1. Phân tích kỹ thuật độc lập từng khung (H1 → M15 → M5)
-2. Review lệnh cũ (nếu có)
-3. Quyết định tổng thể (BUY / SELL / NO_TRADE)
+**Chọn prompt theo instrument** (`buildSystemPrompt(instrument)`):
+- `isCryptoInstrument()` (BTC/ETH/BNB/SOL/XRP/ADA/DOGE/LTC) → `buildCryptoSystemPrompt()` (từ vựng LONG/SHORT, SL/TP theo % + ATR, 24/7, liquidity sweep).
+- Còn lại → `buildGoldSystemPrompt()` (trader scalp XAU/USD, từ vựng BUY/SELL, SL/TP theo USD, kill zone London/NY, có trạng thái WATCHLIST).
 
-**Cấu trúc prompt phân tích (mục 1A trở đi):**
-- `1A. CẤU TRÚC THỊ TRƯỜNG` — H1, M15, M5 (đã bỏ W1/D1/H4)
-- `1B. VÙNG CUNG CẦU & KEY LEVELS`
-- `1C. CHỈ BÁO KỸ THUẬT`
-- `2. QUYẾT ĐỊNH GIAO DỊCH`
-- `3. KẾ HOẠCH QUẢN LÝ LỆNH`
+**Output là TEXT markdown (KHÔNG phải JSON)** — parse bằng regex, không dùng `JSON.parse`:
+- `extractAction()` trả về `BUY | SELL | NO_TRADE | WATCHLIST`. Thứ tự ưu tiên: ORDER block thật → `#### WATCHLIST` → dòng `Best opportunity:` trong SUMMARY.
+- `dirToAction()`: **LONG→BUY, SHORT→SELL** (crypto dùng LONG/SHORT, hệ thống lưu BUY/SELL).
+- `WATCHLIST` = setup đang hình thành, chưa đủ điều kiện vào lệnh → không có entry/SL/TP; thông tin "POI đang canh" nằm trong `conditionalSetups`.
+- Các hằng số parser dùng chung: `DIR_LABEL` (`BUY ORDER|LONG`, `SELL ORDER|SHORT`), `DIR_BOUNDARY`.
 
-**JSON output từ AI:**
-```json
-{
-  "action": "BUY|SELL|NO_TRADE",
-  "entry": 2343.00,
-  "stop_loss": 2340.00,
-  "take_profit": 2350.00,
-  "risk_reward": 2.33,
-  "confidence": 82,
-  "trend_bias": "BULLISH|BEARISH|NEUTRAL",
-  "reasoning": "..."
-}
+**Block ORDER mẫu (vàng):**
+```
+#### [BUY ORDER / SELL ORDER]
+- Nhãn dòng H4: THUẬN dòng / NGƯỢC dòng
+- Entry zone / SL / TP1-3 / Confidence / Hủy lệnh nếu
 ```
 
-**Retry logic:** 4 lần, sleep 3s/6s/9s, trigger khi status 429/500/502/503/504
+**Streaming:** dùng `messages.stream()` (thinking adaptive, max_tokens 64000), `maxRetries: 4`, SDK timeout 10 phút; undici dispatcher đặt timeout = 0 (vô hạn) để stream dài không bị ngắt.
 
 ---
 
@@ -267,11 +268,24 @@ Lấy analysis logs của symbol trong ngày.
 
 ---
 
+## Web Dashboard — Chi tiết quan trọng
+
+**File:** `public/index.html` (intraday), `public/longterm.html` (dài hạn) — phục vụ static qua Express.
+
+- Nút **⚡ Phân tích XAU** → `POST /api/analyze {}`; nút **₿ Phân tích BTC** → `POST /api/analyze { symbol: "BTC/USD" }`. Hàm chung `runAnalyze(btnId, symbol?)`.
+- API key lưu ở `localStorage`; nếu server trả 401 sẽ prompt nhập key rồi thử lại.
+- `renderSignalBanner()` hiển thị badge theo action: BUY/SELL/WATCHLIST (`👁 ĐANG CANH`)/NO_TRADE. Hàng Entry/SL/TP chỉ hiện cho BUY/SELL.
+- `renderConditionalSetups()` hiển thị chi tiết WATCHLIST (POI đang canh) — đọc `conditional_setups` từ `raw_ai_response` (server `parseSignal()` bóc ra).
+- Tự refresh mỗi 60s.
+
+---
+
 ## TelegramNotifier — Chi tiết quan trọng
 
 **File:** `src/services/telegram/TelegramNotifier.ts`
 
 - Gửi signal card dạng HTML (không dùng Markdown)
+- Badge action: 🟢 MUA / 🔴 BÁN / 👁 ĐANG CANH (WATCHLIST) / ⚪ KHÔNG VÀO LỆNH
 - Auto-split tin nhắn >4000 ký tự
 - Discussion thread: tự resolve DISCUSSION_ID nếu chưa set
 - Chuyển đổi markdown AI → HTML Telegram (bảng, bold, italic, bullet)
@@ -306,9 +320,13 @@ Lấy analysis logs của symbol trong ngày.
 GET https://api.twelvedata.com/time_series
   ?symbol=XAU/USD&interval=5min&outputsize=100&order=ASC&apikey=...
 
+# Cặp crypto tự thêm exchange=Binance (cryptoExchange() trong TwelveDataProvider)
+GET https://api.twelvedata.com/time_series
+  ?symbol=BTC/USD&interval=5min&order=ASC&exchange=Binance&apikey=...
+
 GET https://api.twelvedata.com/price?symbol=XAU/USD&apikey=...
 ```
-Retry: 2 lần, delay 500ms
+Retry: 2 lần, delay 500ms. `exchange` chỉ gửi khi instrument là crypto (vàng KHÔNG kèm exchange).
 
 ### OANDA (thay thế)
 ```
@@ -331,8 +349,8 @@ GET https://api-fxpractice.oanda.com/v3/instruments/XAU_USD/candles
 
 ## Quy tắc quan trọng khi sửa code
 
-1. **Khung thời gian**: Hệ thống hiện dùng H1, M15, M5 — KHÔNG thêm lại W1/D1/H4 trừ khi được yêu cầu rõ ràng
-2. **Ngôn ngữ prompt**: Prompt AI viết bằng tiếng Việt — giữ nguyên
+1. **Khung thời gian**: Intraday dùng H4 (context), H1, M15, M5 — thứ tự gửi nến do `tfOrder` trong `ClaudeAnalystService` quyết định. Long-term (W/D/H4) do `LongTermAnalystService` xử lý riêng.
+2. **Ngôn ngữ prompt**: Prompt AI viết bằng tiếng Việt — giữ nguyên. Vàng dùng từ vựng BUY/SELL, crypto dùng LONG/SHORT — khi sửa parser phải giữ map LONG→BUY, SHORT→SELL.
 3. **Database**: Dùng Prisma — không dùng raw SQL. Sau mỗi thay đổi schema (`prisma/schema.prisma`), bắt buộc chạy:
    ```bash
    npx prisma generate   # cập nhật Prisma Client
