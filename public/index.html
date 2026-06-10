@@ -75,6 +75,15 @@
     .analyze-btn:hover { background: linear-gradient(90deg, #4f46e5, #7c3aed); }
     .analyze-btn:disabled { opacity: .6; cursor: not-allowed; }
 
+    .btc-btn {
+      background: linear-gradient(90deg, #f7931a, #f59e0b);
+      color: #fff;
+      border-color: transparent;
+      font-weight: 600;
+    }
+    .btc-btn:hover { background: linear-gradient(90deg, #e0820f, #d97706); }
+    .btc-btn:disabled { opacity: .6; cursor: not-allowed; }
+
     .longterm-btn {
       background: linear-gradient(90deg, #0d9488, #0891b2);
       color: #fff;
@@ -416,7 +425,8 @@
   <div style="display:flex;gap:8px;align-items:center">
     <a href="/docs" target="_blank" class="refresh-btn" style="text-decoration:none">📖 Docs</a>
     <button class="refresh-btn" onclick="loadLatest()">↻ Refresh</button>
-    <button id="analyzeBtn" class="refresh-btn analyze-btn" onclick="runAnalyze()">⚡ Phân tích ngay</button>
+    <button id="analyzeBtn" class="refresh-btn analyze-btn" onclick="runAnalyze('analyzeBtn')">⚡ Phân tích XAU</button>
+    <button id="analyzeBtcBtn" class="refresh-btn btc-btn" onclick="runAnalyze('analyzeBtcBtn', 'BTC/USD')">₿ Phân tích BTC</button>
     <a href="/longterm" class="refresh-btn longterm-btn" style="text-decoration:none">📊 Dài hạn</a>
   </div>
 </div>
@@ -695,13 +705,16 @@ function promptApiKey() {
   return getApiKey();
 }
 
-async function runAnalyze() {
-  const btn = document.getElementById('analyzeBtn');
+async function runAnalyze(btnId = 'analyzeBtn', symbol) {
+  const btn = document.getElementById(btnId);
   if (btn.disabled) return;
   const original = btn.innerHTML;
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>Đang phân tích...';
-  showToast('Đang gửi yêu cầu phân tích, vui lòng đợi...');
+  const label = symbol ? symbol : 'XAU/USD';
+  showToast(`Đang gửi yêu cầu phân tích ${label}, vui lòng đợi...`);
+
+  const payload = symbol ? { symbol } : {};
 
   try {
     const headers = { 'Content-Type': 'application/json' };
@@ -711,7 +724,7 @@ async function runAnalyze() {
     let res = await fetch('/api/analyze', {
       method: 'POST',
       headers,
-      body: JSON.stringify({}),
+      body: JSON.stringify(payload),
     });
 
     // Nếu cần key mà chưa có/sai → hỏi key rồi thử lại 1 lần
@@ -721,7 +734,7 @@ async function runAnalyze() {
       res = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': key },
-        body: JSON.stringify({}),
+        body: JSON.stringify(payload),
       });
     }
 

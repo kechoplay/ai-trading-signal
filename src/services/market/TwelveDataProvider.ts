@@ -9,6 +9,14 @@ const TIMEFRAME_MAP: Record<string, string> = {
   H1: '1h', H4: '4h', D: '1day', W: '1week',
 };
 
+// TwelveData yêu cầu tham số `exchange` cho cặp crypto (vd: BTC/USD → Binance).
+const CRYPTO_BASES = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'ADA', 'DOGE', 'LTC'];
+
+function cryptoExchange(instrument: string): string | undefined {
+  const base = instrument.split('/')[0]?.trim().toUpperCase();
+  return base && CRYPTO_BASES.includes(base) ? 'Binance' : undefined;
+}
+
 export class TwelveDataProvider implements MarketDataProvider {
   constructor(
     private readonly apiKey: string,
@@ -24,12 +32,14 @@ export class TwelveDataProvider implements MarketDataProvider {
     const interval = TIMEFRAME_MAP[timeframe];
     if (!interval) throw new Error(`Unsupported timeframe: ${timeframe}`);
 
+    const exchange = cryptoExchange(instrument);
     const data = await this.get('/time_series', {
       symbol: instrument,
       interval,
       outputsize: count,
       order: 'ASC',
       timezone: config.marketHours.timezone,
+      ...(exchange ? { exchange } : {}),
       apikey: this.apiKey,
     });
 
@@ -52,7 +62,8 @@ export class TwelveDataProvider implements MarketDataProvider {
   }
 
   async fetchCurrentPrice(instrument: string): Promise<number> {
-    const data = await this.get('/price', { symbol: instrument, apikey: this.apiKey });
+    const exchange = cryptoExchange(instrument);
+    const data = await this.get('/price', { symbol: instrument, ...(exchange ? { exchange } : {}), apikey: this.apiKey });
     logger.debug('TwelveData price', { instrument, price: data.price });
     if (data.status === 'error') throw new Error(`TwelveData price error: ${data.message ?? 'unknown'}`);
     return parseFloat(data.price ?? '0');
