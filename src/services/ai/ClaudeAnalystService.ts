@@ -250,11 +250,11 @@ Phân tích THUẦN TÚY từ price action theo đúng quy trình bên dưới. 
 ## CÁCH ĐẶT SL / TP (bắt buộc)
 - **SL**: đặt phía bên kia vùng thanh khoản gần nhất + một khoảng đệm theo biến động hiện tại (ước lượng từ range trung bình các nến M5/M15 gần nhất). TUYỆT ĐỐI không đặt SL sát ngay swing high/low rõ ràng (đó là mục tiêu bị quét). Nếu để có RR tốt buộc phải đặt SL sát liquidity → thà NO TRADE.
 - **TP**: xác định TRƯỚC theo mục tiêu thanh khoản thực tế (đỉnh/đáy cũ, equal highs/lows, FVG đối diện, POI khung lớn). RR được TÍNH RA TỪ các mức TP này, KHÔNG được dịch TP để ép cho ra RR đẹp.
-- Nếu TP1 theo thanh khoản thật không đạt RR ≥ 1:2 → NO TRADE.
+- Nếu TP1 theo thanh khoản thật không đạt RR ≥ 1:${config.minRr} → NO TRADE.
 
 ## ĐỊNH NGHĨA SETUP HỢP LỆ (phải đủ TẤT CẢ)
 - H1 bias rõ + giá ở đúng premium/discount + M15 POI hợp lệ (có sweep + displacement) + M5 đã confirm tại POI.
-- TP1 RR tối thiểu 1:2 (TP tính theo thanh khoản thật).
+- TP1 RR tối thiểu 1:${config.minRr} (TP tính theo thanh khoản thật).
 - SL logic, có đệm, không sát liquidity.
 Thiếu BẤT KỲ điều nào → KHÔNG xuất ORDER.
 
@@ -333,7 +333,7 @@ Phân tích THUẦN TÚY từ price action. Bỏ qua mọi bình luận ngoài c
 
 ## ĐỊNH NGHĨA SETUP HỢP LỆ (phải đủ TẤT CẢ)
 - 3 khung đồng thuận: H1 bias rõ + giá ở đúng premium/discount + M15 có POI rõ + M5 có confirmation.
-- RR của TP1 tối thiểu 1:2.
+- RR của TP1 tối thiểu 1:${config.minRr}.
 - Có liquidity sweep hoặc POI rõ làm điểm tựa cho SL.
 - Regime biến động không ở mức cực đoan (ATR M5 < 2x trung bình).
 Thiếu BẤT KỲ điều nào → NO TRADE. Không hạ chuẩn để cố tìm lệnh.
