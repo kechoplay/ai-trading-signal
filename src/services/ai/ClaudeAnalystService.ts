@@ -4,7 +4,7 @@ import { Candle } from '../market/Candle';
 import { AnalysisResult, ConditionalSetup } from './dto/AnalysisResult';
 import { config } from '../../config/trading';
 import { logger } from '../../logger';
-import { preprocess } from './ict/IctPreprocessor';
+import { preprocess, IctFacts, TimeframeAnalysis } from './ict/IctPreprocessor';
 
 export class ClaudeAnalystService {
   private readonly client: Anthropic;
@@ -44,17 +44,23 @@ export class ClaudeAnalystService {
     _currentPrice: number,
   ): Promise<{ result: AnalysisResult; rawText: string }> {
     const systemPrompt = this.buildSystemPrompt(instrument);
-    const userPrompt = this.buildOhlcPrompt(candlesByTimeframe);
+
+    // Tiền xử lý: code tính sẵn swing/fib/ATR/FVG/OB/liquidity/kill-zone cho mọi khung.
+    // Model chỉ còn DIỄN GIẢI thay vì tự "bấm máy" → thinking ngắn lại, nhanh & chính xác hơn.
+    const facts = preprocess(candlesByTimeframe);
+    const userPrompt = this.buildUserPrompt(candlesByTimeframe, facts);
 
     logger.info('[Claude] User prompt', { prompt: userPrompt });
 
     // max_tokens phải đủ lớn cho cả thinking + text response
     // thinking: adaptive không có budget_tokens → model tự phân bổ từ max_tokens
-    // Nếu max_tokens quá nhỏ, thinking ăn hết token, text block trả về rỗng
+    // Nếu max_tokens quá nhỏ, thinking ăn hết token, text block trả về rỗng.
+    // output_config.effort: vì code đã gánh phần tính toán, hạ effort để cắt latency.
     const stream = this.client.messages.stream({
       model:      this.model,
       max_tokens: 64000,
-      thinking:   { type: 'adaptive' },  // disabled
+      thinking:   { type: 'adaptive' },
+      output_config: { effort: config.claude.effort as 'low' | 'medium' | 'high' | 'max' },
       system:     systemPrompt,
       messages:   [{ role: 'user', content: userPrompt }],
     });
@@ -216,11 +222,14 @@ export class ClaudeAnalystService {
   protected buildGoldSystemPrompt(): string {
     return `Bạn là trader scalp chuyên nghiệp XAU/USD với 15 năm kinh nghiệm, chuyên phương pháp ICT/SMC price action. Bạn KỶ LUẬT, thà bỏ lỡ còn hơn vào lệnh ép. Không bao giờ hạ chuẩn để cố tìm lệnh.
 
-Tôi cung cấp dữ liệu nến OHLC thô của XAU/USD trên các khung: H4 (context), H1 (bias), M15 (POI), M5 (entry/confirmation) — có timestamp.
+Tôi cung cấp dữ liệu cho các khung: H4 (context), H1 (bias), M15 (POI), M5 (entry/confirmation).
+QUAN TRỌNG — code đã TÍNH SẴN các "ICT/SMC FACTS" cho mọi khung: bias, ATR, range/fib (premium/discount/equilibrium), swing highs/lows, FVG, order block, equal highs/lows (liquidity), kill zone. Hãy DÙNG TRỰC TIẾP các con số này, KHÔNG tính lại từ đầu — nhiệm vụ của bạn là DIỄN GIẢI và ra quyết định, không phải bấm máy.
+Chỉ khung M5 (entry) kèm thêm nến OHLC thô để bạn đọc confirmation. Các khung còn lại chỉ có facts đã tính sẵn — coi đó là đủ context.
 Phân tích THUẦN TÚY từ price action theo đúng quy trình bên dưới. Bỏ qua mọi bình luận ngoài cấu trúc output.
 
 ## QUY ƯỚC
 - Đơn vị giá dùng USD trực tiếp (KHÔNG dùng "pip"). Ví dụ: "SL cách 3.5 USD".
+- Mọi mức swing/fib/POI/liquidity lấy từ FACTS đã cung cấp; nếu cần đối chiếu thì chỉ dùng nến thô M5.
 - Mọi mức giá (entry/SL/TP) PHẢI nằm trong hoặc logic với dải giá thực tế của data. TUYỆT ĐỐI không bịa giá. Nếu data không đủ → NO TRADE.
 - Mỗi lần phân tích chỉ xuất MỘT chiều (BUY hoặc SELL), không xuất cả hai.
 - Kill zone (giờ VN): London 14:00–17:00, New York 19:30–22:00. Dùng timestamp của data để xác định (UTC + 7).
@@ -298,7 +307,9 @@ Thiếu BẤT KỲ điều nào → KHÔNG xuất ORDER.
     return `Bạn là trader chuyên nghiệp thị trường crypto với 15 năm kinh nghiệm, chuyên phương pháp ICT/SMC price action.
 
 ## DỮ LIỆU
-Tôi cung cấp dữ liệu nến OHLC thô của cặp ${instrument} trên 3 khung: H1, M15, M5 (có timestamp UTC).
+Tôi cung cấp dữ liệu cho cặp ${instrument} trên các khung H1, M15, M5.
+QUAN TRỌNG — code đã TÍNH SẴN "ICT/SMC FACTS" cho mọi khung: bias, ATR, range/fib (premium/discount/equilibrium), swing highs/lows, FVG, order block, equal highs/lows (liquidity). DÙNG TRỰC TIẾP các con số này, KHÔNG tính lại — nhiệm vụ của bạn là DIỄN GIẢI và ra quyết định.
+Chỉ khung M5 (entry) kèm thêm nến OHLC thô để đọc confirmation; các khung còn lại chỉ có facts đã tính sẵn.
 Phân tích THUẦN TÚY từ price action. Bỏ qua mọi bình luận ngoài cấu trúc output bên dưới.
 
 ## QUY ƯỚC
@@ -364,36 +375,83 @@ Nếu có setup hợp lệ, xuất ĐÚNG MỘT block (LONG hoặc SHORT):
 - Lý do ngắn gọn trong 1-2 câu`;
   }
 
-  protected buildOhlcPrompt(candlesByTimeframe: Record<string, Candle[]>): string {
+  /**
+   * User prompt = ICT facts (code đã tính sẵn cho MỌI khung) + nến thô CHỈ cho
+   * khung entry (khung cuối trong tfOrder). Các khung context (H4/H1/M15 hoặc W/D)
+   * chỉ gửi facts → input ngắn hơn nhiều, model đọc & suy luận nhanh hơn.
+   */
+  protected buildUserPrompt(
+    candlesByTimeframe: Record<string, Candle[]>,
+    facts: IctFacts,
+  ): string {
     const orderedTf = this.tfOrder;
     const allTf = [
       ...orderedTf.filter((tf) => tf in candlesByTimeframe),
       ...Object.keys(candlesByTimeframe).filter((tf) => !orderedTf.includes(tf)),
     ];
 
+    // Khung entry = khung cuối trong tfOrder có mặt trong data (M5 intraday, H4 longterm).
+    const entryTf = [...allTf].reverse().find((tf) => candlesByTimeframe[tf]?.length);
+
     const lines: string[] = [];
+    lines.push('=== ICT/SMC FACTS (code đã tính sẵn — DÙNG TRỰC TIẾP, KHÔNG tính lại) ===');
+    lines.push(`Giá hiện tại: ${facts.meta.currentPrice}`);
+    lines.push(
+      `Kill zone (nến mới nhất): ${facts.meta.killZone.vnTime} VN — ` +
+      `${facts.meta.killZone.inKillZone ? facts.meta.killZone.zone : 'NGOÀI kill zone'}`,
+    );
+    lines.push('');
 
     for (const tf of allTf) {
       const candles = candlesByTimeframe[tf];
       if (!candles) continue;
+      const tfFacts = facts.timeframes[tf];
 
-      logger.info(`[${tf}] Market Data`, { timeframe: tf, total: candles.length });
+      logger.info(`[${tf}] Market Data`, {
+        timeframe: tf, total: candles.length, isEntry: tf === entryTf,
+      });
 
-      const limit = (config.candlesByTf as Record<string, number>)[tf] ?? config.candlesCount;
-      const candleSlice = candles.slice(-limit);
-      const csvRows = candleSlice.map((c) =>
-        `${toUnixTimestamp(c.time)},${c.open},${c.high},${c.low},${c.close}`,
-      );
+      lines.push(`──────── ${tf} ────────`);
+      if (tfFacts) lines.push(formatTimeframeFacts(tfFacts));
 
-      lines.push(tf);
-      lines.push('timestamp,open,high,low,close');
-      lines.push(...csvRows);
+      // Chỉ khung entry mới gửi kèm nến thô (để model đọc confirmation M5).
+      if (tf === entryTf) {
+        const slice = candles.slice(-config.claude.rawCandles);
+        lines.push(`Nến thô (${slice.length} nến cuối — đọc confirmation):`);
+        lines.push('timestamp,open,high,low,close');
+        lines.push(...slice.map((c) =>
+          `${toUnixTimestamp(c.time)},${c.open},${c.high},${c.low},${c.close}`,
+        ));
+      }
       lines.push('');
     }
 
     return lines.join('\n');
   }
 
+}
+
+/** Bóc facts một khung thành block text gọn để nhét vào prompt. */
+function formatTimeframeFacts(a: TimeframeAnalysis): string {
+  const r = a.range;
+  const l = a.liquidity;
+  const fmtSwings = (s: { price: number; time: string }[]) =>
+    s.length ? s.map((x) => `${x.price}@${x.time}`).join(', ') : '—';
+  const fmtZones = (z: { type: string; top: number; bottom: number }[]) =>
+    z.length ? z.map((x) => `${x.type} ${x.bottom}–${x.top}`).join(' | ') : '—';
+  const fmtLiq = (lv: { price: number }[]) =>
+    lv.length ? lv.map((x) => x.price).join(', ') : '—';
+
+  return [
+    `Bias: ${a.bias} | ATR: ${a.atr} | Giá: ${a.lastPrice}`,
+    `Range: ${r.rangeLow}–${r.rangeHigh} | EQ(50%): ${r.equilibrium} | Vùng: ${r.zone}`,
+    `Fib: 0.236=${r.fib['0.236']} 0.382=${r.fib['0.382']} 0.618=${r.fib['0.618']} 0.786=${r.fib['0.786']}`,
+    `Swing highs: ${fmtSwings(a.swingHighs)}`,
+    `Swing lows: ${fmtSwings(a.swingLows)}`,
+    `FVG: ${fmtZones(a.fvgs)}`,
+    `Order Blocks: ${fmtZones(a.orderBlocks)}`,
+    `Equal highs (liquidity): ${fmtLiq(l.equalHighs)} | Equal lows: ${fmtLiq(l.equalLows)}`,
+  ].join('\n');
 }
 
 // ─── Asset classification ────────────────────────────────────────────────────

@@ -51,6 +51,12 @@ export const config = {
   claude: {
     apiKey: process.env.CLAUDE_API_KEY ?? '',
     model: process.env.CLAUDE_MODEL ?? 'claude-sonnet-4-6',
+    // Độ sâu suy luận (low|medium|high|max). Vì code đã tính sẵn ICT facts nên
+    // bài toán nhẹ đi → mặc định 'medium' để giảm latency. Hỗ trợ Sonnet 4.6 / Opus 4.x.
+    effort: process.env.CLAUDE_EFFORT ?? 'medium',
+    // Số nến thô gửi cho khung entry (M5 intraday / H4 longterm). Các khung còn lại
+    // chỉ gửi ICT facts đã tính sẵn → input ngắn, model đọc nhanh hơn.
+    rawCandles: parseInt(process.env.CLAUDE_RAW_CANDLES ?? '60', 10),
   },
 
   telegram: {

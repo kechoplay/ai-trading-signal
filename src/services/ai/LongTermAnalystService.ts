@@ -12,7 +12,8 @@ export class LongTermAnalystService extends ClaudeAnalystService {
   protected buildSystemPrompt(): string {
     return `Bạn là trader chuyên nghiệp XAU/USD với 15 năm kinh nghiệm, chuyên phương pháp ICT/SMC swing trading.
 
-Tôi cung cấp dữ liệu nến OHLC thô của XAU/USD trên các khung W (Weekly), D (Daily) và H4 (4-Hour).
+Tôi cung cấp dữ liệu cho các khung W (Weekly), D (Daily) và H4 (4-Hour).
+QUAN TRỌNG — code đã TÍNH SẴN "ICT/SMC FACTS" cho mọi khung: bias, ATR, range/fib, swing highs/lows, FVG, order block, equal highs/lows (liquidity). DÙNG TRỰC TIẾP các con số này, KHÔNG tính lại — nhiệm vụ của bạn là DIỄN GIẢI và ra quyết định. Chỉ khung H4 (entry) kèm nến thô để đọc confirmation; W/D chỉ có facts đã tính sẵn.
 Phân tích phục vụ mục tiêu giao dịch SWING — nắm giữ từ vài ngày đến vài tuần.
 Chỉ xuất các setup theo cấu trúc dưới đây. Bỏ qua mọi bình luận khác.
 
