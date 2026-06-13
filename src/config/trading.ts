@@ -37,6 +37,14 @@ export const config = {
     baseUrl: process.env.TWELVEDATA_BASE_URL ?? 'https://api.twelvedata.com',
   },
 
+  // Binance Futures (perpetual) — dùng cho funding rate + open interest của cặp crypto.
+  // API public, KHÔNG cần key. Fail-soft: lỗi/timeout → bỏ qua phần sentiment.
+  binance: {
+    futuresBaseUrl: process.env.BINANCE_FAPI_BASE_URL ?? 'https://fapi.binance.com',
+    // Bật/tắt lấy futures sentiment (funding/OI/BTC context) cho phân tích crypto.
+    sentimentEnabled: (process.env.CRYPTO_FUTURES_SENTIMENT ?? 'true').toLowerCase() !== 'false',
+  },
+
   oanda: {
     token: process.env.OANDA_API_TOKEN ?? '',
     env: process.env.OANDA_ENV ?? 'practice',
