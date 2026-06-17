@@ -13,6 +13,7 @@ model Symbol {
   name        String
   enabled     Boolean   @default(true)
   favorite    Boolean   @default(false)
+  sort_order  Int       @default(999)
   created_at  DateTime  @default(now())
 
   analyses    AnalysisLog[]

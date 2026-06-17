@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express, { Request, Response, NextFunction } from 'express';
+import axios from 'axios';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -82,6 +83,8 @@ function requireApiKey(req: Request, res: Response, next: NextFunction): void {
 }
 
 app.get('/docs', (_req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'docs.html')));
+
+app.get('/chart', (_req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'chart.html')));
 
 app.post('/api/analyze', requireApiKey, async (req, res) => {
   const symbol: string | undefined = req.body?.symbol?.trim() || undefined;
@@ -194,7 +197,7 @@ app.post('/api/analyze/longterm', requireApiKey, async (req, res) => {
 
 app.get('/api/symbols', requireApiKey, async (_req, res) => {
   try {
-    const symbols = await prisma.symbol.findMany({ orderBy: [{ favorite: 'desc' }, { name: 'asc' }] as any });
+    const symbols = await prisma.symbol.findMany({ orderBy: [{ sort_order: 'asc' }, { favorite: 'desc' }, { name: 'asc' }] as any });
     res.json(symbols);
   } catch (err: any) {
     logger.error('GET /api/symbols failed', { error: err.message });
@@ -212,7 +215,18 @@ app.post('/api/symbols', requireApiKey, async (req, res) => {
   }
 
   try {
-    const created = await prisma.symbol.create({ data: { symbol, name } });
+    // Tự gán sort_order = (max thực tế + 1) để symbol mới nằm cuối danh sách,
+    // bỏ qua giá trị mặc định 999 của các bản ghi chưa được sắp.
+    let sortOrder: number = Number(req.body?.sort_order);
+    if (!Number.isFinite(sortOrder)) {
+      const top = await prisma.symbol.aggregate({
+        _max:   { sort_order: true },
+        where:  { sort_order: { lt: 999 } },
+      });
+      sortOrder = (top._max.sort_order ?? 0) + 1;
+    }
+
+    const created = await prisma.symbol.create({ data: { symbol, name, sort_order: sortOrder } });
     res.status(201).json(created);
   } catch (err: any) {
     if (err.code === 'P2002') {
@@ -252,6 +266,44 @@ app.patch('/api/symbols/:symbol/favorite', requireApiKey, async (req, res) => {
     }
     logger.error('PATCH /api/symbols/favorite failed', { error: err.message });
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── TradingView symbol search (proxy) ────────────────────────────────────────
+// Gõ tên/mã coin → gợi ý từ TradingView. Trả về dạng đã map sang format hệ thống.
+app.get('/api/tv/search', requireApiKey, async (req, res) => {
+  const q = String(req.query.q ?? '').trim();
+  if (!q) { res.json([]); return; }
+  try {
+    const { data } = await axios.get('https://symbol-search.tradingview.com/symbol_search/', {
+      params: { text: q, type: 'crypto', exchange: 'BINANCE', hl: 0, lang: 'en' },
+      headers: { Origin: 'https://www.tradingview.com', 'User-Agent': 'Mozilla/5.0' },
+      timeout: 8000,
+    });
+
+    const strip = (s: string) => String(s ?? '').replace(/<\/?em>/g, '');
+    const seen = new Set<string>();
+    const out: Array<{ symbol: string; name: string; tvSymbol: string }> = [];
+
+    for (const r of Array.isArray(data) ? data : []) {
+      const raw  = strip(r.symbol);                 // vd "SOLUSDT"
+      const cur  = strip(r.currency_code);          // vd "USDT"
+      if (r.type !== 'spot') continue;
+      if (cur !== 'USDT' && cur !== 'USD') continue; // chỉ cặp /USDT hoặc /USD
+      const base = raw.replace(/(USDT|USD)$/i, '').toUpperCase();
+      if (!base || seen.has(base)) continue;
+      seen.add(base);
+      out.push({
+        symbol:   `${base}/USD`,                    // format nội bộ
+        name:     strip(r.description).split(' / ')[0] || base,
+        tvSymbol: `${strip(r.prefix) || 'BINANCE'}:${raw}`,
+      });
+      if (out.length >= 20) break;
+    }
+    res.json(out);
+  } catch (err: any) {
+    logger.error('GET /api/tv/search failed', { error: err.message });
+    res.status(502).json({ error: 'TradingView search failed' });
   }
 });
 

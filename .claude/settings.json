@@ -15,7 +15,9 @@
       "Bash(del \"d:\\\\Work\\\\ai-trading-signal\\\\src\\\\scheduler.ts\")",
       "Bash(netstat -ano)",
       "Bash(findstr :3000)",
-      "Bash(node -e \"const a=require\\('axios'\\);\\(async\\(\\)=>{try{const p=await a.get\\('https://fapi.binance.com/fapi/v1/premiumIndex',{params:{symbol:'BTCUSDT'},timeout:15000}\\);const o=await a.get\\('https://fapi.binance.com/futures/data/openInterestHist',{params:{symbol:'BTCUSDT',period:'1h',limit:25},timeout:15000}\\);console.log\\('funding=',p.data.lastFundingRate,'mark=',p.data.markPrice,'next=',p.data.nextFundingTime\\);console.log\\('oi points=',o.data.length,'first=',o.data[0]&&o.data[0].sumOpenInterest,'last=',o.data[o.data.length-1].sumOpenInterest\\);}catch\\(e\\){console.log\\('ERR',e.response&&e.response.status,e.message\\);}}\\)\\(\\)\")"
+      "Bash(node -e \"const a=require\\('axios'\\);\\(async\\(\\)=>{try{const p=await a.get\\('https://fapi.binance.com/fapi/v1/premiumIndex',{params:{symbol:'BTCUSDT'},timeout:15000}\\);const o=await a.get\\('https://fapi.binance.com/futures/data/openInterestHist',{params:{symbol:'BTCUSDT',period:'1h',limit:25},timeout:15000}\\);console.log\\('funding=',p.data.lastFundingRate,'mark=',p.data.markPrice,'next=',p.data.nextFundingTime\\);console.log\\('oi points=',o.data.length,'first=',o.data[0]&&o.data[0].sumOpenInterest,'last=',o.data[o.data.length-1].sumOpenInterest\\);}catch\\(e\\){console.log\\('ERR',e.response&&e.response.status,e.message\\);}}\\)\\(\\)\")",
+      "Bash(node -e 'const{PrismaClient}=require\\('\\\\''@prisma/client'\\\\''\\);const p=new PrismaClient\\(\\);p.symbol.findMany\\({orderBy:[{favorite:'\\\\''desc'\\\\''},{name:'\\\\''asc'\\\\''}]}\\).then\\(r=>{console.log\\(JSON.stringify\\(r,null,2\\)\\);return p.$disconnect\\(\\)}\\).catch\\(e=>{console.error\\('\\\\''ERR'\\\\'',e.message\\);process.exit\\(1\\)}\\)')",
+      "PowerShell(Get-Process node -ErrorAction SilentlyContinue | Select-Object Id, StartTime, @{n='CmdLine';e={\\(Get-CimInstance Win32_Process -Filter \"ProcessId=$\\($_.Id\\)\"\\).CommandLine}} | Format-Table -Wrap)"
     ]
   }
 }
