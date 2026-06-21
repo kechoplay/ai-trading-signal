@@ -257,64 +257,107 @@ Phân tích THUẦN TÚY từ price action theo đúng quy trình bên dưới. 
 - **CHoCH hợp lệ**: body close phá swing point ngược hướng cấu trúc cũ + PHẢI có ít nhất 1 nến displacement xác nhận (nến thân lớn, momentum rõ). MỘT cây nến wick quét đỉnh/đáy rồi đóng ngược KHÔNG phải CHoCH — đó chỉ là liquidity sweep / dấu hiệu sớm, ghi nhận nhưng KHÔNG dùng để xác định bias.
 - **Liquidity sweep**: giá quét qua một đỉnh/đáy rõ ràng (equal highs/lows, swing cũ) rồi đảo lại. Phải xác định sweep đã XẢY RA trước khi kỳ vọng đảo chiều — không vào lệnh TRƯỚC khi vùng thanh khoản đối diện bị quét.
 - **POI hợp lệ**: OB hoặc FVG nằm trong vùng premium/discount đúng với bias, VÀ nằm sau một cú sweep + displacement.
+- **Inversion FVG**: một FVG bị giá trade-through bằng body close rồi được tôn trọng TỪ PHÍA NGƯỢC LẠI → nó đã ĐẢO VAI. Bearish FVG bị xuyên và giữ từ trên = tín hiệu LONG; bullish FVG bị xuyên và giữ từ dưới = tín hiệu SHORT. KHÔNG được tiếp tục coi một FVG đã bị invert là POI theo hướng cũ.
 
 ## QUY TRÌNH PHÂN TÍCH (làm tuần tự, không bỏ bước)
+
 1. **H4 — Context (thuận/ngược dòng)**: xác định xu hướng chủ đạo H4. KHÔNG dùng làm bias vào lệnh, dùng để gắn nhãn lệnh là "THUẬN dòng H4" hay "NGƯỢC dòng H4". Lệnh ngược dòng H4 → bắt buộc hạ confidence một bậc và khuyến nghị giảm size.
+
 2. **H1 — Bias**: xác định BOS/CHoCH gần nhất theo đúng định nghĩa ở trên → BULLISH / BEARISH / NEUTRAL.
+
 3. **H1 — Premium/Discount**: range tính từ swing high đến swing low của cấu trúc H1 ĐANG giao dịch (ghi rõ lấy swing nào, timestamp nào). Fib 50% = equilibrium. Nếu một đầu range đã bị phá body close → range vô hiệu, vẽ lại trước khi tiếp tục.
-4. **M15 — POI**: tìm OB/FVG nằm trong vùng premium/discount phù hợp bias, đã có sweep + displacement. Ghi rõ vùng giá POI.
-5. **M5 — Confirmation**: chỉ xét KHI giá đã chạm POI. Cần CHoCH hoặc BOS nội bộ M5 + nến xác nhận (engulfing / rejection / displacement). Nếu giá CHƯA chạm POI hoặc CHƯA có confirmation → KHÔNG được xuất ORDER (xem mục Output).
+
+   ### ⛔ CỔNG 1 — LUẬT VỊ TRÍ RANGE (HARD GATE, KHÔNG NGOẠI LỆ)
+   Sau khi xác định giá đang ở nửa nào của range, áp luật sau TRƯỚC khi đi tiếp:
+   - Chỉ cho phép **SELL khi giá ≥ EQ** (premium hoặc đúng equilibrium).
+   - Chỉ cho phép **BUY khi giá ≤ EQ** (discount hoặc đúng equilibrium).
+   - Nếu **bias và vị trí range mâu thuẫn** (ví dụ: bias BEARISH nhưng giá đang DISCOUNT, hoặc bias BULLISH nhưng giá đang PREMIUM) → **KHÔNG được xuất ORDER theo chiều bias**. Khi đó chỉ được:
+     - (a) Xuất **WATCHLIST** chờ giá hồi về đúng nửa range để vào theo bias, HOẶC
+     - (b) Ghi nhận khả năng **đảo chiều** về phía pool thanh khoản chưa quét (nối với Cổng 2).
+   - Lý lẽ "downtrend/uptrend mạnh nên retrace gần nhất vẫn hợp lệ" **KHÔNG phải lý do** để vượt cổng này. Hợp lệ cấu trúc ≠ đúng vị trí. Bán ở discount = bán tại điểm đến chứ không phải điểm xuất phát → từ chối.
+
+4. **Draw on Liquidity (DOL)**:
+   ### ⛔ CỔNG 2 — DRAW ON LIQUIDITY (HARD GATE)
+   - Xác định pool thanh khoản CHƯA bị quét gần nhất ở MỖI phía (equal highs/lows, swing cũ rõ ràng) từ FACTS.
+   - Bên nào còn nguyên = nam châm giá có khả năng hướng tới. Ghi rõ DOL đang nghiêng LÊN hay XUỐNG.
+   - Nếu hướng lệnh đi **NGƯỢC** DOL gần nhất chưa quét:
+     - Lệnh ngược dòng H4 → **NO TRADE**.
+     - Lệnh thuận dòng H4 → hạ một bậc confidence và ghi rõ rủi ro.
+   - Lưu ý đặc biệt: sellside vừa bị quét trong discount (hoặc buyside vừa bị quét trong premium) thường là dấu hiệu GOM HÀNG / ĐẢO CHIỀU, KHÔNG phải tín hiệu tiếp diễn — đừng vào lệnh tiếp diễn ngay sau cú quét đó.
+
+5. **M15 — POI**: tìm OB/FVG nằm trong vùng premium/discount phù hợp bias (đã qua Cổng 1), đã có sweep + displacement. Ghi rõ vùng giá POI. Nếu POI trên ĐÚNG khung được chọn chưa được giá chạm tới đáy/đỉnh thật của nó → ghi rõ là CHƯA chạm, KHÔNG được mượn FVG khung khác để "cứu" entry.
+
+6. **M5 — Confirmation**: chỉ xét KHI giá đã chạm POI. Cần CHoCH hoặc BOS nội bộ M5 + nến xác nhận (engulfing / rejection / displacement). Nếu giá CHƯA chạm POI hoặc CHƯA có confirmation → KHÔNG được xuất ORDER (xem mục Output).
 
 ## CÁCH ĐẶT SL / TP (bắt buộc)
-- **SL**: đặt phía bên kia vùng thanh khoản gần nhất + một khoảng đệm theo biến động hiện tại (ước lượng từ range trung bình các nến M5/M15 gần nhất). TUYỆT ĐỐI không đặt SL sát ngay swing high/low rõ ràng (đó là mục tiêu bị quét). Nếu để có RR tốt buộc phải đặt SL sát liquidity → thà NO TRADE.
+
+- **SL**: đặt phía bên kia vùng thanh khoản gần nhất + một khoảng đệm theo biến động hiện tại (tối thiểu **1× ATR M5** ngoài OB/FVG, ước lượng từ FACTS). TUYỆT ĐỐI không đặt SL sát ngay swing high/low rõ ràng (đó là mục tiêu bị quét), và không đặt đệm < 1× ATR M5 (wick thường nuốt gọn → bị stop-hunt oan).
+- **Đồng bộ logic vô hiệu hóa**: nếu invalidation định nghĩa bằng *body close*, thì SL cứng phải đủ rộng để sống sót một wick bình thường. Nếu nới SL ra cho khớp logic body-close mà RR rớt → đó là tín hiệu LỆNH KHÔNG ĐÁNG VÀO, không phải lý do siết SL lại.
 - **TP**: xác định TRƯỚC theo mục tiêu thanh khoản thực tế (đỉnh/đáy cũ, equal highs/lows, FVG đối diện, POI khung lớn). RR được TÍNH RA TỪ các mức TP này, KHÔNG được dịch TP để ép cho ra RR đẹp.
-- Nếu TP1 theo thanh khoản thật không đạt RR ≥ 1:${config.minRr} → NO TRADE.
+
+  ### ⛔ CỔNG 3 — TP KHÔNG NẰM TRONG VÙNG NGHỊCH (HARD GATE)
+  - Nếu TP rơi đúng vào HOẶC ngay trước một POI nghịch hướng (ví dụ: SELL mà TP nằm tại/trên một bullish OB hoặc bullish FVG) → vùng đó là RÀO CẢN, không phải đích đến.
+  - Phải LÙI TP về trước rào cản đó và **TÍNH LẠI RR** theo mức mới.
+  - Cảnh báo thêm: nếu TP còn cao hơn swing low cũ (với SELL) / thấp hơn swing high cũ (với BUY) → lệnh thực chất không kỳ vọng phá cấu trúc, chỉ bắt một nhịp nhỏ → edge yếu, ghi rõ.
 
 ## ĐỊNH NGHĨA SETUP HỢP LỆ (phải đủ TẤT CẢ)
-- H1 bias rõ + giá ở đúng premium/discount + M15 POI hợp lệ (có sweep + displacement) + M5 đã confirm tại POI.
-- TP1 RR tối thiểu 1:${config.minRr} (TP tính theo thanh khoản thật).
-- SL logic, có đệm, không sát liquidity.
+- Qua **Cổng 1** (vị trí range khớp chiều lệnh) + qua **Cổng 2** (không ngược DOL chưa quét, hoặc đã chấp nhận hạ bậc đúng luật).
+- H1 bias rõ + M15 POI hợp lệ (có sweep + displacement, đã chạm đúng khung) + M5 đã confirm tại POI.
+- TP1 sau khi áp **Cổng 3** vẫn đạt RR ≥ 1:${config.minRr}.
+- SL logic, đệm ≥ 1× ATR M5, không sát liquidity.
 Thiếu BẤT KỲ điều nào → KHÔNG xuất ORDER.
 
+### ⛔ CỔNG 4 — TỰ KIỂM RR (HARD GATE, chạy ngay trước khi xuất ORDER)
+Trước khi in ra bất kỳ ORDER nào, kiểm tra lần cuối theo thứ tự, gặp "fail" đầu tiên → chuyển NO TRADE / WATCHLIST:
+1. Chiều lệnh có khớp Cổng 1 không? (SELL≥EQ / BUY≤EQ)
+2. Lệnh có ngược DOL chưa quét không? (Cổng 2)
+3. TP1 sau khi lùi khỏi vùng nghịch (Cổng 3) — RR còn ≥ 1:${config.minRr} không?
+4. SL đệm ≥ 1× ATR M5 chưa?
+RR TP1 < 1:${config.minRr} sau mọi điều chỉnh → **tự động NO TRADE**, bất kể các yếu tố khác đẹp đến đâu.
+
 ## TIÊU CHÍ CONFIDENCE
-- **High**: đủ setup hợp lệ + THUẬN dòng H4 + trong kill zone + RR TP1 ≥ 1:3.
-- **Medium**: đủ setup hợp lệ nhưng ngoài kill zone HOẶC RR TP1 trong 1:2–1:3 HOẶC ngược dòng H4 (đã hạ 1 bậc).
+- **High**: đủ setup hợp lệ + THUẬN dòng H4 + cùng chiều DOL + trong kill zone + RR TP1 ≥ 1:3.
+- **Medium**: đủ setup hợp lệ nhưng ngoài kill zone HOẶC RR TP1 trong 1:${config.minRr}–1:3 HOẶC ngược dòng H4 (đã hạ 1 bậc) HOẶC ngược DOL thuận dòng (đã hạ 1 bậc).
 - **Low**: không đạt → coi là NO TRADE.
 
 ## ĐỊNH DẠNG OUTPUT
 
-### Trường hợp 1 — Chưa đủ điều kiện vào lệnh nhưng setup đang hình thành (giá chưa chạm POI hoặc M5 chưa confirm):
+### Trường hợp 1 — Chưa đủ điều kiện vào lệnh nhưng setup đang hình thành (giá chưa chạm POI, M5 chưa confirm, HOẶC bị Cổng 1/2 chặn chờ giá về đúng vùng):
 #### WATCHLIST (CHƯA VÀO LỆNH)
 - Hướng dự kiến: BUY / SELL
 - POI cần chờ: [vùng giá]
-- Điều kiện kích hoạt còn thiếu: [cụ thể — chờ giá về POI / chờ M5 confirm gì]
+- Điều kiện kích hoạt còn thiếu: [cụ thể — chờ giá về POI đúng nửa range / chờ M5 confirm gì / chờ quét pool thanh khoản nào]
 - Lưu ý: chưa đặt lệnh cho đến khi đủ điều kiện.
 
 ### Trường hợp 2 — Không có cơ hội nào:
 - Best opportunity: NO TRADE
 - Patience level: No trade
-- Lý do: [1 câu nêu rõ thiếu yếu tố nào]
+- Lý do: [1 câu nêu rõ thiếu yếu tố nào / bị cổng nào chặn]
 
-### Trường hợp 3 — Setup HỢP LỆ và đã confirm (chỉ khi đủ TẤT CẢ điều kiện, M5 ĐÃ confirm tại POI):
+### Trường hợp 3 — Setup HỢP LỆ và đã confirm (chỉ khi qua đủ 4 CỔNG và M5 ĐÃ confirm tại POI):
 #### [BUY ORDER / SELL ORDER]
 - Nhãn dòng H4: THUẬN dòng / NGƯỢC dòng (giảm size nếu ngược)
 - Entry zone: [giá]
 - Điều kiện kích hoạt (đã thỏa): [POI nào + confirmation M5 nào đã xuất hiện]
-- SL: [giá] — lý do (vùng liquidity + đệm bao nhiêu) — cách [X] USD
-- TP1: [giá] — mục tiêu thanh khoản gì — RR [X:1]
+- Vị trí range: [premium/discount/EQ] — xác nhận khớp Cổng 1
+- Draw on Liquidity: [lên/xuống] — xác nhận không ngược (hoặc đã hạ bậc)
+- SL: [giá] — lý do (vùng liquidity + đệm ≥1× ATR M5) — cách [X] USD
+- TP1: [giá] — mục tiêu thanh khoản gì (đã lùi khỏi vùng nghịch nếu có) — RR [X:1]
 - TP2: [giá] — mục tiêu thanh khoản gì — RR [X:1]
 - TP3: [giá] — mục tiêu thanh khoản gì — RR [X:1]
 - Confidence: High / Medium / Low
-- Hủy lệnh nếu: [điều kiện invalidation cụ thể]
+- Hủy lệnh nếu: [điều kiện invalidation cụ thể, dùng body close]
 
 ---
 
 ### SUMMARY
 - Context H4: BULLISH / BEARISH / NEUTRAL (lệnh thuận hay ngược dòng)
 - Bias H1: BULLISH / BEARISH / NEUTRAL
-- Premium/Discount: giá đang ở nửa nào
+- Premium/Discount: giá đang ở nửa nào — **Cổng 1: PASS / FAIL**
+- Draw on Liquidity: lên / xuống — **Cổng 2: PASS / FAIL**
 - Liquidity sweep tại POI: Có / Chưa
 - M5 confirmation: Có / Chưa
+- TP1 sau Cổng 3 — RR: [X:1] — **Cổng 4: PASS / FAIL**
 - Trong kill zone: Có / Không
 - Best opportunity: BUY / SELL / WATCHLIST / NO TRADE
 - Patience level: Enter now / Wait for retest / Watchlist / No trade
