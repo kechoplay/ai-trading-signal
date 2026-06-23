@@ -24,6 +24,7 @@
       background: var(--bg);
       color: var(--text);
       height: 100vh;
+      height: 100dvh;
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -43,7 +44,10 @@
     .page-title { font-size: 18px; font-weight: 700; letter-spacing: -.3px; }
     .page-title span { color: var(--muted); font-weight: 400; font-size: 13px; margin-left: 8px; }
 
-    .header-actions { display: flex; gap: 8px; align-items: center; }
+    .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+    /* Nút mở danh sách symbol — chỉ hiện trên mobile */
+    .menu-btn { display: none; }
     .nav-btn {
       background: var(--card);
       border: 1px solid var(--border);
@@ -106,10 +110,6 @@
       padding: 16px;
       min-height: 0;
     }
-    @media (max-width: 820px) {
-      .layout { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
-    }
-
     .chart-card, .symbols-card {
       background: var(--card);
       border: 1px solid var(--border);
@@ -123,9 +123,64 @@
 
     .chart-card { padding: 0; }
     #tv_chart { flex: 1; min-height: 0; }
-    @media (max-width: 820px) { #tv_chart { min-height: 420px; } }
 
     .symbols-card { min-height: 0; }
+
+    /* Lớp phủ tối khi mở drawer trên mobile */
+    .drawer-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.45);
+      z-index: 40;
+      opacity: 0;
+      transition: opacity .25s;
+    }
+    .drawer-overlay.show { opacity: 1; }
+    .drawer-close { display: none; }
+
+    /* ── Mobile: chart chiếm toàn màn, symbol list thành drawer trượt ── */
+    @media (max-width: 820px) {
+      .page-header { padding: 10px 14px; gap: 8px; }
+      .page-title { font-size: 16px; }
+      .page-title span { display: block; margin-left: 0; margin-top: 2px; }
+      .nav-btn { padding: 7px 11px; font-size: 12px; }
+
+      .menu-btn { display: inline-flex; align-items: center; gap: 5px; }
+
+      .layout {
+        grid-template-columns: 1fr;
+        gap: 0;
+        padding: 10px;
+      }
+
+      .symbols-card {
+        position: fixed;
+        top: 0; right: 0;
+        height: 100vh; height: 100dvh;
+        width: min(86vw, 360px);
+        z-index: 50;
+        border-radius: 0;
+        transform: translateX(100%);
+        transition: transform .28s ease;
+        box-shadow: -8px 0 24px rgba(0,0,0,.18);
+      }
+      .symbols-card.open { transform: translateX(0); }
+      .drawer-overlay.show { display: block; }
+
+      .drawer-close {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 28px; height: 28px;
+        border: none;
+        background: transparent;
+        font-size: 20px;
+        line-height: 1;
+        color: var(--muted);
+        cursor: pointer;
+      }
+    }
     .symbols-header {
       display: flex;
       align-items: center;
@@ -188,6 +243,23 @@
     }
     .symbol-tag.crypto { background: #fef3c7; color: #b45309; }
     .symbol-tag.fx { background: #dbeafe; color: #1d4ed8; }
+
+    .symbol-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .symbol-del {
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1;
+      width: 26px; height: 26px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background .12s, color .12s;
+    }
+    .symbol-del:hover { background: #fee2e2; color: var(--sell-accent); }
 
     .empty { text-align: center; padding: 40px 20px; color: var(--muted); font-size: 13px; }
 
@@ -253,6 +325,7 @@
     <span id="currentSymbol"></span>
   </div>
   <div class="header-actions">
+    <button class="nav-btn menu-btn" onclick="openDrawer()">☰ Symbol</button>
     <button id="analyzeBtn" class="nav-btn analyze-btn" onclick="runAnalyze()">⚡ Phân tích</button>
     <a href="/" class="nav-btn">🏠 Tín hiệu</a>
     <a href="/longterm" class="nav-btn">📊 Dài hạn</a>
@@ -262,15 +335,20 @@
 
 <div id="toast" class="toast"></div>
 
+<div id="drawerOverlay" class="drawer-overlay" onclick="closeDrawer()"></div>
+
 <div class="layout">
   <div class="chart-card">
     <div id="tv_chart"></div>
   </div>
 
-  <div class="symbols-card">
+  <div class="symbols-card" id="symbolsCard">
     <div class="symbols-header">
       <span>Danh sách Symbol <span id="symbolCount" style="font-weight:400"></span></span>
-      <button class="add-btn" id="addToggle" onclick="toggleAddPanel()">+ Thêm coin</button>
+      <div style="display:flex;align-items:center;gap:8px">
+        <button class="add-btn" id="addToggle" onclick="toggleAddPanel()">+ Thêm coin</button>
+        <button class="drawer-close" onclick="closeDrawer()" aria-label="Đóng">×</button>
+      </div>
     </div>
 
     <div class="add-panel" id="addPanel">
@@ -318,14 +396,26 @@ function tvSymbol(symbol) {
   return `OANDA:${base}${quote}`;
 }
 
+// ── Drawer danh sách symbol (mobile) ──
+function openDrawer() {
+  document.getElementById('symbolsCard').classList.add('open');
+  document.getElementById('drawerOverlay').classList.add('show');
+}
+function closeDrawer() {
+  document.getElementById('symbolsCard').classList.remove('open');
+  document.getElementById('drawerOverlay').classList.remove('show');
+}
+
 function loadChart(symbol) {
   activeSymbol = symbol;
+  localStorage.setItem('chartSymbol', symbol); // nhớ symbol đang xem
+  closeDrawer(); // chọn xong thì đóng drawer để xem chart toàn màn
   document.getElementById('currentSymbol').textContent = symbol;
   document.getElementById('tv_chart').innerHTML = '';
   tvWidget = new TradingView.widget({
     autosize: true,
     symbol: tvSymbol(symbol),
-    interval: '60',
+    interval: '5', // mở mặc định ở 5m
     timezone: 'Asia/Ho_Chi_Minh',
     theme: 'light',
     style: '1',
@@ -369,9 +459,37 @@ function renderList() {
         <div class="symbol-code">${star}${esc(s.symbol)}</div>
         <div class="symbol-name">${esc(s.name)}</div>
       </div>
-      <span class="symbol-tag ${tagCls}">${tagLabel}</span>
+      <div class="symbol-actions">
+        <span class="symbol-tag ${tagCls}">${tagLabel}</span>
+        <button class="symbol-del" title="Xóa khỏi danh sách"
+          onclick="event.stopPropagation(); deleteSymbol('${esc(s.symbol)}')">×</button>
+      </div>
     </li>`;
   }).join('');
+}
+
+// Xóa symbol khỏi danh sách theo dõi
+async function deleteSymbol(symbol) {
+  if (!confirm(`Xóa ${symbol} khỏi danh sách?`)) return;
+  try {
+    const res = await apiFetch('/api/symbols/' + encodeURIComponent(symbol), { method: 'DELETE' });
+    if (!res.ok && res.status !== 404) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'Xóa thất bại');
+    }
+    const wasActive = symbol === activeSymbol;
+    symbols = symbols.filter(s => s.symbol !== symbol);
+    renderList();
+    // Nếu vừa xóa symbol đang xem → chuyển sang symbol đầu danh sách (nếu còn)
+    if (wasActive) {
+      localStorage.removeItem('chartSymbol');
+      activeSymbol = null;
+      if (symbols.length) loadChart(symbols[0].symbol);
+    }
+    showToast(`✓ Đã xóa ${symbol}`, 'success');
+  } catch (e) {
+    showToast('✗ ' + (e.message || 'Xóa thất bại'), 'error');
+  }
 }
 
 function getApiKey() { return localStorage.getItem('apiKey') || ''; }
@@ -515,7 +633,10 @@ async function loadSymbols() {
     }
 
     renderList();
-    loadChart(activeSymbol || symbols[0].symbol);
+    // Khôi phục symbol đã xem lần trước (nếu vẫn còn trong danh sách)
+    const savedSym = localStorage.getItem('chartSymbol');
+    const restore = savedSym && symbols.some(s => s.symbol === savedSym) ? savedSym : symbols[0].symbol;
+    loadChart(activeSymbol || restore);
   } catch (e) {
     document.getElementById('symbolsList').innerHTML =
       '<li class="empty">Không thể tải danh sách symbol.</li>';
