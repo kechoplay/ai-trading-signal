@@ -84,6 +84,15 @@
     .btc-btn:hover { background: linear-gradient(90deg, #e0820f, #d97706); }
     .btc-btn:disabled { opacity: .6; cursor: not-allowed; }
 
+    .batday-btn {
+      background: linear-gradient(90deg, #dc2626, #b91c1c);
+      color: #fff;
+      border-color: transparent;
+      font-weight: 600;
+    }
+    .batday-btn:hover { background: linear-gradient(90deg, #b91c1c, #991b1b); }
+    .batday-btn:disabled { opacity: .6; cursor: not-allowed; }
+
     .longterm-btn {
       background: linear-gradient(90deg, #0d9488, #0891b2);
       color: #fff;
@@ -429,6 +438,7 @@
     <button class="refresh-btn" onclick="loadLatest()">↻ Refresh</button>
     <button id="analyzeBtn" class="refresh-btn analyze-btn" onclick="runAnalyze('analyzeBtn')">⚡ Phân tích XAU</button>
     <button id="analyzeBtcBtn" class="refresh-btn btc-btn" onclick="runAnalyze('analyzeBtcBtn', 'BTC/USD')">₿ Phân tích BTC</button>
+    <button id="analyzeBatdayBtn" class="refresh-btn batday-btn" onclick="runAnalyze('analyzeBatdayBtn', null, '/api/analyze/batday')">🩸 Bắt đáy XAU</button>
     <a href="/longterm" class="refresh-btn longterm-btn" style="text-decoration:none">📊 Dài hạn</a>
   </div>
 </div>
@@ -735,7 +745,7 @@ function promptApiKey() {
   return getApiKey();
 }
 
-async function runAnalyze(btnId = 'analyzeBtn', symbol) {
+async function runAnalyze(btnId = 'analyzeBtn', symbol, endpoint = '/api/analyze') {
   const btn = document.getElementById(btnId);
   if (btn.disabled) return;
   const original = btn.innerHTML;
@@ -751,7 +761,7 @@ async function runAnalyze(btnId = 'analyzeBtn', symbol) {
     const apiKey = getApiKey();
     if (apiKey) headers['x-api-key'] = apiKey;
 
-    let res = await fetch('/api/analyze', {
+    let res = await fetch(endpoint, {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),
@@ -761,7 +771,7 @@ async function runAnalyze(btnId = 'analyzeBtn', symbol) {
     if (res.status === 401) {
       const key = promptApiKey();
       if (!key) throw new Error('Cần API key để chạy phân tích');
-      res = await fetch('/api/analyze', {
+      res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': key },
         body: JSON.stringify(payload),

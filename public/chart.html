@@ -261,7 +261,87 @@
     }
     .symbol-del:hover { background: #fee2e2; color: var(--sell-accent); }
 
+    .symbol-signals {
+      border: none;
+      background: transparent;
+      font-size: 14px;
+      line-height: 1;
+      width: 26px; height: 26px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background .12s;
+    }
+    .symbol-signals:hover { background: #eef2ff; }
+
     .empty { text-align: center; padding: 40px 20px; color: var(--muted); font-size: 13px; }
+
+    /* ── Modal danh sách tín hiệu từ Claude ── */
+    .sig-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.5);
+      z-index: 60;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .sig-overlay.show { display: flex; }
+    .sig-modal {
+      background: var(--card);
+      border-radius: var(--radius);
+      box-shadow: 0 12px 40px rgba(0,0,0,.25);
+      width: min(720px, 100%);
+      max-height: 88vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .sig-modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .sig-modal-title { font-size: 15px; font-weight: 700; }
+    .sig-modal-title span { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 6px; }
+    .sig-modal-close {
+      border: none; background: transparent;
+      font-size: 24px; line-height: 1; color: var(--muted);
+      cursor: pointer; width: 32px; height: 32px; border-radius: 6px;
+    }
+    .sig-modal-close:hover { background: #f3f4f6; }
+    .sig-modal-body { overflow-y: auto; padding: 14px 18px; }
+    .sig-item {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      margin-bottom: 12px;
+      overflow: hidden;
+    }
+    .sig-item-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 10px 14px;
+      background: #f9fafb;
+      cursor: pointer;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .sig-item-time { font-weight: 600; color: var(--text); }
+    .sig-item-body { padding: 12px 14px; font-size: 13px; line-height: 1.55; display: none; }
+    .sig-item.open .sig-item-body { display: block; }
+    .sig-item-body table { border-collapse: collapse; width: 100%; margin: 6px 0; }
+    .sig-item-body th, .sig-item-body td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
+    .sig-setup { margin-bottom: 10px; }
+    .sig-toggle { font-size: 16px; color: var(--muted); transition: transform .15s; }
+    .sig-item.open .sig-toggle { transform: rotate(90deg); }
 
     /* ── Add coin ── */
     .add-btn {
@@ -336,6 +416,18 @@
 <div id="toast" class="toast"></div>
 
 <div id="drawerOverlay" class="drawer-overlay" onclick="closeDrawer()"></div>
+
+<div id="sigOverlay" class="sig-overlay" onclick="if(event.target===this) closeSignals()">
+  <div class="sig-modal">
+    <div class="sig-modal-header">
+      <div class="sig-modal-title">📋 Tín hiệu từ Claude <span id="sigSymbol"></span></div>
+      <button class="sig-modal-close" onclick="closeSignals()" aria-label="Đóng">×</button>
+    </div>
+    <div class="sig-modal-body" id="sigBody">
+      <div class="empty">Đang tải…</div>
+    </div>
+  </div>
+</div>
 
 <div class="layout">
   <div class="chart-card">
@@ -461,6 +553,8 @@ function renderList() {
       </div>
       <div class="symbol-actions">
         <span class="symbol-tag ${tagCls}">${tagLabel}</span>
+        <button class="symbol-signals" title="Xem tín hiệu từ Claude"
+          onclick="event.stopPropagation(); showSignals('${esc(s.symbol)}')">📋</button>
         <button class="symbol-del" title="Xóa khỏi danh sách"
           onclick="event.stopPropagation(); deleteSymbol('${esc(s.symbol)}')">×</button>
       </div>
@@ -489,6 +583,55 @@ async function deleteSymbol(symbol) {
     showToast(`✓ Đã xóa ${symbol}`, 'success');
   } catch (e) {
     showToast('✗ ' + (e.message || 'Xóa thất bại'), 'error');
+  }
+}
+
+// ── Modal danh sách tín hiệu từ Claude (theo symbol, trong ngày) ──
+function closeSignals() {
+  document.getElementById('sigOverlay').classList.remove('show');
+}
+
+function toggleSigItem(el) {
+  el.classList.toggle('open');
+}
+
+async function showSignals(symbol) {
+  const overlay = document.getElementById('sigOverlay');
+  const body = document.getElementById('sigBody');
+  document.getElementById('sigSymbol').textContent = symbol;
+  body.innerHTML = '<div class="empty">Đang tải…</div>';
+  overlay.classList.add('show');
+
+  try {
+    const res = await apiFetch('/api/symbols/' + encodeURIComponent(symbol) + '/signals?limit=50');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Tải tín hiệu thất bại');
+
+    const logs = Array.isArray(data) ? data : [];
+    if (!logs.length) {
+      body.innerHTML = '<div class="empty">Chưa có tín hiệu nào cho ' + esc(symbol) + ' hôm nay.</div>';
+      return;
+    }
+
+    body.innerHTML = logs.map((log, i) => {
+      const time = new Date(log.analyzed_at).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+      const secs = log.duration_ms != null ? ` · ${(log.duration_ms / 1000).toFixed(1)}s` : '';
+      // Mở sẵn bản ghi mới nhất
+      const open = i === 0 ? ' open' : '';
+      return `
+      <div class="sig-item${open}">
+        <div class="sig-item-head" onclick="toggleSigItem(this.parentElement)">
+          <span class="sig-item-time">🕐 ${esc(time)}${secs}</span>
+          <span class="sig-toggle">›</span>
+        </div>
+        <div class="sig-item-body">
+          <div class="sig-setup">${log.setup || ''}</div>
+          <div class="sig-reasoning">${log.reasoning || ''}</div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    body.innerHTML = '<div class="empty">✗ ' + esc(e.message || 'Tải tín hiệu thất bại') + '</div>';
   }
 }
 

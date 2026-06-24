@@ -12,6 +12,7 @@ import { config } from './config/trading';
 import { SignalOrchestrator } from './services/SignalOrchestrator';
 import { makeMarketDataProvider } from './services/market/MarketDataProviderFactory';
 import { LongTermAnalystService } from './services/ai/LongTermAnalystService';
+import { BottomReversalAnalystService } from './services/ai/BottomReversalAnalystService';
 import { TelegramNotifier } from './services/telegram/TelegramNotifier';
 import { createMcpServer } from './mcp-server';
 import { McpOAuthProvider, createAuthCode } from './services/auth/McpOAuthProvider';
@@ -132,6 +133,61 @@ app.post('/api/analyze', requireApiKey, async (req, res) => {
   } catch (err: any) {
     logger.error('POST /api/analyze failed', { error: err.message, duration_ms: Date.now() - startedAt });
     res.status(500).json({ error: err.message ?? 'Analysis failed' });
+  }
+});
+
+app.post('/api/analyze/batday', requireApiKey, async (req, res) => {
+  const symbol: string | undefined = req.body?.symbol?.trim() || undefined;
+  const timeframes: string[] | undefined = Array.isArray(req.body?.timeframes)
+    ? req.body.timeframes.map((t: string) => t.trim()).filter(Boolean)
+    : typeof req.body?.timeframes === 'string'
+      ? req.body.timeframes.split(',').map((t: string) => t.trim()).filter(Boolean)
+      : undefined;
+
+  const startedAt = Date.now();
+  try {
+    logger.info('POST /api/analyze/batday triggered', { symbol: symbol ?? config.instrument, timeframes: timeframes ?? 'default' });
+
+    const orchestrator = new SignalOrchestrator(
+      makeMarketDataProvider(),
+      BottomReversalAnalystService.fromConfig(),
+      TelegramNotifier.fromConfig(),
+    );
+    const { result, rawText, instrument: sym, currentPrice } = await orchestrator.run(symbol, timeframes);
+    const durationMs = Date.now() - startedAt;
+
+    const notifier = TelegramNotifier.fromConfig();
+    const setup     = notifier.formatSignalCard(result, sym, currentPrice);
+    const reasoning = notifier.formatAnalysis(rawText);
+
+    await prisma.$transaction([
+      prisma.tradingSignal.create({
+        data: {
+          instrument:      sym,
+          action:          result.action,
+          timeframe:       (timeframes ?? config.timeframes)[0] ?? null,
+          analysis_type:   'batday',
+          entry:           result.entry,
+          stop_loss:       result.stopLoss,
+          take_profit:     result.takeProfit,
+          risk_reward:     result.riskReward,
+          confidence:      result.confidence,
+          current_price:   currentPrice,
+          reasoning:       result.reasoning,
+          trend_bias:      result.trendBias,
+          raw_ai_response: JSON.stringify({ ...(result.raw ?? {}), conditional_setups: result.conditionalSetups }),
+          analyze_at:      new Date(startedAt),
+        },
+      }),
+      prisma.analysisLog.create({
+        data: { symbol: sym, duration_ms: durationMs, setup, reasoning, analysis_type: 'batday' },
+      }),
+    ]);
+
+    res.json({ ok: true, symbol: sym, duration_ms: durationMs, setup, reasoning });
+  } catch (err: any) {
+    logger.error('POST /api/analyze/batday failed', { error: err.message, duration_ms: Date.now() - startedAt });
+    res.status(500).json({ error: err.message ?? 'Bottom-reversal analysis failed' });
   }
 });
 
