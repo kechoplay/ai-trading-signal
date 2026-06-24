@@ -335,11 +335,15 @@
       color: var(--muted);
     }
     .sig-item-time { font-weight: 600; color: var(--text); }
-    .sig-item-body { padding: 12px 14px; font-size: 13px; line-height: 1.55; display: none; }
+    .sig-item-body { padding: 12px 14px; font-size: 13px; line-height: 1.6; display: none; }
     .sig-item.open .sig-item-body { display: block; }
     .sig-item-body table { border-collapse: collapse; width: 100%; margin: 6px 0; }
     .sig-item-body th, .sig-item-body td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
-    .sig-setup { margin-bottom: 10px; }
+    .sig-item-body b, .sig-item-body strong { color: var(--text); }
+    .sig-item-body i, .sig-item-body em { color: var(--muted); }
+    /* HTML từ server dùng ký tự xuống dòng "\n" (chuẩn Telegram) → giữ nguyên để hiển thị đúng format */
+    .sig-setup, .sig-reasoning { white-space: pre-wrap; word-break: break-word; }
+    .sig-setup { margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px dashed var(--border); }
     .sig-toggle { font-size: 16px; color: var(--muted); transition: transform .15s; }
     .sig-item.open .sig-toggle { transform: rotate(90deg); }
 
