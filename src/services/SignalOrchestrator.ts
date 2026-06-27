@@ -27,22 +27,27 @@ export class SignalOrchestrator {
   }
 
   async run(instrument?: string, timeframes?: string[]): Promise<{ result: AnalysisResult; rawText: string; instrument: string; currentPrice: number }> {
-    const { instrument: defaultInstrument, timeframes: defaultTimeframes, candlesByTf: candlesByTfConfig, candlesCount } = config;
+    const { instrument: defaultInstrument, timeframes: defaultTimeframes, cryptoTimeframes, candlesByTf: candlesByTfConfig, candlesByTfCrypto, candlesCount } = config;
     instrument = instrument ?? defaultInstrument;
-    const resolvedTimeframes = (timeframes && timeframes.length > 0) ? timeframes : defaultTimeframes;
+    const isCrypto = isCryptoInstrument(instrument);
+    // Crypto (không truyền timeframes riêng) → bộ khung từ M15 (D/H4/H1/M15); còn lại → mặc định.
+    const fallbackTimeframes = isCrypto ? cryptoTimeframes : defaultTimeframes;
+    const resolvedTimeframes = (timeframes && timeframes.length > 0) ? timeframes : fallbackTimeframes;
+    // Số nến tính facts: crypto dùng map riêng (D/H4/H1/M15), vàng dùng map mặc định.
+    const candleCounts = isCrypto ? candlesByTfCrypto : (candlesByTfConfig as Record<string, number>);
 
     logger.info('Signal analysis started', { instrument, timeframes: resolvedTimeframes });
 
     const candlesByTf: Record<string, Candle[]> = {};
     for (const tf of resolvedTimeframes) {
-      const count = (candlesByTfConfig as Record<string, number>)[tf] ?? candlesCount;
+      const count = candleCounts[tf] ?? candlesCount;
       candlesByTf[tf] = await this.market.fetchCandles(instrument, tf, count);
     }
 
     const currentPrice = await this.market.fetchCurrentPrice(instrument);
 
     // Crypto: lấy thêm futures sentiment (funding/OI) + BTC context cho altcoin.
-    const extras = await this.fetchCryptoExtras(instrument, candlesByTfConfig, candlesCount);
+    const extras = await this.fetchCryptoExtras(instrument, candleCounts, candlesCount);
 
     const { result, rawText } = await this.claude.analyze(instrument, candlesByTf, currentPrice, extras);
 

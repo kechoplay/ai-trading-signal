@@ -17,7 +17,10 @@
       "Bash(node -e \"console.log\\('undici version', require\\('undici/package.json'\\).version\\)\")",
       "Bash(node -e \"console.log\\('undici', require\\('undici/package.json'\\).version\\)\")",
       "Skill(claude-api)",
-      "Skill(claude-api:*)"
+      "Skill(claude-api:*)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)"
     ]
   }
 }

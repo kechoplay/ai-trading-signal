@@ -13,6 +13,14 @@ export const config = {
     .map((s) => s.trim())
     .filter(Boolean),
 
+  // Crypto noise nhiều hơn vàng → entry tối thiểu M15 (bỏ M5). Cấu trúc ICT 4 khung:
+  // D (context) → H4 (bias) → H1 (POI) → M15 (entry). Dùng khi instrument là crypto
+  // và request không truyền timeframes riêng.
+  cryptoTimeframes: (process.env.TRADING_CRYPTO_TIMEFRAMES ?? 'D,H4,H1,M15')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
+
   candlesCount: parseInt(process.env.TRADING_CANDLES_COUNT ?? '214', 10),
 
   candlesByTf: {
@@ -23,6 +31,15 @@ export const config = {
     D:   parseInt(process.env.TRADING_CANDLES_D   ?? '200', 10),
     H4:  parseInt(process.env.TRADING_CANDLES_H4  ?? '200', 10),
   },
+
+  // Số nến tính FACTS riêng cho crypto (bộ khung D/H4/H1/M15). Tách khỏi candlesByTf
+  // vì các khung H4/H1/M15 dùng chung tên với vàng nhưng cần số nến khác.
+  candlesByTfCrypto: {
+    D:   parseInt(process.env.TRADING_CRYPTO_CANDLES_D   ?? '90', 10),
+    H4:  parseInt(process.env.TRADING_CRYPTO_CANDLES_H4  ?? '120', 10),
+    H1:  parseInt(process.env.TRADING_CRYPTO_CANDLES_H1  ?? '180', 10),
+    M15: parseInt(process.env.TRADING_CRYPTO_CANDLES_M15 ?? '200', 10),
+  } as Record<string, number>,
 
   minRr: parseFloat(process.env.TRADING_MIN_RR ?? '2.0'),
 
@@ -65,6 +82,8 @@ export const config = {
     // Số nến thô gửi cho khung entry (M5 intraday / H4 longterm). Các khung còn lại
     // chỉ gửi ICT facts đã tính sẵn → input ngắn, model đọc nhanh hơn.
     rawCandles: parseInt(process.env.CLAUDE_RAW_CANDLES ?? '60', 10),
+    // Số nến thô cho khung entry crypto (M15) — crypto noise hơn nên gửi ít hơn.
+    rawCandlesCrypto: parseInt(process.env.CLAUDE_RAW_CANDLES_CRYPTO ?? '40', 10),
   },
 
   telegram: {

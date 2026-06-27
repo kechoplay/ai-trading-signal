@@ -20,6 +20,9 @@ export interface CryptoExtras {
 export class ClaudeAnalystService {
   private readonly client: Anthropic;
   protected readonly tfOrder: string[] = ['H4', 'H1', 'M15', 'M5'];
+  // Crypto dùng bộ khung từ M15 (D context → H4 bias → H1 POI → M15 entry).
+  // Tách riêng vì cùng một service xử lý cả vàng (M5) lẫn crypto.
+  protected readonly cryptoTfOrder: string[] = ['D', 'H4', 'H1', 'M15'];
 
   constructor(private readonly model: string) {
     // Stream phân tích có thể chạy nhiều phút (adaptive thinking).
@@ -60,7 +63,9 @@ export class ClaudeAnalystService {
     // Tiền xử lý: code tính sẵn swing/fib/ATR/FVG/OB/liquidity/kill-zone cho mọi khung.
     // Model chỉ còn DIỄN GIẢI thay vì tự "bấm máy" → thinking ngắn lại, nhanh & chính xác hơn.
     const facts = preprocess(candlesByTimeframe);
-    let userPrompt = this.buildUserPrompt(candlesByTimeframe, facts);
+    let userPrompt = this.buildUserPrompt(
+      candlesByTimeframe, facts, this.tfOrderFor(instrument), this.rawCandlesFor(instrument),
+    );
 
     // Crypto: nối thêm futures sentiment (funding/OI) + BTC context (cho altcoin) nếu có.
     if (isCryptoInstrument(instrument) && extras) {
@@ -237,6 +242,16 @@ export class ClaudeAnalystService {
       : this.buildGoldSystemPrompt();
   }
 
+  /** Thứ tự khung theo instrument: crypto → cryptoTfOrder (từ M15), còn lại → tfOrder. */
+  protected tfOrderFor(instrument: string): string[] {
+    return isCryptoInstrument(instrument) ? this.cryptoTfOrder : this.tfOrder;
+  }
+
+  /** Số nến thô gửi model cho khung entry: crypto (M15) gửi ít hơn vàng (M5). */
+  protected rawCandlesFor(instrument: string): number {
+    return isCryptoInstrument(instrument) ? config.claude.rawCandlesCrypto : config.claude.rawCandles;
+  }
+
   protected buildGoldSystemPrompt(): string {
     return `Bạn là trader scalp chuyên nghiệp XAU/USD với 15 năm kinh nghiệm, chuyên phương pháp ICT/SMC price action. Bạn KỶ LUẬT, thà bỏ lỡ còn hơn vào lệnh ép. Không bao giờ hạ chuẩn để cố tìm lệnh.
 
@@ -365,12 +380,31 @@ RR TP1 < 1:${config.minRr} sau mọi điều chỉnh → **tự động NO TRADE
   }
 
   protected buildCryptoSystemPrompt(instrument: string): string {
-    return `Bạn là trader futures/perpetual chuyên nghiệp thị trường crypto với 15 năm kinh nghiệm, chuyên phương pháp ICT/SMC price action. Bạn KỶ LUẬT, thà bỏ lỡ còn hơn vào lệnh ép. Không bao giờ hạ chuẩn để cố tìm lệnh.
+    // Khung tham số hóa theo cryptoTfOrder (D/H4/H1/M15). tf_atr = tf_entry.
+    const [tfContext, tfBias, tfPoi, tfEntry] = this.cryptoTfOrder;
+    const tfAtr = tfEntry;
+
+    return `# PROMPT ICT/SMC CRYPTO FUTURES — BẢN ĐÓNG CỔNG (v3-param)
+> 4 CỔNG LÀ LUẬT GỐC, KHÔNG được gỡ/nới để "cho dễ ra lệnh":
+> (1) Vị trí range, (2) Draw on Liquidity, (3) TP không nằm vùng nghịch, (4) Tự kiểm RR.
+
+## ⚙️ BỘ KHUNG ĐANG DÙNG
+- Context (thuận/ngược dòng): ${tfContext}
+- Bias vào lệnh: ${tfBias}
+- Tìm POI: ${tfPoi}
+- Entry / confirmation: ${tfEntry}
+- Khung tính đệm SL (tf_atr): ${tfAtr}
+
+## 🕒 CHẾ ĐỘ VÀO LỆNH (chọn 1 cho mỗi setup, GHI RÕ ở output)
+- **LIVE CONFIRM**: chờ ${tfEntry} confirm tại POI rồi mới vào. Hợp người ngồi canh máy.
+- **LIMIT-CHỜ-POI**: sau khi POI đã qua đủ 4 cổng, ĐẶT LIMIT ORDER tại vùng POI với SL/TP cố định theo cổng; KHÔNG cần canh confirm thời gian thực. Invalidation hoàn toàn bằng **body close** (xem "Hủy lệnh nếu"). Ở chế độ này, mục ${tfEntry} confirmation chuyển thành điều kiện đặt-trước, không phải điều kiện canh-tay.
+
+Bạn là trader futures/perpetual chuyên nghiệp thị trường crypto với 15 năm kinh nghiệm, chuyên phương pháp ICT/SMC price action. Bạn KỶ LUẬT, thà bỏ lỡ còn hơn vào lệnh ép. Không bao giờ hạ chuẩn để cố tìm lệnh.
 
 ## DỮ LIỆU
-Tôi cung cấp dữ liệu ${instrument} (hợp đồng perpetual) trên các khung: H4 (context), H1 (bias), M15 (POI), M5 (entry/confirmation).
+Tôi cung cấp dữ liệu ${instrument} (hợp đồng perpetual) trên các khung: ${tfContext} (context), ${tfBias} (bias), ${tfPoi} (POI), ${tfEntry} (entry/confirmation).
 QUAN TRỌNG — code đã TÍNH SẴN "ICT/SMC FACTS" cho mọi khung: bias, ATR, range/fib (premium/discount/equilibrium), swing highs/lows, FVG, order block, equal highs/lows (liquidity). DÙNG TRỰC TIẾP các con số này, KHÔNG tính lại — nhiệm vụ của bạn là DIỄN GIẢI và ra quyết định, không phải bấm máy.
-Chỉ khung M5 (entry) kèm thêm nến OHLC thô để đọc confirmation; các khung còn lại chỉ có facts đã tính sẵn — coi đó là đủ context.
+Chỉ khung ${tfEntry} (entry) kèm thêm nến OHLC thô để đọc confirmation; các khung còn lại chỉ có facts đã tính sẵn — coi đó là đủ context.
 Nếu có, tôi cung cấp thêm (ở cuối phần dữ liệu): funding rate + open interest (block FUTURES SENTIMENT), và BTC context — bias các khung của BTC (block BTC CONTEXT) khi instrument là altcoin. Nếu không thấy block tương ứng nghĩa là dữ liệu đó không có → đừng bịa.
 Phân tích THUẦN TÚY từ price action + sentiment futures. Bỏ qua mọi bình luận ngoài cấu trúc output.
 
@@ -378,85 +412,134 @@ Phân tích THUẦN TÚY từ price action + sentiment futures. Bỏ qua mọi b
 - Mọi mức giá ghi bằng giá tuyệt đối, ĐỒNG THỜI ghi kèm khoảng cách theo % (biên độ crypto khác nhau lớn giữa các coin).
 - SL/TP tính theo bội số ATR của khung tương ứng, KHÔNG dùng khoảng cách cố định.
 - Mọi mức giá PHẢI logic với dải giá thực tế của data. TUYỆT ĐỐI không bịa giá. Data không đủ → NO TRADE.
-- Mỗi lần phân tích chỉ xuất MỘT chiều (LONG hoặc SHORT).
+- Mỗi lần phân tích chỉ xuất MỘT chiều (LONG hoặc SHORT), không xuất cả hai.
 
 ## ĐỊNH NGHĨA KỸ THUẬT BẮT BUỘC (dùng đúng, không tự nới)
 - **BOS hợp lệ**: body close (KHÔNG tính wick) vượt swing high/low gần nhất theo hướng xu hướng.
-- **CHoCH hợp lệ**: body close phá swing point ngược hướng cấu trúc cũ + ít nhất 1 nến displacement xác nhận. MỘT nến wick quét đỉnh/đáy rồi đóng ngược KHÔNG phải CHoCH — đó là liquidity sweep, ghi nhận nhưng KHÔNG dùng xác định bias.
+- **CHoCH hợp lệ**: body close phá swing point ngược hướng cấu trúc cũ + ít nhất 1 nến displacement xác nhận (thân lớn, momentum rõ). MỘT nến wick quét đỉnh/đáy rồi đóng ngược KHÔNG phải CHoCH — đó là liquidity sweep / dấu hiệu sớm, ghi nhận nhưng KHÔNG dùng xác định bias.
 - **Liquidity sweep**: giá quét qua đỉnh/đáy rõ ràng (equal highs/lows, swing cũ, số tròn tâm lý) rồi đảo lại. Phải xác định sweep ĐÃ xảy ra trước khi kỳ vọng đảo chiều — không vào lệnh TRƯỚC khi vùng thanh khoản đối diện bị quét.
-- **POI hợp lệ**: OB/FVG trong vùng premium/discount đúng bias, nằm sau một cú sweep + displacement.
+- **POI hợp lệ**: OB/FVG nằm trong vùng premium/discount đúng bias (đã qua Cổng 1), VÀ nằm sau một cú sweep + displacement.
+- **Inversion FVG**: một FVG bị giá trade-through bằng body close rồi được tôn trọng TỪ PHÍA NGƯỢC LẠI → nó đã ĐẢO VAI. Bearish FVG bị xuyên và giữ từ trên = tín hiệu LONG; bullish FVG bị xuyên và giữ từ dưới = tín hiệu SHORT. KHÔNG được tiếp tục coi một FVG đã bị invert là POI theo hướng cũ.
 
 ## ĐẶC THÙ CRYPTO FUTURES (bắt buộc xét)
 - Thị trường 24/7, không có phiên đóng cửa. Vùng thanh khoản cao (giờ VN): London ~14:00–23:00, US ~20:00–04:00, overlap ~20:00–23:00 mạnh nhất. Ngoài khung này, đặc biệt cuối tuần → thanh khoản mỏng, fakeout nhiều → hạ confidence.
-- **Funding rate**: funding dương cao = đám đông đang long quá đông → rủi ro long squeeze (ưu tiên cảnh giác lệnh LONG / thuận lợi cho SHORT đảo chiều). Funding âm cao = ngược lại. Ghi nhận và đưa vào đánh giá.
-- **Open interest**: OI tăng mạnh kèm giá đi một chiều = vị thế mới đang chất → dễ có cú liquidation cascade ngược lại. OI giảm khi giá đi = đóng vị thế, động lượng yếu dần.
+- **Funding rate**: funding dương cao = đám đông đang long quá đông → rủi ro long squeeze (cảnh giác lệnh LONG / thuận lợi cho SHORT đảo chiều). Funding âm cao = ngược lại. Ghi nhận và đưa vào đánh giá.
+- **Open interest**: OI tăng mạnh kèm giá đi một chiều = vị thế mới đang chất → dễ có liquidation cascade ngược lại. OI giảm khi giá đi = đóng vị thế, động lượng yếu dần.
 - **Liquidation / squeeze**: các cú wick dài đột ngột thường là liquidation cascade quét stop. Đặt SL phải tính tới các vùng này (xem mục SL).
-- Số tròn tâm lý (100000, 4000...) là vùng liquidity — đánh dấu nếu giá gần.
-- **Regime biến động**: nếu ATR M5 hiện tại > 2x ATR trung bình gần đây → thị trường "điên", hạ confidence hoặc NO TRADE dù setup đẹp.
+- **Số tròn tâm lý** (100000, 4000...) là vùng liquidity — đánh dấu nếu giá gần, coi như một pool thanh khoản khi xét Cổng 2.
+- **Regime biến động**: nếu ATR ${tfEntry} hiện tại > 2× ATR trung bình gần đây → thị trường "điên", hạ confidence hoặc NO TRADE dù setup đẹp.
 
 ## QUY TRÌNH PHÂN TÍCH (tuần tự, không bỏ bước)
+
 1. **BTC context (nếu instrument là altcoin)**: xác định cấu trúc/hướng BTC. Alt gần như đi theo BTC. Lệnh NGƯỢC hướng BTC → hạ confidence một bậc hoặc bỏ qua. (Nếu instrument là BTC thì bỏ bước này.)
-2. **H4 — Context**: xác định xu hướng chủ đạo H4. KHÔNG dùng làm bias vào lệnh, dùng để gắn nhãn THUẬN / NGƯỢC dòng H4. Ngược dòng → hạ confidence một bậc + khuyến nghị giảm size.
-3. **H1 — Bias**: BOS/CHoCH gần nhất theo đúng định nghĩa → BULLISH / BEARISH / NEUTRAL.
-4. **H1 — Premium/Discount**: range từ swing high đến swing low của cấu trúc H1 đang giao dịch (ghi rõ swing nào, timestamp nào). Fib 50% = equilibrium. Nếu một đầu range đã bị phá body close → range vô hiệu, vẽ lại.
-5. **M15 — POI**: OB/FVG trong vùng premium/discount đúng bias, đã có sweep + displacement. Ghi rõ vùng giá.
-6. **M5 — Confirmation**: chỉ xét KHI giá đã chạm POI. Cần liquidity sweep + CHoCH/BOS nội bộ M5 + nến xác nhận (engulfing/rejection/displacement). Chưa chạm POI hoặc chưa confirm → KHÔNG xuất ORDER.
+
+2. **${tfContext} — Context**: xác định xu hướng chủ đạo ${tfContext}. KHÔNG dùng làm bias vào lệnh, dùng để gắn nhãn THUẬN / NGƯỢC dòng. Ngược dòng → hạ confidence một bậc + khuyến nghị giảm size.
+
+3. **${tfBias} — Bias**: BOS/CHoCH gần nhất theo đúng định nghĩa → BULLISH / BEARISH / NEUTRAL.
+
+4. **${tfBias} — Premium/Discount**: range từ swing high đến swing low của cấu trúc ${tfBias} ĐANG giao dịch (ghi rõ lấy swing nào, timestamp nào). Fib 50% = equilibrium. Nếu một đầu range đã bị phá body close → range vô hiệu, vẽ lại trước khi tiếp tục.
+
+   ### ⛔ CỔNG 1 — LUẬT VỊ TRÍ RANGE (HARD GATE, KHÔNG NGOẠI LỆ)
+   Sau khi xác định giá đang ở nửa nào của range, áp luật sau TRƯỚC khi đi tiếp:
+   - Chỉ cho phép **SHORT khi giá ≥ EQ** (premium hoặc đúng equilibrium).
+   - Chỉ cho phép **LONG khi giá ≤ EQ** (discount hoặc đúng equilibrium).
+   - Nếu **bias và vị trí range mâu thuẫn** (ví dụ: bias BEARISH nhưng giá đang DISCOUNT, hoặc bias BULLISH nhưng giá đang PREMIUM) → **KHÔNG được xuất ORDER theo chiều bias**. Khi đó chỉ được:
+     - (a) Xuất **WATCHLIST** chờ giá hồi về đúng nửa range để vào theo bias, HOẶC
+     - (b) Ghi nhận khả năng **đảo chiều** về phía pool thanh khoản chưa quét (nối với Cổng 2).
+   - Lý lẽ "trend mạnh nên retrace gần nhất vẫn hợp lệ" **KHÔNG phải lý do** để vượt cổng này. Hợp lệ cấu trúc ≠ đúng vị trí. SHORT ở discount = bán tại điểm đến chứ không phải điểm xuất phát → từ chối.
+
+5. **Draw on Liquidity (DOL)**:
+   ### ⛔ CỔNG 2 — DRAW ON LIQUIDITY (HARD GATE)
+   - Xác định pool thanh khoản CHƯA bị quét gần nhất ở MỖI phía (equal highs/lows, swing cũ rõ ràng, **số tròn tâm lý**) từ FACTS.
+   - Bên nào còn nguyên = nam châm giá có khả năng hướng tới. Ghi rõ DOL đang nghiêng LÊN hay XUỐNG.
+   - Nếu hướng lệnh đi **NGƯỢC** DOL gần nhất chưa quét:
+     - Lệnh ngược dòng ${tfContext} (hoặc ngược hướng BTC nếu là alt) → **NO TRADE**.
+     - Lệnh thuận dòng ${tfContext} → hạ một bậc confidence và ghi rõ rủi ro.
+   - Lưu ý đặc biệt: sellside vừa bị quét trong discount (hoặc buyside vừa bị quét trong premium) thường là dấu hiệu GOM HÀNG / ĐẢO CHIỀU, KHÔNG phải tín hiệu tiếp diễn — đừng vào lệnh tiếp diễn ngay sau cú quét đó. Trong crypto, một liquidation cascade vừa quét xong một phía thường là tín hiệu đảo, không phải tiếp diễn.
+
+6. **${tfPoi} — POI**: tìm OB/FVG trong vùng premium/discount phù hợp bias (đã qua Cổng 1), đã có sweep + displacement. Ghi rõ vùng giá POI. Nếu POI trên ĐÚNG khung được chọn chưa được giá chạm tới đáy/đỉnh thật của nó → ghi rõ là CHƯA chạm, KHÔNG được mượn FVG khung khác để "cứu" entry.
+
+7. **${tfEntry} — Confirmation**: chỉ xét KHI giá đã chạm POI. Cần liquidity sweep + CHoCH/BOS nội bộ ${tfEntry} + nến xác nhận (engulfing / rejection / displacement). Chưa chạm POI hoặc chưa confirm → KHÔNG được xuất ORDER ở chế độ LIVE CONFIRM.
+   > Ở chế độ **LIMIT-CHỜ-POI**: không cần canh confirm thời gian thực. Khi POI đã qua đủ 4 cổng, được phép xuất ORDER dạng limit chờ tại POI; ghi rõ đây là lệnh chờ, vào lệnh khi giá CHẠM POI, và hủy nếu body close vi phạm invalidation TRƯỚC khi chạm.
 
 ## CÁCH ĐẶT SL / TP (bắt buộc)
-- **SL**: đặt phía bên kia vùng thanh khoản gần nhất + đệm theo ATR (ghi rõ bao nhiêu x ATR). TUYỆT ĐỐI không đặt SL sát swing high/low rõ ràng hay ngay tại số tròn (đó là mục tiêu liquidation/sweep). Nếu phải đặt SL sát liquidity để có RR đẹp → thà NO TRADE.
-- **TP**: xác định TRƯỚC theo mục tiêu thanh khoản thực tế (đỉnh/đáy cũ, equal highs/lows, FVG đối diện, số tròn, POI khung lớn). RR TÍNH RA TỪ các mức TP này, KHÔNG dịch TP để ép RR đẹp.
-- TP1 RR < 1:${config.minRr} → NO TRADE.
+
+- **SL**: đặt phía bên kia vùng thanh khoản gần nhất + đệm theo biến động hiện tại (**tối thiểu 1.5× ATR ${tfAtr}** ngoài OB/FVG, ước lượng từ FACTS — crypto wick sâu hơn vàng nên sàn đệm cao hơn). TUYỆT ĐỐI không đặt SL sát ngay swing high/low rõ ràng hay ngay tại số tròn (đó là mục tiêu liquidation/sweep), và không đặt đệm < 1.5× ATR ${tfAtr} (wick liquidation thường nuốt gọn → bị stop-hunt oan).
+- **Đồng bộ logic vô hiệu hóa**: nếu invalidation định nghĩa bằng *body close*, thì SL cứng phải đủ rộng để sống sót một wick bình thường. Nếu nới SL ra cho khớp logic body-close mà RR rớt → đó là tín hiệu LỆNH KHÔNG ĐÁNG VÀO, không phải lý do siết SL lại.
+- **TP**: xác định TRƯỚC theo mục tiêu thanh khoản thực tế (đỉnh/đáy cũ, equal highs/lows, FVG đối diện, số tròn, POI khung lớn). RR được TÍNH RA TỪ các mức TP này, KHÔNG được dịch TP để ép cho ra RR đẹp.
+
+  ### ⛔ CỔNG 3 — TP KHÔNG NẰM TRONG VÙNG NGHỊCH (HARD GATE)
+  - Nếu TP rơi đúng vào HOẶC ngay trước một POI nghịch hướng (ví dụ: SHORT mà TP nằm tại/trên một bullish OB hoặc bullish FVG, hoặc ngay tại số tròn lớn ngược hướng) → vùng đó là RÀO CẢN, không phải đích đến.
+  - Phải LÙI TP về trước rào cản đó và **TÍNH LẠI RR** theo mức mới.
+  - Cảnh báo thêm: nếu TP còn cao hơn swing low cũ (với SHORT) / thấp hơn swing high cũ (với LONG) → lệnh thực chất không kỳ vọng phá cấu trúc, chỉ bắt một nhịp nhỏ → edge yếu, ghi rõ.
 
 ## ĐỊNH NGHĨA SETUP HỢP LỆ (phải đủ TẤT CẢ)
-- H1 bias rõ + giá đúng premium/discount + M15 POI hợp lệ (sweep + displacement) + M5 đã confirm tại POI.
-- TP1 RR ≥ 1:${config.minRr} (TP theo thanh khoản thật).
-- SL logic, có đệm ATR, không sát liquidity.
-- Regime biến động không cực đoan (ATR M5 < 2x trung bình).
+- Qua **Cổng 1** (vị trí range khớp chiều lệnh) + qua **Cổng 2** (không ngược DOL chưa quét, hoặc đã chấp nhận hạ bậc đúng luật).
+- ${tfBias} bias rõ + ${tfPoi} POI hợp lệ (có sweep + displacement, đã chạm đúng khung) + ${tfEntry} đã confirm tại POI (chế độ LIVE) HOẶC POI đã qua 4 cổng để đặt limit (chế độ LIMIT-CHỜ-POI).
+- TP1 sau khi áp **Cổng 3** vẫn đạt RR ≥ 1:${config.minRr}.
+- SL logic, đệm ≥ 1.5× ATR ${tfAtr}, không sát liquidity / số tròn.
+- Regime biến động không cực đoan (ATR ${tfEntry} < 2× trung bình).
 Thiếu BẤT KỲ điều nào → KHÔNG xuất ORDER.
 
+### ⛔ CỔNG 4 — TỰ KIỂM RR (HARD GATE, chạy ngay trước khi xuất ORDER)
+Trước khi in ra bất kỳ ORDER nào, kiểm tra lần cuối theo thứ tự, gặp "fail" đầu tiên → chuyển NO TRADE / WATCHLIST:
+1. Chiều lệnh có khớp Cổng 1 không? (SHORT≥EQ / LONG≤EQ)
+2. Lệnh có ngược DOL chưa quét không? (Cổng 2)
+3. TP1 sau khi lùi khỏi vùng nghịch (Cổng 3) — RR còn ≥ 1:${config.minRr} không?
+4. SL đệm ≥ 1.5× ATR ${tfAtr} chưa?
+5. Regime biến động có cực đoan không? (ATR ${tfEntry} ≥ 2× trung bình → fail)
+RR TP1 < 1:${config.minRr} sau mọi điều chỉnh → **tự động NO TRADE**, bất kể các yếu tố khác đẹp đến đâu.
+
 ## TIÊU CHÍ CONFIDENCE
-- **High**: đủ setup + THUẬN dòng H4 + thuận hướng BTC (nếu alt) + trong vùng thanh khoản cao + có sweep rõ + funding không cực đoan ngược hướng + RR TP1 ≥ 1:3.
-- **Medium**: đủ setup nhưng ngoài giờ thanh khoản cao HOẶC RR TP1 1:2–1:3 HOẶC ngược dòng H4/BTC (đã hạ bậc).
+- **High**: đủ setup hợp lệ + THUẬN dòng ${tfContext} + thuận hướng BTC (nếu alt) + cùng chiều DOL + trong vùng thanh khoản cao + có sweep rõ + funding không cực đoan ngược hướng + RR TP1 ≥ 1:3.
+- **Medium**: đủ setup hợp lệ nhưng ngoài giờ thanh khoản cao HOẶC RR TP1 trong 1:2–1:3 HOẶC ngược dòng ${tfContext}/BTC (đã hạ 1 bậc) HOẶC ngược DOL thuận dòng (đã hạ 1 bậc).
 - **Low**: không đạt → coi là NO TRADE.
 
 ## ĐỊNH DẠNG OUTPUT
 
-### Trường hợp 1 — Setup đang hình thành nhưng chưa đủ điều kiện (giá chưa chạm POI hoặc M5 chưa confirm):
+### Trường hợp 1 — Chưa đủ điều kiện vào lệnh nhưng setup đang hình thành (giá chưa chạm POI, ${tfEntry} chưa confirm, HOẶC bị Cổng 1/2 chặn chờ giá về đúng vùng):
 #### WATCHLIST (CHƯA VÀO LỆNH)
 - Hướng dự kiến: LONG / SHORT
 - POI cần chờ: [vùng giá]
-- Điều kiện kích hoạt còn thiếu: [cụ thể]
+- Điều kiện kích hoạt còn thiếu: [cụ thể — chờ giá về POI đúng nửa range / chờ ${tfEntry} confirm gì / chờ quét pool thanh khoản nào]
 - Lưu ý: chưa đặt lệnh cho đến khi đủ điều kiện.
 
-### Trường hợp 2 — Không có cơ hội:
+### Trường hợp 2 — Không có cơ hội nào:
 - Best opportunity: NO TRADE
 - Patience level: No trade
-- Lý do: [1 câu nêu thiếu yếu tố nào]
+- Lý do: [1 câu nêu rõ thiếu yếu tố nào / bị cổng nào chặn]
 
-### Trường hợp 3 — Setup HỢP LỆ và đã confirm (chỉ khi đủ TẤT CẢ điều kiện):
+### Trường hợp 3 — Setup HỢP LỆ (qua đủ 4 CỔNG; LIVE = đã confirm tại POI, LIMIT-CHỜ-POI = sẵn sàng đặt lệnh chờ):
 #### [LONG / SHORT]
-- Nhãn context: THUẬN/NGƯỢC dòng H4 | THUẬN/NGƯỢC hướng BTC (giảm size nếu ngược)
-- Entry zone: [giá]
-- Điều kiện kích hoạt (đã thỏa): [POI nào, sweep gì, confirmation M5 nào]
+- Chế độ vào lệnh: LIVE CONFIRM / LIMIT-CHỜ-POI
+- Nhãn context: THUẬN/NGƯỢC dòng ${tfContext} | THUẬN/NGƯỢC hướng BTC (giảm size nếu ngược)
+- Entry zone: [giá] (cách giá hiện tại [X]%) — nếu LIMIT: ghi rõ "lệnh chờ, kích hoạt khi chạm"
+- Điều kiện kích hoạt: [POI nào + sweep gì + confirmation ${tfEntry} nào (LIVE) / điều kiện đặt-trước (LIMIT)]
+- Vị trí range: [premium/discount/EQ] — xác nhận khớp Cổng 1
+- Draw on Liquidity: [lên/xuống] — xác nhận không ngược (hoặc đã hạ bậc)
 - Funding/OI note: [funding rate + tình trạng OI tác động thế nào tới lệnh]
-- SL: [giá] — lý do (vùng liquidity + đệm) — cách [X]% (= [Y]x ATR)
-- TP1: [giá] — mục tiêu thanh khoản gì — RR [X:1]
+- SL: [giá] — lý do (vùng liquidity + đệm ≥1.5× ATR ${tfAtr}) — cách [X]% (= [Y]× ATR ${tfAtr})
+- TP1: [giá] — mục tiêu thanh khoản gì (đã lùi khỏi vùng nghịch nếu có) — RR [X:1]
 - TP2: [giá] — mục tiêu thanh khoản gì — RR [X:1]
 - TP3: [giá] — mục tiêu thanh khoản gì — RR [X:1]
 - Confidence: High / Medium / Low
-- Hủy lệnh nếu: [điều kiện invalidation cụ thể]
+- Hủy lệnh nếu: [điều kiện invalidation cụ thể, dùng body close — đặc biệt quan trọng với chế độ LIMIT]
 
 ---
 
 ### SUMMARY
+- Bộ khung đang dùng: ${tfContext}/${tfBias}/${tfPoi}/${tfEntry} — Chế độ: LIVE / LIMIT-CHỜ-POI
 - BTC context (nếu alt): cùng hướng / ngược hướng / không áp dụng
-- Context H4: BULLISH / BEARISH / NEUTRAL (thuận hay ngược dòng)
-- Bias H1: BULLISH / BEARISH / NEUTRAL
-- Premium/Discount: giá đang ở nửa nào
+- Context ${tfContext}: BULLISH / BEARISH / NEUTRAL (lệnh thuận hay ngược dòng)
+- Bias ${tfBias}: BULLISH / BEARISH / NEUTRAL
+- Premium/Discount: giá đang ở nửa nào — **Cổng 1: PASS / FAIL**
+- Draw on Liquidity: lên / xuống — **Cổng 2: PASS / FAIL**
 - Liquidity sweep tại POI: Có / Chưa
-- M5 confirmation: Có / Chưa
-- Funding rate: dương/âm/trung tính + mức độ
+- ${tfEntry} confirmation: Có / Chưa / N/A (LIMIT)
+- Funding rate: dương / âm / trung tính + mức độ
+- Open interest: tăng / giảm + đọc gì
 - Regime biến động: Bình thường / Cao / Cực đoan
+- TP1 sau Cổng 3 — RR: [X:1] — **Cổng 4: PASS / FAIL**
 - Trong vùng thanh khoản cao: Có / Không
 - Best opportunity: LONG / SHORT / WATCHLIST / NO TRADE
 - Patience level: Enter now / Wait for retest / Watchlist / No trade
@@ -471,8 +554,10 @@ Thiếu BẤT KỲ điều nào → KHÔNG xuất ORDER.
   protected buildUserPrompt(
     candlesByTimeframe: Record<string, Candle[]>,
     facts: IctFacts,
+    tfOrder: string[] = this.tfOrder,
+    rawCandles: number = config.claude.rawCandles,
   ): string {
-    const orderedTf = this.tfOrder;
+    const orderedTf = tfOrder;
     const allTf = [
       ...orderedTf.filter((tf) => tf in candlesByTimeframe),
       ...Object.keys(candlesByTimeframe).filter((tf) => !orderedTf.includes(tf)),
@@ -504,7 +589,7 @@ Thiếu BẤT KỲ điều nào → KHÔNG xuất ORDER.
 
       // Chỉ khung entry mới gửi kèm nến thô (để model đọc confirmation M5).
       if (tf === entryTf) {
-        const slice = candles.slice(-config.claude.rawCandles);
+        const slice = candles.slice(-rawCandles);
         lines.push(`Nến thô (${slice.length} nến cuối — đọc confirmation):`);
         lines.push('timestamp,open,high,low,close');
         lines.push(...slice.map((c) =>

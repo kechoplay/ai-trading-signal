@@ -9,7 +9,7 @@
 **AI Trading Signal** là hệ thống phân tích kỹ thuật và phát tín hiệu giao dịch cho **XAU/USD (vàng)** và các cặp **crypto (BTC/USD, ETH/USD…)** sử dụng Claude AI (Anthropic). Hệ thống lấy dữ liệu nến từ API thị trường, gửi qua Claude để phân tích đa khung thời gian, lưu kết quả vào SQLite và gửi thông báo qua Telegram. Phân tích được trigger thủ công qua REST API / dashboard (không dùng cron).
 
 - **Ngôn ngữ phân tích AI**: Tiếng Việt
-- **Khung thời gian phân tích**: H4 (context), H1 (bias), M15 (POI), M5 (entry/confirmation)
+- **Khung thời gian phân tích**: Vàng dùng H4 (context), H1 (bias), M15 (POI), M5 (entry). Crypto dùng bộ khung riêng từ M15: D (context), H4 (bias), H1 (POI), M15 (entry) — cấu hình qua `TRADING_CRYPTO_TIMEFRAMES`, áp dụng khi instrument là crypto và request không truyền timeframes.
 - **Tài sản hỗ trợ**: Vàng (prompt scalp ICT/SMC, từ vựng BUY/SELL) và crypto (prompt riêng, từ vựng LONG/SHORT → map về BUY/SELL). Provider tự động chọn `exchange=Binance` cho cặp crypto.
 - **Múi giờ hoạt động**: Asia/Ho_Chi_Minh (6:00 – 22:00)
 - **Môi trường**: Node.js + TypeScript, SQLite, chạy trên Windows
