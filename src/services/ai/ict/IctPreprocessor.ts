@@ -45,6 +45,8 @@ export interface Fvg {
   midpoint: number;
   index: number;
   time: string;
+  /** true = giá đã hồi lại chạm vào gap (POI đã được "ăn"); false = còn nguyên. */
+  mitigated: boolean;
 }
 
 export interface OrderBlock {
@@ -53,16 +55,28 @@ export interface OrderBlock {
   bottom: number;
   index: number;
   time: string;
+  /** true = giá đã hồi lại chạm vào OB; false = còn nguyên (POI tươi). */
+  mitigated: boolean;
 }
 
 export interface LiquidityLevel {
   price: number;
   times: [string, string];
+  /** true = giá đã quét qua mức này sau khi nó hình thành; false = pool còn nguyên (nam châm DOL). */
+  swept: boolean;
 }
 
 export interface Liquidity {
   equalHighs: LiquidityLevel[];
   equalLows: LiquidityLevel[];
+}
+
+/** Sự kiện cấu trúc gần nhất: body-close phá swing gần nhất theo hướng nào. */
+export interface StructureEvent {
+  kind: 'BOS' | 'CHoCH';
+  direction: 'BULLISH' | 'BEARISH';
+  level: number;
+  time: string;
 }
 
 export interface KillZone {
@@ -82,6 +96,7 @@ export interface TimeframeAnalysis {
   fvgs: Fvg[];
   orderBlocks: OrderBlock[];
   liquidity: Liquidity;
+  recentStructure: StructureEvent | null;
 }
 
 export interface IctFacts {
@@ -188,24 +203,26 @@ function findFVGs(candles: Candle[]): Fvg[] {
     const c = candles[i + 1];
     // Bullish FVG: high nến trước < low nến sau
     if (a.high < c.low) {
+      const top = r2(c.low);
+      const bottom = r2(a.high);
+      // Mitigated: một nến sau đó hồi xuống chạm vào gap (low ≤ top).
+      const mitigated = candles.slice(i + 2).some((k) => k.low <= top);
       fvgs.push({
-        type: 'BULLISH',
-        top: r2(c.low),
-        bottom: r2(a.high),
+        type: 'BULLISH', top, bottom,
         midpoint: r2((c.low + a.high) / 2),
-        index: i,
-        time: candles[i].time,
+        index: i, time: candles[i].time, mitigated,
       });
     }
     // Bearish FVG: low nến trước > high nến sau
     if (a.low > c.high) {
+      const top = r2(a.low);
+      const bottom = r2(c.high);
+      // Mitigated: một nến sau đó hồi lên chạm vào gap (high ≥ bottom).
+      const mitigated = candles.slice(i + 2).some((k) => k.high >= bottom);
       fvgs.push({
-        type: 'BEARISH',
-        top: r2(a.low),
-        bottom: r2(c.high),
+        type: 'BEARISH', top, bottom,
         midpoint: r2((a.low + c.high) / 2),
-        index: i,
-        time: candles[i].time,
+        index: i, time: candles[i].time, mitigated,
       });
     }
   }
@@ -225,13 +242,19 @@ function findOrderBlocks(candles: Candle[], atrValue: number): OrderBlock[] {
     if (body < displacementSize) continue;
 
     const bullishMove = cur.close > cur.open;
+    const top = r2(prev.high);
+    const bottom = r2(prev.low);
     // Bullish OB: nến giảm cuối cùng (prev) trước cú đẩy tăng mạnh
     if (bullishMove && prev.close < prev.open) {
-      obs.push({ type: 'BULLISH', top: r2(prev.high), bottom: r2(prev.low), index: i - 1, time: prev.time });
+      // Mitigated: giá hồi xuống chạm vào OB (low ≤ top) sau cú đẩy.
+      const mitigated = candles.slice(i + 1).some((k) => k.low <= top);
+      obs.push({ type: 'BULLISH', top, bottom, index: i - 1, time: prev.time, mitigated });
     }
     // Bearish OB: nến tăng cuối cùng (prev) trước cú đẩy giảm mạnh
     if (!bullishMove && prev.close > prev.open) {
-      obs.push({ type: 'BEARISH', top: r2(prev.high), bottom: r2(prev.low), index: i - 1, time: prev.time });
+      // Mitigated: giá hồi lên chạm vào OB (high ≥ bottom) sau cú đẩy.
+      const mitigated = candles.slice(i + 1).some((k) => k.high >= bottom);
+      obs.push({ type: 'BEARISH', top, bottom, index: i - 1, time: prev.time, mitigated });
     }
   }
   return obs;
@@ -254,7 +277,11 @@ function atr(candles: Candle[], period = 14): number {
 
 // ─── 7) LIQUIDITY: equal highs / equal lows (dung sai theo ATR) ──────────────
 
-function findLiquidity(swings: { highs: Swing[]; lows: Swing[] }, atrValue: number): Liquidity {
+function findLiquidity(
+  swings: { highs: Swing[]; lows: Swing[] },
+  atrValue: number,
+  candles: Candle[],
+): Liquidity {
   const tol = atrValue * 0.15; // dung sai để coi là "bằng nhau"
   const equalHighs: LiquidityLevel[] = [];
   const equalLows: LiquidityLevel[] = [];
@@ -262,13 +289,19 @@ function findLiquidity(swings: { highs: Swing[]; lows: Swing[] }, atrValue: numb
   const hs = swings.highs;
   for (let i = 1; i < hs.length; i++) {
     if (Math.abs(hs[i].price - hs[i - 1].price) <= tol) {
-      equalHighs.push({ price: r2((hs[i].price + hs[i - 1].price) / 2), times: [hs[i - 1].time, hs[i].time] });
+      const price = r2((hs[i].price + hs[i - 1].price) / 2);
+      // Swept: sau khi mức hình thành (swing sau), có nến nào wick vượt LÊN trên mức.
+      const swept = candles.slice(hs[i].index + 1).some((c) => c.high > price);
+      equalHighs.push({ price, times: [hs[i - 1].time, hs[i].time], swept });
     }
   }
   const ls = swings.lows;
   for (let i = 1; i < ls.length; i++) {
     if (Math.abs(ls[i].price - ls[i - 1].price) <= tol) {
-      equalLows.push({ price: r2((ls[i].price + ls[i - 1].price) / 2), times: [ls[i - 1].time, ls[i].time] });
+      const price = r2((ls[i].price + ls[i - 1].price) / 2);
+      // Swept: sau khi mức hình thành, có nến nào wick vượt XUỐNG dưới mức.
+      const swept = candles.slice(ls[i].index + 1).some((c) => c.low < price);
+      equalLows.push({ price, times: [ls[i - 1].time, ls[i].time], swept });
     }
   }
   return { equalHighs, equalLows };
@@ -291,6 +324,49 @@ function killZone(time: string): KillZone {
   };
 }
 
+// ─── 9) RECENT STRUCTURE: BOS / CHoCH gần nhất (body close phá swing) ─────────
+//   Quét nến từ cũ → mới, luôn tham chiếu swing high/low GẦN NHẤT đã hình thành.
+//   Body close vượt swing high → break tăng; vượt swing low → break giảm.
+//   Đổi hướng so với break trước = CHoCH, cùng hướng = BOS. Trả sự kiện MỚI NHẤT.
+
+function findRecentStructure(
+  candles: Candle[],
+  swings: { highs: Swing[]; lows: Swing[] },
+): StructureEvent | null {
+  const highs = swings.highs;
+  const lows = swings.lows;
+  let hi = 0;
+  let li = 0;
+  let refHigh: Swing | null = null;
+  let refLow: Swing | null = null;
+  let brokenHigh = false;
+  let brokenLow = false;
+  let trend: 'BULLISH' | 'BEARISH' | null = null;
+  let last: StructureEvent | null = null;
+
+  for (let i = 0; i < candles.length; i++) {
+    // Swing chỉ được tham chiếu khi đã hình thành trước nến hiện tại.
+    while (hi < highs.length && highs[hi].index < i) { refHigh = highs[hi]; brokenHigh = false; hi++; }
+    while (li < lows.length && lows[li].index < i) { refLow = lows[li]; brokenLow = false; li++; }
+
+    const close = candles[i].close;
+    if (refHigh && !brokenHigh && close > refHigh.price) {
+      const kind = trend === 'BEARISH' ? 'CHoCH' : 'BOS';
+      last = { kind, direction: 'BULLISH', level: refHigh.price, time: candles[i].time };
+      trend = 'BULLISH';
+      brokenHigh = true;
+    }
+    if (refLow && !brokenLow && close < refLow.price) {
+      const kind = trend === 'BULLISH' ? 'CHoCH' : 'BOS';
+      last = { kind, direction: 'BEARISH', level: refLow.price, time: candles[i].time };
+      trend = 'BEARISH';
+      brokenLow = true;
+    }
+  }
+
+  return last;
+}
+
 // ─── HÀM TỔNG: phân tích 1 khung ─────────────────────────────────────────────
 
 export function analyzeTimeframe(
@@ -309,7 +385,8 @@ export function analyzeTimeframe(
     swingLows: swings.lows.slice(-5),
     fvgs: findFVGs(candles).slice(-6),
     orderBlocks: findOrderBlocks(candles, atrValue).slice(-6),
-    liquidity: findLiquidity(swings, atrValue),
+    liquidity: findLiquidity(swings, atrValue, candles),
+    recentStructure: findRecentStructure(candles, swings),
   };
 }
 

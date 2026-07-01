@@ -84,6 +84,15 @@ export const config = {
     rawCandles: parseInt(process.env.CLAUDE_RAW_CANDLES ?? '60', 10),
     // Số nến thô cho khung entry crypto (M15) — crypto noise hơn nên gửi ít hơn.
     rawCandlesCrypto: parseInt(process.env.CLAUDE_RAW_CANDLES_CRYPTO ?? '40', 10),
+    // Số nến thô gửi kèm THEO KHUNG cho phân tích intraday vàng (v3.1). Prompt v3.1
+    // cần HÌNH DẠNG nến ở nhiều khung: nhóm A/B/C của H1 (hold dài), "nến M15 thân
+    // lớn" cho Cổng 2.5, impulsive leg + CHoCH nội bộ M5. Khung có số > 0 → gửi nến
+    // thô; H4 không liệt kê → chỉ facts (chọn vùng là đủ). Chỉ áp dụng cho vàng.
+    rawCandlesByTf: {
+      H1:  parseInt(process.env.CLAUDE_RAW_CANDLES_H1  ?? '40', 10),
+      M15: parseInt(process.env.CLAUDE_RAW_CANDLES_M15 ?? '20', 10),
+      M5:  parseInt(process.env.CLAUDE_RAW_CANDLES_M5  ?? '60', 10),
+    } as Record<string, number>,
   },
 
   telegram: {
