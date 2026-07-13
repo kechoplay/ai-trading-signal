@@ -70,6 +70,15 @@
     .analyze-btn:hover { background: linear-gradient(90deg, #4f46e5, #7c3aed); }
     .analyze-btn:disabled { opacity: .6; cursor: not-allowed; }
 
+    .scalp-btn {
+      background: linear-gradient(90deg, #0891b2, #6366f1);
+      color: #fff;
+      border: 1px solid transparent;
+      font-weight: 600;
+    }
+    .scalp-btn:hover { background: linear-gradient(90deg, #0e7490, #4f46e5); }
+    .scalp-btn:disabled { opacity: .6; cursor: not-allowed; }
+
     .spinner {
       display: inline-block;
       width: 12px; height: 12px;
@@ -411,6 +420,7 @@
   <div class="header-actions">
     <button class="nav-btn menu-btn" onclick="openDrawer()">☰ Symbol</button>
     <button id="analyzeBtn" class="nav-btn analyze-btn" onclick="runAnalyze()">⚡ Phân tích</button>
+    <button id="analyzeScalpBtn" class="nav-btn scalp-btn" onclick="runAnalyze('analyzeScalpBtn', '/api/analyze/scalp')">⚡ Scalp</button>
     <a href="/" class="nav-btn">🏠 Tín hiệu</a>
     <a href="/longterm" class="nav-btn">📊 Dài hạn</a>
     <a href="/docs" target="_blank" class="nav-btn">📖 Docs</a>
@@ -664,9 +674,9 @@ function showToast(msg, type = '') {
   toastTimer = setTimeout(() => { t.className = 'toast'; }, 4500);
 }
 
-// Phân tích symbol đang chọn trên chart
-async function runAnalyze() {
-  const btn = document.getElementById('analyzeBtn');
+// Phân tích symbol đang chọn trên chart (endpoint tùy chọn: intraday mặc định / scalp)
+async function runAnalyze(btnId = 'analyzeBtn', endpoint = '/api/analyze') {
+  const btn = document.getElementById(btnId);
   if (btn.disabled) return;
   if (!activeSymbol) { showToast('Chưa chọn symbol nào', 'error'); return; }
 
@@ -676,7 +686,7 @@ async function runAnalyze() {
   showToast(`Đang phân tích ${activeSymbol}, vui lòng đợi...`);
 
   try {
-    const res = await apiFetch('/api/analyze', {
+    const res = await apiFetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ symbol: activeSymbol }),
