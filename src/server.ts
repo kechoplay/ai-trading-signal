@@ -13,6 +13,7 @@ import { SignalOrchestrator } from './services/SignalOrchestrator';
 import { makeMarketDataProvider } from './services/market/MarketDataProviderFactory';
 import { LongTermAnalystService } from './services/ai/LongTermAnalystService';
 import { BottomReversalAnalystService } from './services/ai/BottomReversalAnalystService';
+import { ScalpAnalystService } from './services/ai/ScalpAnalystService';
 import { TelegramNotifier } from './services/telegram/TelegramNotifier';
 import { createMcpServer } from './mcp-server';
 import { McpOAuthProvider, createAuthCode } from './services/auth/McpOAuthProvider';
@@ -188,6 +189,65 @@ app.post('/api/analyze/batday', requireApiKey, async (req, res) => {
   } catch (err: any) {
     logger.error('POST /api/analyze/batday failed', { error: err.message, duration_ms: Date.now() - startedAt });
     res.status(500).json({ error: err.message ?? 'Bottom-reversal analysis failed' });
+  }
+});
+
+app.post('/api/analyze/scalp', requireApiKey, async (req, res) => {
+  const symbol: string | undefined = req.body?.symbol?.trim() || undefined;
+  const timeframes: string[] | undefined = Array.isArray(req.body?.timeframes)
+    ? req.body.timeframes.map((t: string) => t.trim()).filter(Boolean)
+    : typeof req.body?.timeframes === 'string'
+      ? req.body.timeframes.split(',').map((t: string) => t.trim()).filter(Boolean)
+      : undefined;
+
+  const resolvedTimeframes = (timeframes && timeframes.length > 0)
+    ? timeframes
+    : config.scalpTimeframes;
+
+  const startedAt = Date.now();
+  try {
+    logger.info('POST /api/analyze/scalp triggered', { symbol: symbol ?? config.instrument, timeframes: resolvedTimeframes });
+
+    const orchestrator = new SignalOrchestrator(
+      makeMarketDataProvider(),
+      ScalpAnalystService.fromConfig(),
+      TelegramNotifier.fromConfig(),
+    );
+    const { result, rawText, instrument: sym, currentPrice } = await orchestrator.run(symbol, resolvedTimeframes);
+    const durationMs = Date.now() - startedAt;
+
+    const notifier = TelegramNotifier.fromConfig();
+    const setup     = notifier.formatSignalCard(result, sym, currentPrice);
+    const reasoning = notifier.formatAnalysis(rawText);
+
+    await prisma.$transaction([
+      prisma.tradingSignal.create({
+        data: {
+          instrument:      sym,
+          action:          result.action,
+          timeframe:       resolvedTimeframes[0] ?? null,
+          analysis_type:   'scalp',
+          entry:           result.entry,
+          stop_loss:       result.stopLoss,
+          take_profit:     result.takeProfit,
+          risk_reward:     result.riskReward,
+          confidence:      result.confidence,
+          current_price:   currentPrice,
+          reasoning:       result.reasoning,
+          trend_bias:      result.trendBias,
+          raw_ai_response: JSON.stringify({ ...(result.raw ?? {}), conditional_setups: result.conditionalSetups }),
+          analyze_at:      new Date(startedAt),
+        },
+      }),
+      prisma.analysisLog.create({
+        data: { symbol: sym, duration_ms: durationMs, setup, reasoning, analysis_type: 'scalp' },
+      }),
+    ]);
+
+    res.json({ ok: true, symbol: sym, timeframes: resolvedTimeframes, duration_ms: durationMs, setup, reasoning });
+  } catch (err: any) {
+    logger.error('POST /api/analyze/scalp failed', { error: err.message, duration_ms: Date.now() - startedAt });
+    res.status(500).json({ error: err.message ?? 'Scalp analysis failed' });
   }
 });
 

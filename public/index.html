@@ -93,6 +93,15 @@
     .batday-btn:hover { background: linear-gradient(90deg, #b91c1c, #991b1b); }
     .batday-btn:disabled { opacity: .6; cursor: not-allowed; }
 
+    .scalp-btn {
+      background: linear-gradient(90deg, #0891b2, #6366f1);
+      color: #fff;
+      border-color: transparent;
+      font-weight: 600;
+    }
+    .scalp-btn:hover { background: linear-gradient(90deg, #0e7490, #4f46e5); }
+    .scalp-btn:disabled { opacity: .6; cursor: not-allowed; }
+
     .longterm-btn {
       background: linear-gradient(90deg, #0d9488, #0891b2);
       color: #fff;
@@ -439,6 +448,7 @@
     <button id="analyzeBtn" class="refresh-btn analyze-btn" onclick="runAnalyze('analyzeBtn')">⚡ Phân tích XAU</button>
     <button id="analyzeBtcBtn" class="refresh-btn btc-btn" onclick="runAnalyze('analyzeBtcBtn', 'BTC/USD')">₿ Phân tích BTC</button>
     <button id="analyzeBatdayBtn" class="refresh-btn batday-btn" onclick="runAnalyze('analyzeBatdayBtn', null, '/api/analyze/batday')">🩸 Bắt đáy XAU</button>
+    <button id="analyzeScalpBtn" class="refresh-btn scalp-btn" onclick="runAnalyze('analyzeScalpBtn', null, '/api/analyze/scalp')">⚡ Scalp XAU</button>
     <a href="/longterm" class="refresh-btn longterm-btn" style="text-decoration:none">📊 Dài hạn</a>
   </div>
 </div>
