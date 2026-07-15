@@ -52,6 +52,15 @@ const C2_BODY_RATIO = 0.5;
 /** S2: cửa sổ nến M5 nhìn lại TRƯỚC nến CHoCH để tìm sweep. */
 const S2_LOOKBACK = 20;
 
+/** Cửa sổ nến M1 (tính đến nến xác nhận) để dò giá đã chạm POI chưa. Xa hơn = POI nguội. */
+const POI_TOUCH_WINDOW = 10;
+
+/** C4: nến xác nhận phải cách nến chạm POI tối đa ngần này nến M1. */
+const C4_MAX_BARS = 3;
+
+/** Số dòng poi_candidates tối đa gửi cho LLM (gần giá hiện tại nhất). */
+const POI_TABLE_LIMIT = 10;
+
 type Verdict = 'PASS' | 'FAIL' | 'PENDING' | 'FALLBACK';
 type Pf = 'PASS' | 'FAIL';
 
@@ -62,6 +71,33 @@ interface Ohlc {
   high: number;
   low: number;
   close: number;
+}
+
+/**
+ * Một POI ứng viên (OB/FVG trên M5/M15) đã được code chấm sẵn C4.
+ *
+ * Code KHÔNG cần biết LLM sẽ chọn POI nào — nó chấm C4 cho TẤT CẢ ứng viên rồi đưa bảng,
+ * LLM chỉ việc chọn một dòng. Nhờ vậy LLM không phải quét nến M1 thô để dò điểm chạm
+ * (việc quét đó chính là thứ đốt hàng chục nghìn token thinking).
+ */
+export interface PoiCandidate {
+  dir: 'BUY' | 'SELL';
+  tf: string;
+  kind: 'OB' | 'FVG';
+  bottom: number;
+  top: number;
+  /** false = đã bị giá "ăn" trước đó (mitigated). */
+  fresh: boolean;
+  /** Thời điểm nến M1 ĐẦU TIÊN đi vào vùng, trong cửa sổ POI_TOUCH_WINDOW. null = chưa chạm. */
+  touchTime: string | null;
+  /** Số nến M1 từ lúc chạm tới nến xác nhận (0 = chạm ngay tại nến xác nhận). */
+  barsToConfirm: number | null;
+  /** true = body close đã xuyên qua vùng → POI chết. */
+  broken: boolean;
+  c4: 'PASS' | 'FAIL';
+  /** Khoảng cách từ giá hiện tại tới mép vùng gần nhất (USD) — dùng để xếp hạng. */
+  distance: number;
+  note: string;
 }
 
 /** Gate phụ thuộc hướng lệnh — code chấm sẵn cả hai cột, LLM đọc cột khớp hướng. */
@@ -87,10 +123,16 @@ export interface GateFlags {
     atrCur: number | null;
     threshold: number | null;
   };
-  /** C1–C3 chấm trên nến M1 ÁP CHÓT (nến đã đóng mới nhất). C4 do LLM chấm (cần POI). */
+  /** C1–C4 chấm trên nến M1 ÁP CHÓT (nến đã đóng mới nhất) — LLM không chấm gate nào nữa. */
   c1: DirGate;
   c2: { verdict: Pf; detail: string };
   c3: DirGate;
+  /** PASS nếu CÓ ít nhất một POI ứng viên đúng hướng đạt c4 (chạm, chưa bị phá, ≤ 3 nến). */
+  c4: DirGate;
+  /** Bảng POI đã chấm sẵn C4 — LLM chọn 1 dòng thay vì tự quét nến M1. */
+  poiCandidates: PoiCandidate[];
+  /** true = code CHỨNG MINH được không hướng nào ra được ORDER → khỏi gọi LLM. */
+  noSetup: boolean;
   /** OHLC nến M1 áp chót (ứng viên nến xác nhận) — để LLM trích dẫn FACTS trong output. */
   m1Candle: Ohlc | null;
   /** Nến M1 cuối cùng — CHƯA đóng, bị loại khỏi mọi gate. Chỉ hiển thị để LLM khỏi nhầm. */
@@ -244,11 +286,16 @@ function computeS1c(m5: Candle[] | undefined, facts: IctFacts): GateFlags['s1c']
 function computeS2(m5: Candle[] | undefined, facts: IctFacts): GateFlags['s2'] {
   const tf = facts.timeframes['M5'];
   const rs = tf?.recentStructure ?? null;
-  if (!m5 || m5.length === 0 || !tf || !rs) {
-    return { buy: 'FAIL', sell: 'FAIL', detail: 'thiếu nến M5 hoặc không có BOS/CHoCH' };
+  if (!tf || !rs) {
+    return { buy: 'FAIL', sell: 'FAIL', detail: 'không có BOS/CHoCH trên M5' };
   }
+  // BOS = continuation → S2 không áp dụng. Kết luận này chỉ cần recentStructure.kind, KHÔNG
+  // cần nến M5 → phải xét TRƯỚC khi đòi hỏi m5, nếu không continuation sẽ bị chấm FAIL oan.
   if (rs.kind !== 'CHoCH') {
     return { buy: 'N/A', sell: 'N/A', detail: 'cấu trúc gần nhất = BOS (continuation) → S2 không áp dụng' };
+  }
+  if (!m5 || m5.length === 0) {
+    return { buy: 'FAIL', sell: 'FAIL', detail: 'CHoCH nhưng thiếu nến M5 để kiểm sweep' };
   }
   const chochIdx = m5.findIndex((c) => c.time === rs.time);
   if (chochIdx < 0) {
@@ -346,6 +393,75 @@ function computeConfirmation(m1: Candle[] | undefined): {
 }
 
 /**
+ * GATE C4 — chấm sẵn cho MỌI POI ứng viên (OB/FVG trên M5 + M15).
+ *
+ * Áp dụng đúng định nghĩa "CHẠM POI" trong system prompt, thuần số:
+ *   - Chạm  : BUY → có nến M1 low ≤ poi_top; SELL → có nến M1 high ≥ poi_bottom (wick tính,
+ *             chạm mép là đủ). Thời điểm chạm = nến ĐẦU TIÊN đi vào vùng.
+ *   - Cửa sổ: POI_TOUCH_WINDOW nến M1 cuối TÍNH ĐẾN nến xác nhận (nến đang chạy bị loại).
+ *             Chạm cũ hơn cửa sổ → coi như chưa chạm (POI nguội).
+ *   - Phá   : BUY → có nến M1 close < poi_bottom; SELL → close > poi_top → POI chết.
+ *   - C4    : (index nến xác nhận − index nến chạm) ≤ C4_MAX_BARS, và POI chưa bị phá.
+ *
+ * Trước đây phần này giao cho LLM với lý do "C4 phụ thuộc POI do LLM chọn". Lý do đó SAI:
+ * code không cần biết LLM chọn gì, cứ chấm hết rồi đưa bảng. Để LLM tự quét là nguyên nhân
+ * một lượt scalp đốt 34k output token / 9 phút chỉ để kết luận "không POI nào hợp lệ".
+ */
+function computePoiCandidates(m1: Candle[] | undefined, facts: IctFacts): PoiCandidate[] {
+  if (!m1 || m1.length < 3) return [];
+  const confirmIdx = m1.length - 2;                       // nến áp chót — xem computeConfirmation
+  const from = Math.max(0, confirmIdx - (POI_TOUCH_WINDOW - 1));
+  const price = facts.meta.currentPrice;
+  const out: PoiCandidate[] = [];
+
+  for (const tf of ['M5', 'M15']) {
+    const a = facts.timeframes[tf];
+    if (!a) continue;
+
+    const zones = [
+      ...a.orderBlocks.map((z) => ({ kind: 'OB' as const, ...z })),
+      ...a.fvgs.map((z) => ({ kind: 'FVG' as const, ...z })),
+    ];
+
+    for (const z of zones) {
+      const dir: 'BUY' | 'SELL' = z.type === 'BULLISH' ? 'BUY' : 'SELL';
+
+      let touchIdx: number | null = null;
+      let broken = false;
+      for (let i = from; i <= confirmIdx; i++) {
+        const c = m1[i];
+        if (touchIdx == null && (dir === 'BUY' ? c.low <= z.top : c.high >= z.bottom)) touchIdx = i;
+        if (dir === 'BUY' ? c.close < z.bottom : c.close > z.top) broken = true;
+      }
+
+      const barsToConfirm = touchIdx == null ? null : confirmIdx - touchIdx;
+      let c4: Pf = 'FAIL';
+      let note: string;
+      if (broken) note = 'POI đã bị phá (body close xuyên qua vùng)';
+      else if (touchIdx == null) note = `chưa chạm trong ${POI_TOUCH_WINDOW} nến M1 gần nhất`;
+      else if (barsToConfirm! > C4_MAX_BARS) {
+        note = `chạm cách nến xác nhận ${barsToConfirm} nến > ${C4_MAX_BARS}`;
+      } else {
+        c4 = 'PASS';
+        note = `chạm cách nến xác nhận ${barsToConfirm} nến`;
+      }
+
+      out.push({
+        dir, tf, kind: z.kind, bottom: z.bottom, top: z.top, fresh: !z.mitigated,
+        touchTime: touchIdx == null ? null : m1[touchIdx].time,
+        barsToConfirm, broken, c4,
+        distance: r2(price < z.bottom ? z.bottom - price : price > z.top ? price - z.top : 0),
+        note,
+      });
+    }
+  }
+
+  // Gần giá hiện tại trước, POI tươi ưu tiên hơn POI đã bị ăn.
+  out.sort((a, b) => a.distance - b.distance || Number(b.fresh) - Number(a.fresh));
+  return out.slice(0, POI_TABLE_LIMIT);
+}
+
+/**
  * GATE S5 — Bộ lọc biến động (HARD).
  *   Chuẩn (có atr_m5_avg20)   : PASS nếu atr_m5_current ≥ 0.8 × atr_m5_avg20.
  *   Fallback (thiếu avg20)     : PASS nếu atr_m5_current ≥ 1.5 USD (kém tin cậy).
@@ -387,15 +503,35 @@ export function computeGateFlags(candlesByTimeframe: Record<string, Candle[]>, f
   const s2 = computeS2(m5, facts);
   const s5 = computeS5(atrM5, atrM5Avg20);
   const { c1, c2, c3, m1Candle, m1Running } = computeConfirmation(m1);
+  const poiCandidates = computePoiCandidates(m1, facts);
   const modeS5: 'standard' | 'fallback' = atrM5Avg20 != null ? 'standard' : 'fallback';
   const killZone = facts.meta.killZone.inKillZone;
 
-  // Hard gate chặn ORDER: S0 FAIL, S1 tổng FAIL, S5 FAIL (S4 hậu kiểm riêng).
-  const hardBlocked = s0.verdict === 'FAIL' || s1 === 'FAIL' || s5.verdict === 'FAIL';
+  const hasPoi = (dir: 'BUY' | 'SELL'): Pf =>
+    poiCandidates.some((p) => p.dir === dir && p.c4 === 'PASS') ? 'PASS' : 'FAIL';
+  const c4: DirGate = {
+    buy: hasPoi('BUY'),
+    sell: hasPoi('SELL'),
+    detail: `${poiCandidates.filter((p) => p.c4 === 'PASS').length}/${poiCandidates.length} POI ứng viên đạt C4`,
+  };
+
+  // Điều kiện đủ để MỘT hướng còn cửa ra ORDER (xem mục PHÁN QUYẾT trong system prompt).
+  // Thiếu bất kỳ vế nào thì hướng đó chắc chắn không thể thành lệnh.
+  const dirCanOrder = (d: 'buy' | 'sell'): boolean =>
+    c1[d] === 'PASS' &&
+    (c2.verdict === 'PASS' || c3[d] === 'PASS') &&
+    (s2[d] === 'PASS' || s2[d] === 'N/A') &&
+    c4[d] === 'PASS';
+  const noSetup = !dirCanOrder('buy') && !dirCanOrder('sell');
+
+  // Hard gate chặn ORDER: S0 FAIL, S1 tổng FAIL, S5 FAIL, hoặc không hướng nào còn cửa
+  // (S4 hậu kiểm riêng sau khi LLM trả SL/TP).
+  const hardBlocked = s0.verdict === 'FAIL' || s1 === 'FAIL' || s5.verdict === 'FAIL' || noSetup;
 
   return {
     s0, s1a, s1b, s1c, s1, s2, s4: { verdict: 'PENDING' }, s5,
-    c1, c2, c3, m1Candle, m1Running, modeS5, killZone, hardBlocked,
+    c1, c2, c3, c4, poiCandidates, noSetup,
+    m1Candle, m1Running, modeS5, killZone, hardBlocked,
   };
 }
 
@@ -456,5 +592,32 @@ export function renderGateFlags(flags: GateFlags): string {
     `gate_c1:  buy=${flags.c1.buy} sell=${flags.c1.sell}   (${flags.c1.detail})`,
     `gate_c2:  ${flags.c2.verdict}   (${flags.c2.detail})`,
     `gate_c3:  buy=${flags.c3.buy} sell=${flags.c3.sell}   (${flags.c3.detail})`,
+    `gate_c4:  buy=${flags.c4.buy} sell=${flags.c4.sell}   (${flags.c4.detail})`,
+    '',
+    renderPoiCandidates(flags.poiCandidates),
+  ].join('\n');
+}
+
+/**
+ * Bảng POI ứng viên đã chấm sẵn C4. LLM CHỌN MỘT DÒNG — tuyệt đối không tự quét nến M1
+ * để dò điểm chạm (đó là việc đốt token thinking nặng nhất của prompt này).
+ */
+function renderPoiCandidates(pois: PoiCandidate[]): string {
+  if (!pois.length) {
+    return 'poi_candidates: (không có OB/FVG nào trên M5/M15 trong FACTS)';
+  }
+  const rows = pois.map((p) => {
+    const zone = `${p.bottom}–${p.top}`.padEnd(19);
+    const touch = (p.touchTime ? p.touchTime.slice(11, 16) : '—').padEnd(5);
+    const bars = (p.barsToConfirm == null ? '—' : String(p.barsToConfirm)).padStart(2);
+    return (
+      `  ${p.dir.padEnd(4)} ${p.tf.padEnd(3)} ${p.kind.padEnd(3)} ${zone} ` +
+      `[${p.fresh ? 'fresh' : 'mitig'}] cách=${String(p.distance).padStart(6)} ` +
+      `touch=${touch} bars=${bars} c4=${p.c4.padEnd(4)} (${p.note})`
+    );
+  });
+  return [
+    'poi_candidates (code đã chấm sẵn C4 — CHỌN 1 DÒNG, KHÔNG tự quét nến M1):',
+    ...rows,
   ].join('\n');
 }
