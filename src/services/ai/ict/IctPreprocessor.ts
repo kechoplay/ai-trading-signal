@@ -62,6 +62,8 @@ export interface OrderBlock {
 export interface LiquidityLevel {
   price: number;
   times: [string, string];
+  /** Index nến của swing SAU trong cặp — thời điểm mức được coi là đã hình thành. */
+  index: number;
   /** true = giá đã quét qua mức này sau khi nó hình thành; false = pool còn nguyên (nam châm DOL). */
   swept: boolean;
 }
@@ -292,7 +294,7 @@ function findLiquidity(
       const price = r2((hs[i].price + hs[i - 1].price) / 2);
       // Swept: sau khi mức hình thành (swing sau), có nến nào wick vượt LÊN trên mức.
       const swept = candles.slice(hs[i].index + 1).some((c) => c.high > price);
-      equalHighs.push({ price, times: [hs[i - 1].time, hs[i].time], swept });
+      equalHighs.push({ price, times: [hs[i - 1].time, hs[i].time], index: hs[i].index, swept });
     }
   }
   const ls = swings.lows;
@@ -301,7 +303,7 @@ function findLiquidity(
       const price = r2((ls[i].price + ls[i - 1].price) / 2);
       // Swept: sau khi mức hình thành, có nến nào wick vượt XUỐNG dưới mức.
       const swept = candles.slice(ls[i].index + 1).some((c) => c.low < price);
-      equalLows.push({ price, times: [ls[i - 1].time, ls[i].time], swept });
+      equalLows.push({ price, times: [ls[i - 1].time, ls[i].time], index: ls[i].index, swept });
     }
   }
   return { equalHighs, equalLows };
