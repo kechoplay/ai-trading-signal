@@ -13,12 +13,6 @@ export const config = {
     .map((s) => s.trim())
     .filter(Boolean),
 
-  // Scalp tốc độ cao: M15 (context nhẹ) → M5 (khung quyết định chính) → M1 (entry).
-  scalpTimeframes: (process.env.TRADING_SCALP_TIMEFRAMES ?? 'M15,M5,M1')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean),
-
   // Crypto noise nhiều hơn vàng → entry tối thiểu M15 (bỏ M5). Cấu trúc ICT 4 khung:
   // D (context) → H4 (bias) → H1 (POI) → M15 (entry). Dùng khi instrument là crypto
   // và request không truyền timeframes riêng.

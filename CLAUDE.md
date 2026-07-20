@@ -49,7 +49,6 @@ D:/ai-trading-signal/
         ├── ai/
         │   ├── ClaudeAnalystService.ts  ← gọi Claude API, build prompt (vàng/crypto), parse text
         │   ├── LongTermAnalystService.ts ← prompt swing W/D/H4 (override tfOrder)
-        │   ├── ScalpAnalystService.ts   ← prompt scalp M15/M5/M1 (override tfOrder + prompt)
         │   ├── BottomReversalAnalystService.ts ← prompt bắt đáy (chỉ BUY, H4/H1/M15/M5)
         │   └── dto/
         │       └── AnalysisResult.ts    ← kiểu trả về từ AI
@@ -149,13 +148,11 @@ LOG_LEVEL=info
 MARKET_PROVIDER=twelvedata          # hoặc "oanda"
 TRADING_INSTRUMENT=XAU/USD
 TRADING_TIMEFRAMES=H4,H1,M15,M5    # H4 context → M5 entry
-TRADING_SCALP_TIMEFRAMES=M15,M5,M1 # scalp: M15 context nhẹ → M5 khung chính → M1 entry
 TRADING_CANDLES_COUNT=214
 TRADING_CANDLES_H4=30               # H4 chỉ làm context → ít nến
 TRADING_CANDLES_H1=214
 TRADING_CANDLES_M15=240
 TRADING_CANDLES_M5=180
-TRADING_CANDLES_M1=240              # scalp entry (M1)
 TRADING_MIN_RR=2.0
 
 # Market Hours (Asia/Ho_Chi_Minh)
