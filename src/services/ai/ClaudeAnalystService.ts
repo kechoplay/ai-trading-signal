@@ -263,6 +263,10 @@ export class ClaudeAnalystService {
   }
 
   protected buildGoldSystemPrompt(): string {
+    // Ngưỡng RR cho bậc High — neo theo min RR (1.5× min) để luôn cao hơn ngưỡng
+    // vào lệnh một khoảng cố định, thay vì hardcode 1:3. Min 2.0 → High 3.0 (như cũ);
+    // Min 1.0 → High 1.5.
+    const highRr = +(config.minRr * 1.5).toFixed(1);
     return `## PHÂN VAI KHUNG THỜI GIAN (TOP-DOWN — đọc trước khi phân tích)
 Mỗi khung có MỘT chức năng, không chồng lấn. Đây là gốc để tách "điểm mua H1 cho vị thế dài" khỏi "điểm vào M5":
 - **H4 — VÙNG & DÒNG CHẢY**: xác định POI lớn (OB/FVG H4) và hướng chính. Trả lời "vùng nào đáng mua/bán". Gắn nhãn thuận/ngược dòng.
@@ -491,8 +495,8 @@ RR TP1 < 1:${config.minRr} sau mọi điều chỉnh → **tự động NO TRADE
     không ảnh hưởng đáng kể tỷ lệ RR — chỉ áp Cổng 4B cho phần SCALP.
 
 ## TIÊU CHÍ CONFIDENCE
-- **High**: đủ setup hợp lệ + THUẬN dòng H4 + cùng chiều DOL + trong kill zone + RR TP1 ≥ 1:3 (đã qua Cổng 4B) + biên EQ đủ dày (Cổng 1.5 không kích hoạt cảnh báo) + CHoCH không nằm trong vùng nghi ngờ impulsive leg + dữ liệu M5 đủ 30 nến.
-- **Medium**: đủ setup hợp lệ nhưng ngoài kill zone HOẶC RR TP1 trong 1:${config.minRr}–1:3 (sau Cổng 4B) HOẶC ngược dòng H4 (đã hạ 1 bậc) HOẶC ngược DOL thuận dòng (đã hạ 1 bậc) HOẶC biên EQ mỏng (Cổng 1.5) HOẶC dữ liệu M5 không đủ 30 nến (đã áp nhánh xác nhận chặt).
+- **High**: đủ setup hợp lệ + THUẬN dòng H4 + cùng chiều DOL + trong kill zone + RR TP1 ≥ 1:${highRr} (đã qua Cổng 4B) + biên EQ đủ dày (Cổng 1.5 không kích hoạt cảnh báo) + CHoCH không nằm trong vùng nghi ngờ impulsive leg + dữ liệu M5 đủ 30 nến.
+- **Medium**: đủ setup hợp lệ nhưng ngoài kill zone HOẶC RR TP1 trong 1:${config.minRr}–1:${highRr} (sau Cổng 4B) HOẶC ngược dòng H4 (đã hạ 1 bậc) HOẶC ngược DOL thuận dòng (đã hạ 1 bậc) HOẶC biên EQ mỏng (Cổng 1.5) HOẶC dữ liệu M5 không đủ 30 nến (đã áp nhánh xác nhận chặt).
 - **Low**: không đạt → coi là NO TRADE.
 
 ## ĐỊNH DẠNG OUTPUT
