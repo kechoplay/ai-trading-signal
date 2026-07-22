@@ -17,6 +17,27 @@ export interface CryptoExtras {
   btcCandles?: Record<string, Candle[]> | null;
 }
 
+/**
+ * Tín hiệu của lần phân tích gần nhất, dùng để "carry-forward" — nhét lại vào prompt
+ * cho AI đánh giá tiếp thay vì phân tích lại từ số 0. Cố ý đưa dạng ĐÁNH GIÁ ĐỘC LẬP
+ * để tránh anchoring bias.
+ *  - kind='watchlist': setup đang canh → KIỂM CHỨNG (đã kích hoạt / vô hiệu / vẫn chờ).
+ *  - kind='order':     lệnh đã ra → QUẢN LÝ (giữ / dời SL / thoát / đã đóng).
+ */
+export interface PendingSetup {
+  kind: 'watchlist' | 'order';
+  direction: 'BUY' | 'SELL';
+  ageMinutes: number;
+  analyzedAtVn: string;   // thời điểm phân tích trước (giờ VN, đã format)
+  priceThen: number | null;
+  rawText: string;        // nội dung block lần trước (POI+SL/TP dự kiến, hoặc lệnh + "Hủy lệnh nếu")
+  // Chỉ có với kind='order' — thông số lệnh đã lưu ở cột DB.
+  entry?: number | null;
+  stopLoss?: number | null;
+  takeProfit?: number | null;
+  riskReward?: number | null;
+}
+
 export class ClaudeAnalystService {
   private readonly client: Anthropic;
   protected readonly tfOrder: string[] = ['H4', 'H1', 'M15', 'M5'];
@@ -57,6 +78,7 @@ export class ClaudeAnalystService {
     candlesByTimeframe: Record<string, Candle[]>,
     _currentPrice: number,
     extras?: CryptoExtras,
+    pending?: PendingSetup | null,
   ): Promise<{ result: AnalysisResult; rawText: string }> {
     const systemPrompt = this.buildSystemPrompt(instrument);
 
@@ -73,6 +95,9 @@ export class ClaudeAnalystService {
       const extraText = buildCryptoExtras(extras);
       if (extraText) userPrompt += `\n\n${extraText}`;
     }
+
+    // Carry-forward: setup WATCHLIST lần trước → yêu cầu AI kiểm chứng độc lập.
+    if (pending) userPrompt += `\n\n${buildPendingSetupBlock(pending)}`;
 
     logger.info('[Claude] User prompt', { prompt: userPrompt });
 
@@ -466,8 +491,11 @@ Khởi điểm mọi lệnh đã qua 3 HARD GATE = **Medium**. Cộng/trừ theo
 #### WATCHLIST (CHƯA VÀO LỆNH)
 - Hướng dự kiến: BUY / SELL
 - POI cần chờ: [vùng giá]
+- Entry zone dự kiến: [vùng giá tại POI — nơi sẽ vào lệnh khi M5 confirm]
+- SL dự kiến: [giá] — neo cấu trúc M5 sau POI + đệm ≥1× ATR M5 — cách [X] USD
+- TP dự kiến: [giá] — mục tiêu thanh khoản M15 gần nhất (đã lùi khỏi vùng nghịch) — RR dự kiến [X:1]
 - Điều kiện kích hoạt còn thiếu: [cụ thể — chờ giá về POI đúng nửa range / chờ M5 confirm gì / chờ quét pool thanh khoản nào / chờ M15 xác nhận thêm do nghi CHoCH là correction trong impulsive leg / chờ đủ dữ liệu M5]
-- Lưu ý: chưa đặt lệnh cho đến khi đủ điều kiện.
+- Lưu ý: đây là các mức DỰ KIẾN tính trước tại POI (đã biết hướng) — sẽ chốt lại chính xác khi M5 confirm; chưa đặt lệnh cho đến khi đủ điều kiện. Nếu RR dự kiến < 1:${config.minRr} thì ghi rõ setup sẽ bị loại khi tới POI.
 
 ### Trường hợp 2 — Không có cơ hội nào:
 - Best opportunity: NO TRADE
@@ -654,9 +682,12 @@ RR TP1 < 1:${config.minRr} sau mọi điều chỉnh → **tự động NO TRADE
 ### Trường hợp 1 — Chưa đủ điều kiện vào lệnh nhưng setup đang hình thành (giá chưa chạm POI, ${tfEntry} chưa confirm, HOẶC bị Cổng 1/2 chặn chờ giá về đúng vùng):
 #### WATCHLIST (CHƯA VÀO LỆNH)
 - Hướng dự kiến: LONG / SHORT
-- POI cần chờ: [vùng giá]
+- POI cần chờ: [vùng giá] (cách giá hiện tại [X]%)
+- Entry zone dự kiến: [vùng giá tại POI — nơi sẽ vào lệnh khi ${tfEntry} confirm hoặc đặt limit]
+- SL dự kiến: [giá] — vùng liquidity sau POI + đệm ≥1.5× ATR ${tfAtr} — cách [X]% (= [Y]× ATR ${tfAtr})
+- TP dự kiến: [giá] — mục tiêu thanh khoản gần nhất (đã lùi khỏi vùng nghịch) — RR dự kiến [X:1]
 - Điều kiện kích hoạt còn thiếu: [cụ thể — chờ giá về POI đúng nửa range / chờ ${tfEntry} confirm gì / chờ quét pool thanh khoản nào]
-- Lưu ý: chưa đặt lệnh cho đến khi đủ điều kiện.
+- Lưu ý: đây là các mức DỰ KIẾN tính trước tại POI (đã biết hướng) — sẽ chốt lại khi ${tfEntry} confirm; chưa đặt lệnh cho đến khi đủ điều kiện. Nếu RR dự kiến < 1:${config.minRr} thì ghi rõ setup sẽ bị loại khi tới POI.
 
 ### Trường hợp 2 — Không có cơ hội nào:
 - Best opportunity: NO TRADE
@@ -834,6 +865,66 @@ function buildCryptoExtras(extras: CryptoExtras): string {
   }
 
   return blocks.join('\n\n');
+}
+
+/**
+ * Block carry-forward — nhét tín hiệu lần trước vào prompt theo hướng ĐÁNH GIÁ ĐỘC LẬP,
+ * KHÔNG phải gợi ý tiếp tục. Phân nhánh theo kind:
+ *  - watchlist → KIỂM CHỨNG setup (đã kích hoạt / vô hiệu / vẫn chờ).
+ *  - order     → QUẢN LÝ lệnh (giữ / dời SL / thoát / đã đóng).
+ * Framing anti-anchoring: trao toàn quyền bác bỏ, tách "quản lý lệnh cũ" khỏi "vào lệnh mới".
+ */
+function buildPendingSetupBlock(p: PendingSetup): string {
+  return p.kind === 'order' ? buildPreviousOrderBlock(p) : buildPreviousWatchlistBlock(p);
+}
+
+function buildPreviousWatchlistBlock(p: PendingSetup): string {
+  const dir = p.direction === 'BUY' ? 'BUY (LONG)' : 'SELL (SHORT)';
+  const priceThen = p.priceThen != null ? `${p.priceThen}` : 'không rõ';
+  return [
+    `=== SETUP ĐANG CHỜ KIỂM CHỨNG (từ lần phân tích GẦN NHẤT, cách đây ${p.ageMinutes} phút — lúc ${p.analyzedAtVn} giờ VN) ===`,
+    `Lần trước hệ thống KHÔNG vào lệnh, chỉ để WATCHLIST với hướng dự kiến ${dir}. Giá lúc đó: ${priceThen}.`,
+    `Nội dung watchlist lần trước:`,
+    p.rawText,
+    ``,
+    `⚠️ NHIỆM VỤ với setup trên — làm ĐỘC LẬP dựa trên FACTS/nến MỚI, KHÔNG mặc định tiếp tục hướng cũ:`,
+    `1. Xác định setup này HIỆN ở trạng thái nào:`,
+    `   • ĐÃ KÍCH HOẠT — giá đã về POI + có confirmation hợp lệ → đưa vào quy trình bình thường (được xuất ORDER nếu qua đủ các cổng/HARD GATE).`,
+    `   • ĐÃ VÔ HIỆU — body close đã phá POI, cấu trúc đã đổi, hoặc POI bị invert → BỎ hẳn hướng cũ, phân tích lại từ đầu như chưa từng có watchlist.`,
+    `   • VẪN CHỜ — POI còn nguyên, giá chưa chạm → giữ WATCHLIST, cập nhật lại Entry/SL/TP dự kiến theo giá mới.`,
+    `2. Bạn được TOÀN QUYỀN bác bỏ hướng dự kiến cũ nếu FACTS mới mâu thuẫn. TUYỆT ĐỐI KHÔNG vào lệnh hay giữ WATCHLIST chỉ vì lần trước đã canh chiều đó — hướng cũ chỉ là thông tin tham chiếu, không phải kết luận.`,
+    `3. Thêm 1 dòng vào SUMMARY: "Setup lần trước: [ĐÃ KÍCH HOẠT / ĐÃ VÔ HIỆU / VẪN CHỜ] — [lý do ngắn]".`,
+  ].join('\n');
+}
+
+function buildPreviousOrderBlock(p: PendingSetup): string {
+  const dir = p.direction === 'BUY' ? 'BUY (LONG)' : 'SELL (SHORT)';
+  const priceThen = p.priceThen != null ? `${p.priceThen}` : 'không rõ';
+  const num = (x: number | null | undefined) => (x != null ? `${x}` : '—');
+  return [
+    `=== LỆNH LẦN TRƯỚC — ĐÁNH GIÁ GIỮ HAY THOÁT (từ lần phân tích GẦN NHẤT, cách đây ${p.ageMinutes} phút — lúc ${p.analyzedAtVn} giờ VN) ===`,
+    `Lần trước hệ thống đã ra LỆNH ${dir}. Giá lúc đó: ${priceThen}.`,
+    `Thông số lệnh: Entry ${num(p.entry)} | SL ${num(p.stopLoss)} | TP ${num(p.takeProfit)} | RR ${p.riskReward != null ? `1:${p.riskReward}` : '—'}.`,
+    `Chi tiết lệnh lần trước (gồm điều kiện "Hủy lệnh nếu"):`,
+    p.rawText,
+    ``,
+    `⚠️ NHIỆM VỤ với lệnh trên — làm ĐỘC LẬP trên FACTS/nến MỚI, đánh giá KHÁCH QUAN (đừng thiên vị giữ lệnh vì sunk cost):`,
+    `1. Xác định trạng thái lệnh hiện tại:`,
+    `   • CHƯA KHỚP ENTRY — giá chưa chạm entry zone → lệnh còn hiệu lực (chờ khớp) hay đã lỡ/vô hiệu (giá đã bỏ đi không quay lại)?`,
+    `   • ĐANG CHẠY — giá đã qua entry, chưa chạm SL/TP → đọc nến (nhóm C H1: nến thân lớn phá cấu trúc / rejection tại TP) để quyết định.`,
+    `   • ĐÃ ĐÓNG — giá đã chạm TP (thắng) / SL (thua) / thỏa "Hủy lệnh nếu" bằng body close → lệnh kết thúc.`,
+    `2. KHUYẾN NGHỊ QUẢN LÝ (chọn 1, nêu rõ lý do bằng price action):`,
+    `   • GIỮ NGUYÊN — thesis còn nguyên, chưa có tín hiệu thoát.`,
+    `   • DỜI SL VỀ BREAKEVEN / SIẾT SL — đã có lời hoặc động lượng cạn dần.`,
+    `   • THOÁT SỚM — cấu trúc đã gãy / rejection mạnh dù chưa chạm SL.`,
+    `   • ĐÃ ĐÓNG — nêu rõ đóng tại TP / SL / invalidation nào.`,
+    `3. QUAN TRỌNG: "GIỮ lệnh đang mở" KHÁC "vào lệnh mới". Ví dụ giá lên premium sâu có thể CHẶN một lệnh BUY mới nhưng KHÔNG có nghĩa phải thoát lệnh BUY đang lời — đánh giá hai việc RIÊNG BIỆT.`,
+    `4. Đặt ở ĐẦU output một block quản lý:`,
+    `   #### QUẢN LÝ LỆNH TRƯỚC`,
+    `   - Trạng thái: [CHƯA KHỚP / ĐANG CHẠY / ĐÃ ĐÓNG]`,
+    `   - Khuyến nghị: [GIỮ / DỜI SL / THOÁT / ĐÃ ĐÓNG] — [lý do ngắn bằng price action]`,
+    `Sau block đó, TIẾP TỤC phân tích entry MỚI như bình thường — khách quan, độc lập với lệnh cũ (có thể ra ORDER mới, WATCHLIST, hoặc NO TRADE).`,
+  ].join('\n');
 }
 
 // ─── Asset classification ────────────────────────────────────────────────────

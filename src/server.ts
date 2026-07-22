@@ -98,7 +98,7 @@ app.post('/api/analyze', requireApiKey, async (req, res) => {
   const startedAt = Date.now();
   try {
     logger.info('POST /api/analyze triggered', { symbol: symbol ?? config.instrument, timeframes: timeframes ?? 'default' });
-    const { result, rawText, instrument: sym, currentPrice } = await SignalOrchestrator.fromConfig().run(symbol, timeframes);
+    const { result, rawText, instrument: sym, currentPrice } = await SignalOrchestrator.fromConfig().run(symbol, timeframes, 'intraday');
     const durationMs = Date.now() - startedAt;
 
     const notifier = TelegramNotifier.fromConfig();
@@ -153,7 +153,7 @@ app.post('/api/analyze/batday', requireApiKey, async (req, res) => {
       BottomReversalAnalystService.fromConfig(),
       TelegramNotifier.fromConfig(),
     );
-    const { result, rawText, instrument: sym, currentPrice } = await orchestrator.run(symbol, timeframes);
+    const { result, rawText, instrument: sym, currentPrice } = await orchestrator.run(symbol, timeframes, 'batday');
     const durationMs = Date.now() - startedAt;
 
     const notifier = TelegramNotifier.fromConfig();

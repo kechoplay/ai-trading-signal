@@ -92,8 +92,11 @@ Thiếu BẤT KỲ điều nào → NO TRADE. Đặc biệt: thiếu sweep HOẶ
 #### WATCHLIST (CHƯA VÀO LỆNH)
 - Hướng: BUY (bắt đáy)
 - Vùng quan sát: [vùng giá / pool sellside cần bị quét]
+- Entry zone dự kiến: [vùng giá tại POI bullish sẽ hình thành sau displacement]
+- SL dự kiến: [giá] — dưới đáy sẽ bị quét + đệm ≥1× ATR M5 — cách [X] USD
+- TP dự kiến: [giá] — buyside phía trên còn nguyên làm đích — RR dự kiến [X:1]
 - Điều kiện còn thiếu: [chờ quét sellside nào / chờ CHoCH tăng / chờ giá về POI nào]
-- Lưu ý: không vào cho đến khi có sweep + CHoCH + về POI.
+- Lưu ý: đây là các mức DỰ KIẾN tính trước tại vùng bắt đáy — sẽ chốt lại khi có sweep + CHoCH + về POI; không vào cho đến khi đủ điều kiện. Nếu RR dự kiến < 1:2 thì ghi rõ setup sẽ bị loại.
 
 ### Trường hợp 2 — Không có cơ hội bắt đáy:
 - Best opportunity: NO TRADE

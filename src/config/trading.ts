@@ -44,6 +44,18 @@ export const config = {
 
   minRr: parseFloat(process.env.TRADING_MIN_RR ?? '2.0'),
 
+  // Carry-forward: nếu lần phân tích GẦN NHẤT (cùng instrument + analysis_type) là
+  // WATCHLIST và còn trong cửa sổ thời gian, nhét lại setup đó vào prompt như "setup
+  // ĐANG CHỜ KIỂM CHỨNG" để AI theo dõi tiếp thay vì phân tích lại từ số 0. Đưa vào
+  // dạng kiểm chứng ĐỘC LẬP (AI được toàn quyền bác bỏ) để tránh anchoring bias.
+  // windowMin (watchlist) nhỏ vì scalp intraday — POI cũ quá 2h dễ lỗi thời.
+  // orderWindowMin rộng hơn: lệnh đang giữ có thể sống lâu hơn, cần review giữ/thoát muộn hơn.
+  carryForward: {
+    enabled: (process.env.CARRY_FORWARD_WATCHLIST ?? 'true').toLowerCase() !== 'false',
+    windowMin: parseInt(process.env.CARRY_FORWARD_WINDOW_MIN ?? '120', 10),
+    orderWindowMin: parseInt(process.env.CARRY_FORWARD_ORDER_WINDOW_MIN ?? '240', 10),
+  },
+
   marketHours: {
     open: parseInt(process.env.MARKET_HOURS_OPEN ?? '6', 10),
     close: parseInt(process.env.MARKET_HOURS_CLOSE ?? '22', 10),
