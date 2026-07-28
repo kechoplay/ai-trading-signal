@@ -58,6 +58,11 @@ export class ClaudeSubscriptionTransport implements LlmTransport {
         maxTurns:        1,               // single-shot, không vòng lặp agent
         allowedTools:    [],              // không auto-approve tool nào
         disallowedTools: BLOCKED_TOOLS,
+        // Ghìm độ sâu suy luận cho khớp đường API key → kiểm soát latency. Agent SDK
+        // hỗ trợ đúng 2 lever như Messages API: thinking adaptive + effort (low..max).
+        // KHÔNG dùng maxThinkingTokens (deprecated; trên Sonnet/Opus 4.6+ chỉ còn on/off).
+        thinking:        { type: 'adaptive' },
+        effort:          params.effort,
         // Chốt chặn cuối: từ chối mọi lời gọi tool dù model có thử.
         canUseTool:      async () => ({ behavior: 'deny', message: 'tools disabled' }),
         // Agent SDK spawn subprocess với env THAY THẾ (không merge) → phải kèm ...process.env
