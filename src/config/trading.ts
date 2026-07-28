@@ -8,11 +8,6 @@ export const config = {
     .map((s) => s.trim())
     .filter(Boolean),
 
-  longtermTimeframes: (process.env.TRADING_LONGTERM_TIMEFRAMES ?? 'W,D,H4')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean),
-
   // Crypto noise nhiều hơn vàng → entry tối thiểu M15 (bỏ M5). Cấu trúc ICT 4 khung:
   // D (context) → H4 (bias) → H1 (POI) → M15 (entry). Dùng khi instrument là crypto
   // và request không truyền timeframes riêng.
@@ -87,7 +82,12 @@ export const config = {
   },
 
   claude: {
+    // Cách xác thực: 'apikey' (mặc định — CLAUDE_API_KEY, tính phí theo token) hoặc
+    // 'subscription' (Claude Agent SDK + CLAUDE_CODE_OAUTH_TOKEN, tiêu quota Pro/Max).
+    authMode: (process.env.AI_AUTH_MODE ?? 'apikey').toLowerCase(),
     apiKey: process.env.CLAUDE_API_KEY ?? '',
+    // Token subscription sinh từ `claude setup-token`. Chỉ dùng khi authMode=subscription.
+    oauthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN ?? '',
     model: process.env.CLAUDE_MODEL ?? 'claude-sonnet-4-6',
     // Độ sâu suy luận (low|medium|high|max). Vì code đã tính sẵn ICT facts nên
     // bài toán nhẹ đi → mặc định 'medium' để giảm latency. Hỗ trợ Sonnet 4.6 / Opus 4.x.

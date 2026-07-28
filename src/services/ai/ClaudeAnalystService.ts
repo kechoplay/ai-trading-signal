@@ -1,11 +1,12 @@
-import Anthropic from '@anthropic-ai/sdk';
-import { Agent } from 'undici';
 import { Candle } from '../market/Candle';
 import { AnalysisResult, ConditionalSetup } from './dto/AnalysisResult';
 import { config } from '../../config/trading';
 import { logger } from '../../logger';
 import { preprocess, IctFacts, TimeframeAnalysis } from './ict/IctPreprocessor';
 import { FuturesSentiment } from '../market/BinanceFuturesService';
+import { LlmTransport, Effort } from './transport/LlmTransport';
+import { AnthropicApiTransport } from './transport/AnthropicApiTransport';
+import { ClaudeSubscriptionTransport } from './transport/ClaudeSubscriptionTransport';
 
 /**
  * Dữ liệu bổ trợ chỉ dùng cho phân tích crypto futures:
@@ -39,38 +40,32 @@ export interface PendingSetup {
 }
 
 export class ClaudeAnalystService {
-  private readonly client: Anthropic;
   protected readonly tfOrder: string[] = ['H4', 'H1', 'M15', 'M5'];
   // Crypto dùng bộ khung từ M15 (D context → H4 bias → H1 POI → M15 entry).
   // Tách riêng vì cùng một service xử lý cả vàng (M5) lẫn crypto.
   protected readonly cryptoTfOrder: string[] = ['D', 'H4', 'H1', 'M15'];
 
-  constructor(private readonly model: string) {
-    // Stream phân tích có thể chạy nhiều phút (adaptive thinking).
-    // undici (engine của fetch) mặc định cắt kết nối nếu không nhận chunk nào
-    // trong ~300s (bodyTimeout) hoặc chờ headers >300s (headersTimeout) →
-    // ném "terminated". Đặt 0 = VÔ HẠN ở tầng undici để stream dài không bị
-    // ngắt sớm; chặn an toàn bằng timeout của SDK bên dưới.
-    const dispatcher = new Agent({
-      headersTimeout: 0,   // 0 = không giới hạn (hợp lệ với undici)
-      bodyTimeout:    0,
-    });
-
-    // ⚠️ SDK timeout KHÁC undici: 0 ở đây nghĩa là ~0ms (timeout tức thì), KHÔNG
-    // phải vô hạn. Phải đặt số dương — đây là trần cứng tổng thể của request.
-    const SDK_TIMEOUT = 10 * 60 * 1000; // 10 phút
-
-    this.client = new Anthropic({
-      apiKey:     config.claude.apiKey,
-      maxRetries: 4,
-      timeout:    SDK_TIMEOUT,
-      fetchOptions: { dispatcher },
-    });
-  }
+  constructor(
+    private readonly model: string,
+    private readonly transport: LlmTransport,
+  ) {}
 
   static fromConfig(): ClaudeAnalystService {
+    return new ClaudeAnalystService(config.claude.model, ClaudeAnalystService.resolveTransport());
+  }
+
+  /**
+   * Chọn transport theo AI_AUTH_MODE:
+   *  - 'subscription' → Claude Agent SDK + CLAUDE_CODE_OAUTH_TOKEN (subscription Pro/Max).
+   *  - còn lại ('apikey') → Anthropic Messages API + CLAUDE_API_KEY.
+   * Dùng chung cho cả LongTerm & BottomReversal (kế thừa qua constructor).
+   */
+  static resolveTransport(): LlmTransport {
+    if (config.claude.authMode === 'subscription') {
+      return new ClaudeSubscriptionTransport();
+    }
     if (!config.claude.apiKey) throw new Error('CLAUDE_API_KEY is not configured.');
-    return new ClaudeAnalystService(config.claude.model);
+    return new AnthropicApiTransport(config.claude.apiKey);
   }
 
   async analyze(
@@ -101,35 +96,21 @@ export class ClaudeAnalystService {
 
     logger.info('[Claude] User prompt', { prompt: userPrompt });
 
-    // max_tokens phải đủ lớn cho cả thinking + text response
-    // thinking: adaptive không có budget_tokens → model tự phân bổ từ max_tokens
-    // Nếu max_tokens quá nhỏ, thinking ăn hết token, text block trả về rỗng.
-    // output_config.effort: vì code đã gánh phần tính toán, hạ effort để cắt latency.
-    const stream = this.client.messages.stream({
-      model:      this.model,
-      max_tokens: 64000,
-      thinking:   { type: 'adaptive' },
-      output_config: { effort: config.claude.effort as 'low' | 'medium' | 'high' | 'max' },
-      system:     systemPrompt,
-      messages:   [{ role: 'user', content: userPrompt }],
+    // Gọi LLM qua transport đã chọn (API key hoặc subscription). max_tokens đủ lớn cho
+    // cả thinking + text; parser bên dưới xử lý text trả về giống nhau ở cả hai đường.
+    const { text: rawText, meta } = await this.transport.complete({
+      model:     this.model,
+      system:    systemPrompt,
+      userPrompt,
+      maxTokens: 64000,
+      effort:    config.claude.effort as Effort,
     });
 
-    const message = await stream.finalMessage();
-
-    // Log toàn bộ block types để debug nếu có lỗi
-    const blockTypes = message.content.map((b) => b.type);
-    logger.info('[Claude] Content blocks', { blockTypes, usage: message.usage });
-
-    // Extract text blocks (bỏ qua thinking blocks)
-    const rawText = message.content
-      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-      .map((b) => b.text)
-      .join('');
+    logger.info('[Claude] Response meta', { transport: this.transport.name, ...meta });
 
     if (!rawText) {
       throw new Error(
-        `Claude returned no text content. Blocks received: [${blockTypes.join(', ')}]. ` +
-        `Usage: input=${message.usage.input_tokens}, output=${message.usage.output_tokens}`,
+        `Claude returned no text content. Transport=${this.transport.name}, meta=${JSON.stringify(meta)}`,
       );
     }
 

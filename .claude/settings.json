@@ -22,7 +22,9 @@
       "PowerShell(npx tsx \"C:\\\\Users\\\\Admin\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--Work-ai-trading-signal\\\\e93b2a22-e5e0-4c10-8a23-b5aa682c67df\\\\scratchpad\\\\gatecheck.ts\")",
       "PowerShell(npx tsx \"C:\\\\Users\\\\Admin\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--Work-ai-trading-signal\\\\e93b2a22-e5e0-4c10-8a23-b5aa682c67df\\\\scratchpad\\\\gatecheck2.ts\")",
       "PowerShell(npx tsx \"C:\\\\Users\\\\Admin\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--Work-ai-trading-signal\\\\e93b2a22-e5e0-4c10-8a23-b5aa682c67df\\\\scratchpad\\\\gatecheck3.ts\")",
-      "PowerShell(npx tsx \"C:\\\\Users\\\\Admin\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--Work-ai-trading-signal\\\\e93b2a22-e5e0-4c10-8a23-b5aa682c67df\\\\scratchpad\\\\gatecheck3.ts\" 2>&1)"
+      "PowerShell(npx tsx \"C:\\\\Users\\\\Admin\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--Work-ai-trading-signal\\\\e93b2a22-e5e0-4c10-8a23-b5aa682c67df\\\\scratchpad\\\\gatecheck3.ts\" 2>&1)",
+      "Skill(claude-api)",
+      "Skill(claude-api:*)"
     ]
   }
 }

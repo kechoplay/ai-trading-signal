@@ -41,15 +41,16 @@ D:/ai-trading-signal/
     │   └── analyzeSignal.ts           ← CLI entry: check giờ → orchestrate
     ├── public/                        ← dashboard tĩnh (Express static)
     │   ├── index.html                 ← bảng tín hiệu intraday + nút phân tích XAU / BTC
-    │   ├── longterm.html              ← bảng tín hiệu dài hạn (W/D/H4)
     │   └── docs.html                  ← trang tài liệu
     └── services/
         ├── SignalOrchestrator.ts      ← pipeline chính (fetch→AI→DB→Telegram)
         ├── MarketHoursService.ts      ← kiểm tra giờ giao dịch
         ├── ai/
-        │   ├── ClaudeAnalystService.ts  ← gọi Claude API, build prompt (vàng/crypto), parse text
-        │   ├── LongTermAnalystService.ts ← prompt swing W/D/H4 (override tfOrder)
-        │   ├── BottomReversalAnalystService.ts ← prompt bắt đáy (chỉ BUY, H4/H1/M15/M5)
+        │   ├── ClaudeAnalystService.ts  ← gọi Claude (build prompt vàng/crypto, parse text)
+        │   ├── transport/               ← lớp gọi LLM (API key hoặc subscription)
+        │   │   ├── LlmTransport.ts        ← interface chung
+        │   │   ├── AnthropicApiTransport.ts ← CLAUDE_API_KEY (messages.stream)
+        │   │   └── ClaudeSubscriptionTransport.ts ← subscription qua Claude Agent SDK
         │   └── dto/
         │       └── AnalysisResult.ts    ← kiểu trả về từ AI
         ├── market/
@@ -271,7 +272,7 @@ Lấy analysis logs của symbol trong ngày.
 
 ## Web Dashboard — Chi tiết quan trọng
 
-**File:** `public/index.html` (intraday), `public/longterm.html` (dài hạn) — phục vụ static qua Express.
+**File:** `public/index.html` (intraday) — phục vụ static qua Express.
 
 - Nút **⚡ Phân tích XAU** → `POST /api/analyze {}`; nút **₿ Phân tích BTC** → `POST /api/analyze { symbol: "BTC/USD" }`. Hàm chung `runAnalyze(btnId, symbol?)`.
 - API key lưu ở `localStorage`; nếu server trả 401 sẽ prompt nhập key rồi thử lại.
@@ -350,7 +351,7 @@ GET https://api-fxpractice.oanda.com/v3/instruments/XAU_USD/candles
 
 ## Quy tắc quan trọng khi sửa code
 
-1. **Khung thời gian**: Intraday dùng H4 (context), H1, M15, M5 — thứ tự gửi nến do `tfOrder` trong `ClaudeAnalystService` quyết định. Long-term (W/D/H4) do `LongTermAnalystService` xử lý riêng.
+1. **Khung thời gian**: Intraday dùng H4 (context), H1, M15, M5 — thứ tự gửi nến do `tfOrder` trong `ClaudeAnalystService` quyết định.
 2. **Ngôn ngữ prompt**: Prompt AI viết bằng tiếng Việt — giữ nguyên. Vàng dùng từ vựng BUY/SELL, crypto dùng LONG/SHORT — khi sửa parser phải giữ map LONG→BUY, SHORT→SELL.
 3. **Database**: Dùng Prisma — không dùng raw SQL. Sau mỗi thay đổi schema (`prisma/schema.prisma`), bắt buộc chạy:
    ```bash
