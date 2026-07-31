@@ -98,15 +98,29 @@ export class ClaudeAnalystService {
 
     // Gọi LLM qua transport đã chọn (API key hoặc subscription). max_tokens đủ lớn cho
     // cả thinking + text; parser bên dưới xử lý text trả về giống nhau ở cả hai đường.
+    const effort = config.claude.effort as Effort;
+    logger.info('[Claude] Analyze request', {
+      instrument,
+      model:     this.model,
+      effort,
+      transport: this.transport.name,
+    });
+
     const { text: rawText, meta } = await this.transport.complete({
       model:     this.model,
       system:    systemPrompt,
       userPrompt,
       maxTokens: 64000,
-      effort:    config.claude.effort as Effort,
+      effort,
     });
 
-    logger.info('[Claude] Response meta', { transport: this.transport.name, ...meta });
+    logger.info('[Claude] Response meta', {
+      instrument,
+      model:     this.model,
+      effort,
+      transport: this.transport.name,
+      ...meta,
+    });
 
     if (!rawText) {
       throw new Error(
