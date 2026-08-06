@@ -49,6 +49,11 @@ export class ClaudeSubscriptionTransport implements LlmTransport {
     const chunks: string[] = [];
     let resultText = '';
     let subtype: string | undefined;
+    // Result message của Agent SDK có kèm usage/latency — bóc ra để log (subscription
+    // không trả message.usage như Messages API, phải lấy từ đây).
+    let usage: unknown;
+    let durationMs: number | undefined;
+    let numTurns: number | undefined;
 
     const iterator = query({
       prompt: params.userPrompt,
@@ -81,12 +86,17 @@ export class ClaudeSubscriptionTransport implements LlmTransport {
       } else if (message?.type === 'result') {
         subtype = message.subtype;
         if (typeof message.result === 'string') resultText = message.result;
+        // duration_ms = tổng thời gian; usage.output_tokens = độ dài (thinking+text)
+        // → hai số này giải thích vì sao cùng effort mà latency khác nhau giữa các model.
+        usage      = message.usage;
+        durationMs = message.duration_ms;
+        numTurns   = message.num_turns;
       }
     }
 
     // Ưu tiên text tích lũy từ assistant (giống pipeline cũ: lọc text block, bỏ thinking).
     // Fallback về result string nếu assistant rỗng.
     const text = chunks.join('') || resultText;
-    return { text, meta: { transport: this.name, subtype } };
+    return { text, meta: { transport: this.name, subtype, durationMs, numTurns, usage } };
   }
 }

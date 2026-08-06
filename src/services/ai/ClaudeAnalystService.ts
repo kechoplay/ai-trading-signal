@@ -483,14 +483,26 @@ Khởi điểm mọi lệnh đã qua 3 HARD GATE = **Medium**. Cộng/trừ theo
 ## ĐỊNH DẠNG OUTPUT
 
 ### Trường hợp 1 — Chưa đủ điều kiện vào lệnh nhưng setup đang hình thành (giá chưa chạm POI, M5 chưa confirm, HOẶC phạm HARD GATE 1 — vị trí cực đoan — chờ giá về đúng vùng):
+Viết phần này theo kiểu KỊCH BẢN HÀNH ĐỘNG, dễ đọc: "giá về vùng nào → NẾU thấy nến/hành động này thì làm gì, NẾU thấy dấu hiệu kia thì làm gì". KHÔNG viết kiểu liệt kê "điều kiện còn thiếu" khô khan. Mỗi nhánh NẾU phải mô tả nến/hành động cụ thể (sweep mức nào, rejection/engulfing, CHoCH/BOS, body close qua mức nào) rồi kèm hành động rõ ràng (VÀO LỆNH / BỎ / ĐỨNG NGOÀI).
+
 #### WATCHLIST (CHƯA VÀO LỆNH)
 - Hướng dự kiến: BUY / SELL
 - POI cần chờ: [vùng giá]
-- Entry zone dự kiến: [vùng giá tại POI — nơi sẽ vào lệnh khi M5 confirm]
-- SL dự kiến: [giá] — neo cấu trúc M5 sau POI + đệm ≥1× ATR M5 — cách [X] USD
-- TP dự kiến: [giá] — mục tiêu thanh khoản M15 gần nhất (đã lùi khỏi vùng nghịch) — RR dự kiến [X:1]
-- Điều kiện kích hoạt còn thiếu: [cụ thể — chờ giá về POI đúng nửa range / chờ M5 confirm gì / chờ quét pool thanh khoản nào / chờ M15 xác nhận thêm do nghi CHoCH là correction trong impulsive leg / chờ đủ dữ liệu M5]
-- Lưu ý: đây là các mức DỰ KIẾN tính trước tại POI (đã biết hướng) — sẽ chốt lại chính xác khi M5 confirm; chưa đặt lệnh cho đến khi đủ điều kiện. Nếu RR dự kiến < 1:${config.minRr} thì ghi rõ setup sẽ bị loại khi tới POI.
+- Tình trạng hiện tại: [1 câu — giá đang ở đâu so với POI, còn thiếu điều gì để kích hoạt]
+
+**▸ KỊCH BẢN CHÍNH — [tên ngắn, vd: Mua tại POI khi M5 xác nhận]**
+- Chờ giá về vùng: [vùng giá POI]
+- ✅ NẾU thấy [nến/hành động xác nhận cụ thể — vd: quét thủng [mức] rồi bật lên với nến rejection/engulfing tăng + CHoCH/BOS nội bộ M5 hướng lên] → VÀO LỆNH [BUY/SELL]:
+  - Entry: [vùng giá tại POI]
+  - SL: [giá] — neo cấu trúc M5 sau POI + đệm ≥1× ATR M5 — cách [X] USD
+  - TP: [giá] — thanh khoản M15 gần nhất (đã lùi khỏi vùng nghịch) — RR dự kiến [X:1]
+- ❌ NẾU thấy [dấu hiệu phủ định — vd: body close dưới [mức] POI, không bật lại] → BỎ setup, POI đã hỏng, chờ vùng khác.
+- ⏸ NẾU giá vào POI nhưng nến lộn xộn / chưa có confirmation hợp lệ → ĐỨNG NGOÀI, tiếp tục canh.
+
+**▸ KỊCH BẢN PHỤ (chỉ ghi nếu có) — [tên ngắn, vd: Giá phá cấu trúc, đổi kịch bản]**
+- 🔄 NẾU [điều kiện đổi hướng — vd: nến H1 body close trên [mức] trần range] → range được vẽ lại; chờ giá retest vùng vừa phá + confirmation M5 để vào theo hướng mới.
+
+- Lưu ý: đây là các mức DỰ KIẾN tại POI (đã biết hướng) — sẽ chốt chính xác khi M5 confirm; chưa đặt lệnh cho đến khi đủ điều kiện. Nếu RR dự kiến < 1:${config.minRr} thì ghi rõ setup sẽ bị loại khi tới POI.
 
 ### Trường hợp 2 — Không có cơ hội nào:
 - Best opportunity: NO TRADE
