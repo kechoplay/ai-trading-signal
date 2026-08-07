@@ -81,6 +81,21 @@ export interface StructureEvent {
   time: string;
 }
 
+/**
+ * ADX (Wilder) — đo ĐỘ MẠNH của xu hướng, không đo hướng (hướng lấy từ +DI/−DI).
+ * Dùng làm regime filter cho luật vị trí range: trong trend mạnh, giá nằm lì ở
+ * premium/discount sâu là BÌNH THƯỜNG, không phải "mua đỉnh".
+ */
+export interface AdxReading {
+  value: number;
+  plusDi: number;
+  minusDi: number;
+  /** RANGE < 20 ≤ WEAK_TREND < 30 ≤ STRONG_TREND */
+  regime: 'RANGE' | 'WEAK_TREND' | 'STRONG_TREND';
+  /** Hướng suy từ +DI vs −DI — chỉ có ý nghĩa khi regime ≠ RANGE. */
+  direction: 'BULLISH' | 'BEARISH';
+}
+
 export interface KillZone {
   vnTime: string;
   inKillZone: boolean;
@@ -99,6 +114,8 @@ export interface TimeframeAnalysis {
   orderBlocks: OrderBlock[];
   liquidity: Liquidity;
   recentStructure: StructureEvent | null;
+  /** null = khung không đủ nến để ADX hội tụ (xem MIN_ADX_CANDLES). */
+  adx: AdxReading | null;
 }
 
 export interface IctFacts {
@@ -277,6 +294,84 @@ function atr(candles: Candle[], period = 14): number {
   return r2(recent.reduce((a, b) => a + b, 0) / recent.length);
 }
 
+// ─── 6b) ADX / DMI (Wilder) — regime filter cho luật vị trí range ────────────
+//   ADX chỉ nói xu hướng MẠNH hay YẾU. Hướng lấy từ +DI vs −DI.
+//   Dùng để nới/siết ngưỡng "premium sâu / discount sâu" trong prompt: cùng một
+//   mức 70% range mang ý nghĩa khác hẳn giữa thị trường sideway và trend mạnh.
+
+/**
+ * Số nến tối thiểu để ADX đáng tin. ADX là trung bình trượt Wilder LỒNG hai lần
+ * (RMA của DX, mà DX lại tính từ RMA của DM/TR) nên giai đoạn seed rất dài —
+ * với period 14 cần ~3× period thì giá trị mới hết phụ thuộc vào seed.
+ * Ít hơn ngưỡng này → trả null (thà không có còn hơn có số rác kèm luật cứng).
+ */
+const MIN_ADX_CANDLES = 43; // period(14) * 3 + 1
+
+function adx(candles: Candle[], period = 14): AdxReading | null {
+  if (candles.length < MIN_ADX_CANDLES) return null;
+
+  // 1) TR, +DM, −DM cho từng nến (bắt đầu từ nến thứ 2 vì cần nến trước).
+  const tr: number[] = [];
+  const plusDm: number[] = [];
+  const minusDm: number[] = [];
+  for (let i = 1; i < candles.length; i++) {
+    const c = candles[i];
+    const p = candles[i - 1];
+    tr.push(Math.max(c.high - c.low, Math.abs(c.high - p.close), Math.abs(c.low - p.close)));
+    // Chỉ bên nào vượt trội mới được tính DM; hòa hoặc âm → 0.
+    const up = c.high - p.high;
+    const down = p.low - c.low;
+    plusDm.push(up > down && up > 0 ? up : 0);
+    minusDm.push(down > up && down > 0 ? down : 0);
+  }
+
+  // 2) Wilder smoothing: seed = tổng `period` giá trị đầu, sau đó prev − prev/period + current.
+  const wilder = (xs: number[]): number[] => {
+    const out: number[] = [];
+    let sum = 0;
+    for (let i = 0; i < period; i++) sum += xs[i];
+    out.push(sum);
+    for (let i = period; i < xs.length; i++) {
+      sum = sum - sum / period + xs[i];
+      out.push(sum);
+    }
+    return out;
+  };
+  const trS = wilder(tr);
+  const plusS = wilder(plusDm);
+  const minusS = wilder(minusDm);
+
+  // 3) DX từng bước = 100 × |+DI − −DI| / (+DI + −DI).
+  const dxs: number[] = [];
+  for (let i = 0; i < trS.length; i++) {
+    if (trS[i] === 0) { dxs.push(0); continue; }
+    const pdi = (100 * plusS[i]) / trS[i];
+    const mdi = (100 * minusS[i]) / trS[i];
+    const sum = pdi + mdi;
+    dxs.push(sum === 0 ? 0 : (100 * Math.abs(pdi - mdi)) / sum);
+  }
+  if (dxs.length < period) return null;
+
+  // 4) ADX = RMA của DX (seed = trung bình `period` DX đầu tiên).
+  let value = dxs.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = period; i < dxs.length; i++) {
+    value = (value * (period - 1) + dxs[i]) / period;
+  }
+
+  const lastTr = trS[trS.length - 1];
+  const plusDi = lastTr === 0 ? 0 : (100 * plusS[plusS.length - 1]) / lastTr;
+  const minusDi = lastTr === 0 ? 0 : (100 * minusS[minusS.length - 1]) / lastTr;
+
+  const r1 = (x: number): number => Math.round(x * 10) / 10;
+  return {
+    value: r1(value),
+    plusDi: r1(plusDi),
+    minusDi: r1(minusDi),
+    regime: value >= 30 ? 'STRONG_TREND' : value >= 20 ? 'WEAK_TREND' : 'RANGE',
+    direction: plusDi >= minusDi ? 'BULLISH' : 'BEARISH',
+  };
+}
+
 // ─── 7) LIQUIDITY: equal highs / equal lows (dung sai theo ATR) ──────────────
 
 function findLiquidity(
@@ -389,6 +484,7 @@ export function analyzeTimeframe(
     orderBlocks: findOrderBlocks(candles, atrValue).slice(-6),
     liquidity: findLiquidity(swings, atrValue, candles),
     recentStructure: findRecentStructure(candles, swings),
+    adx: adx(candles),
   };
 }
 

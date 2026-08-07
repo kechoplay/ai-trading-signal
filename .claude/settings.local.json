@@ -21,7 +21,10 @@
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
       "Bash(git push *)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "PowerShell(npx tsc --noEmit -p tsconfig.json)",
+      "PowerShell(npx tsx adx-check.tmp.ts)",
+      "PowerShell(git -C \"D:\\\\Work\\\\ai-trading-signal\" status --short)"
     ]
   }
 }
