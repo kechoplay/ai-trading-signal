@@ -24,7 +24,10 @@
       "Bash(npx tsc *)",
       "PowerShell(npx tsc --noEmit -p tsconfig.json)",
       "PowerShell(npx tsx adx-check.tmp.ts)",
-      "PowerShell(git -C \"D:\\\\Work\\\\ai-trading-signal\" status --short)"
+      "PowerShell(git -C \"D:\\\\Work\\\\ai-trading-signal\" status --short)",
+      "Bash(awk 'NR>=290 && NR<=640' src/services/ai/ClaudeAnalystService.ts)",
+      "Bash(grep -c '`')",
+      "Bash(echo \"exit=$?\")"
     ]
   }
 }

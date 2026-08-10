@@ -202,6 +202,12 @@ npm run db:migrate     # chạy migration
 - `isCryptoInstrument()` (BTC/ETH/BNB/SOL/XRP/ADA/DOGE/LTC) → `buildCryptoSystemPrompt()` (từ vựng LONG/SHORT, SL/TP theo % + ATR, 24/7, liquidity sweep).
 - Còn lại → `buildGoldSystemPrompt()` (trader scalp XAU/USD, từ vựng BUY/SELL, SL/TP theo USD, kill zone London/NY, có trạng thái WATCHLIST).
 
+**Prompt vàng — hai cơ chế quyết định việc ra ORDER (đọc kỹ trước khi sửa HARD GATE):**
+- **HAI CHẾ ĐỘ VÀO LỆNH** (HARD GATE 2): `LIVE CONFIRM` (giá đã ở POI + M5 đã confirm) **hoặc** `LIMIT-CHỜ-POI` (POI fresh, entry dự kiến qua Gate 1 + Gate 3, cách giá hiện tại ≤ 1× ATR H1, có invalidation body-close → xuất ORDER lệnh chờ, tự hạ 1 bậc confidence). Lý do tồn tại: phân tích chạy rời rạc theo lần bấm nút, nếu bắt buộc live-confirm thì cửa sổ chỉ 1–2 nến M5 → gần như luôn trượt về WATCHLIST. WATCHLIST giờ chỉ dùng khi KHÔNG thỏa cả hai chế độ.
+- **HARD GATE 1 đo tại GIÁ VÀO LỆNH DỰ KIẾN**, không phải giá hiện tại — nếu không, giá hiện tại ở premium sâu sẽ chặn oan một lệnh BUY có entry nằm ở POI discount.
+- **THANG TP HAI TẦNG**: `TP chốt non` (mức thanh khoản/rào cản gần nhất, chốt 40–50% + dời breakeven, **không** bị Gate 3 ràng buộc) và `TP1 chính` (mục tiêu thật — **HARD GATE 3 đo RR trên mức này**). Cổng 3 phân loại rào cản nghịch hướng: **CỨNG** (fresh, chưa bị body close xuyên, khung ≥M15 → bắt buộc lùi TP1) vs **MỀM** (đã mitigated / đã bị xuyên / chỉ khung M5 → không chặn TP1, chỉ đặt chốt non trước nó).
+- Parser lấy `take_profit`/`risk_reward` từ dòng chứa token `TP1` **đầu tiên** trong block ORDER — dòng `TP chốt non` cố ý không chứa token đó nên không bị bắt nhầm. Đổi nhãn TP trong prompt phải kiểm lại `extractPriceFromLine(section, 'tp1')`.
+
 **Output là TEXT markdown (KHÔNG phải JSON)** — parse bằng regex, không dùng `JSON.parse`:
 - `extractAction()` trả về `BUY | SELL | NO_TRADE | WATCHLIST`. Thứ tự ưu tiên: ORDER block thật → `#### WATCHLIST` → dòng `Best opportunity:` trong SUMMARY.
 - `dirToAction()`: **LONG→BUY, SHORT→SELL** (crypto dùng LONG/SHORT, hệ thống lưu BUY/SELL).
