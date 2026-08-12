@@ -356,13 +356,21 @@ Phân tích THUẦN TÚY từ price action theo đúng quy trình bên dưới. 
 
 2. **H1 — Bias**: xác định BOS/CHoCH gần nhất theo đúng định nghĩa ở trên → BULLISH / BEARISH / NEUTRAL.
 
-3. **H1 — Premium/Discount**: range tính từ swing high đến swing low của cấu trúc H1 ĐANG giao dịch (ghi rõ lấy swing nào, timestamp nào). Fib 50% = equilibrium. Nếu một đầu range đã bị phá body close → range vô hiệu, vẽ lại trước khi tiếp tục.
+3. **H1 — Premium/Discount**: đọc \`DEALING RANGE\` của H1 trong FACTS (leg đang chạy). Fib 50% = equilibrium của chính leg đó. Nếu chân leg đã bị phá body close → leg vô hiệu, đọc lại leg mới trước khi tiếp tục.
 
    ### ⛔ HARD GATE 1 — KHÔNG MUA ĐỈNH / BÁN ĐÁY TRẮNG TRỢN (rào cứng duy nhất về vị trí)
    Đây là rào cứng, nhưng ĐÃ NỚI so với luật EQ cũ — chỉ chặn khi giá sai phía RÕ RỆT:
-   - **ĐO TẠI GIÁ VÀO LỆNH DỰ KIẾN, KHÔNG PHẢI GIÁ HIỆN TẠI.** Vị trí range luôn tính cho mức entry mà lệnh sẽ khớp (giữa vùng POI) — đó mới là nơi tiền thực sự vào thị trường. Giá hiện tại chỉ dùng để biết POI còn ở phía trước hay đã đi qua. Ghi cả hai vào Summary: "% range tại entry dự kiến [X]% (giá hiện tại [Y]%)".
+
+   #### ▸ MẪU SỐ: DÙNG DEALING RANGE, KHÔNG DÙNG RANGE MỞ RỘNG
+   > Lý do: "Range mở rộng" trong FACTS là high/low của **80 nến H1 ≈ 3 ngày giao dịch**. Một lệnh scalp M5 có SL 6–12 USD mà đo vị trí bằng cái range 120 USD kéo dài 3 ngày là **sai đơn vị đo**: nó chỉ nói giá đang ở đâu so với 3 ngày trước, không nói nhịp hiện tại còn chạy được bao xa. Đo như vậy thì mọi pullback nông trong một leg tăng đều thành "premium > 60%" và bị chặn oan — loại đúng những lệnh thuận trend tốt nhất.
+   - **Mẫu số chính thức = \`DEALING RANGE\` của H1 trong FACTS** (leg đang chạy: từ chân leg tới cực trị hiện tại). Mọi con số "% range" ở Cổng 1, Cảnh báo A và Summary đều tính trên leg này.
+   - Chỉ khi FACTS ghi dealing range là \`—\`, HOẶC \`sizeAtr < 1\` (leg nhỏ hơn 1× ATR = nhiễu, chưa thành nhịp) → mới lùi về dùng range mở rộng làm mẫu số. Ghi rõ trong Summary đã dùng mẫu số nào.
+   - Range mở rộng vẫn phải ĐỌC để biết bối cảnh (giá đang ở đâu trong bức tranh lớn) và để chọn mục tiêu thanh khoản xa — nhưng KHÔNG dùng nó để chặn lệnh.
+
+   #### ▸ ĐO TẠI ĐÂU
+   - **ĐO TẠI GIÁ VÀO LỆNH DỰ KIẾN, KHÔNG PHẢI GIÁ HIỆN TẠI.** Vị trí range luôn tính cho mức entry mà lệnh sẽ khớp (giữa vùng POI) — đó mới là nơi tiền thực sự vào thị trường. Giá hiện tại chỉ dùng để biết POI còn ở phía trước hay đã đi qua. Ghi cả hai vào Summary: "% dealing range tại entry dự kiến [X]% (giá hiện tại [Y]%)".
      → Hệ quả: giá hiện tại đang ở premium sâu KHÔNG tự động chặn một lệnh BUY có entry nằm tại POI trong discount, và ngược lại. Chỉ chặn khi CHÍNH mức entry rơi vào vùng cực đoan sai phía.
-   - Chia range làm 3 vùng: DISCOUNT sâu (0–40%), GIỮA (40–60% quanh EQ), PREMIUM sâu (60–100%).
+   - Chia dealing range làm 3 vùng: DISCOUNT sâu (0–40%), GIỮA (40–60% quanh EQ), PREMIUM sâu (60–100%).
    - **Chỉ CHẶN** hai trường hợp cực đoan: BUY khi giá đang ở **PREMIUM sâu (>60% range)**, hoặc SELL khi giá đang ở **DISCOUNT sâu (<40% range)** — đó là mua đúng đỉnh / bán đúng đáy, edge âm.
      → Khi rơi vào đây và vẫn muốn theo chiều đó: chuyển **WATCHLIST** chờ giá về vùng đúng, HOẶC cân nhắc **đảo chiều** về pool chưa quét.
    - Vùng GIỮA (40–60%, quanh EQ) và đúng nửa range theo chiều lệnh → **CHO PHÉP vào lệnh**. Nếu ở vùng giữa thì ghi chú "vị trí range trung tính" và hạ 1 bậc confidence, KHÔNG chặn.
@@ -385,7 +393,7 @@ Phân tích THUẦN TÚY từ price action theo đúng quy trình bên dưới. 
    - Bắt buộc ghi trong Summary regime đã dùng và ngưỡng tương ứng, ví dụ: "ADX H1 33.9 → STRONG_TREND thuận chiều, ngưỡng nới 75%; giá ở 68% range → PASS".
 
    ### ℹ️ CẢNH BÁO A — BIÊN EQ MỎNG (soft, chỉ hạ confidence)
-   - \`distance_to_EQ = |giá - EQ|\`, \`range_size = swing_high - swing_low\` (H1). Nếu \`distance_to_EQ < 10% × range_size\` → giá đang quanh EQ mỏng.
+   - \`distance_to_EQ = |entry dự kiến - EQ\` của dealing range H1\`, \`range_size = size của dealing range H1\`. Nếu \`distance_to_EQ < 10% × range_size\` → entry đang quanh EQ mỏng.
    - Xử lý: hạ tối đa 1 bậc confidence + ghi trong Summary "Premium/Discount MỎNG (X% range)". KHÔNG tự chuyển WATCHLIST, KHÔNG chặn lệnh (kể cả khi H4 NEUTRAL) — miễn qua HARD GATE 1.
 
 4. **Draw on Liquidity (DOL)**:
@@ -501,7 +509,8 @@ Phân tích THUẦN TÚY từ price action theo đúng quy trình bên dưới. 
 Mọi thứ khác (vị trí EQ mỏng, DOL, CHoCH-impulsive, pool kẹp, kill zone, thuận/ngược dòng)
 chỉ ĐIỀU CHỈNH CONFIDENCE. Chỉ 3 rào dưới đây mới quyết định có được ra ORDER hay không:
 
-- **HARD GATE 1 — Vị trí không cực đoan**: không BUY ở PREMIUM sâu, không SELL ở DISCOUNT sâu —
+- **HARD GATE 1 — Vị trí không cực đoan** (đo trên **DEALING RANGE** trong FACTS, KHÔNG phải range
+  mở rộng 80 nến): không BUY ở PREMIUM sâu, không SELL ở DISCOUNT sâu —
   **đo tại GIÁ VÀO LỆNH DỰ KIẾN, không phải giá hiện tại**. Ngưỡng "sâu" THAY ĐỔI THEO REGIME
   ADX H1 (mặc định 60/40; STRONG_TREND thuận chiều → 75/25; RANGE → 55/45 — xem bảng ở bước 3).
   Phạm vào → WATCHLIST hoặc cân nhắc đảo chiều.
@@ -517,7 +526,7 @@ chỉ ĐIỀU CHỈNH CONFIDENCE. Chỉ 3 rào dưới đây mới quyết đị
   NO TRADE, bất kể mọi yếu tố khác đẹp đến đâu.
 
 ### ▸ TỰ KIỂM TRƯỚC KHI XUẤT ORDER (checklist nhanh)
-1. HARD GATE 1: đọc regime ADX H1 từ FACTS → chốt ngưỡng cực đoan (75/25, 60/40 hay 55/45) → **mức entry dự kiến** (không phải giá hiện tại) có phạm không? → nếu phạm, WATCHLIST.
+1. HARD GATE 1: đọc **DEALING RANGE H1** (leg đang chạy) làm mẫu số → đọc regime ADX H1 từ FACTS → chốt ngưỡng cực đoan (75/25, 60/40 hay 55/45) → **mức entry dự kiến** (không phải giá hiện tại) có phạm không? → nếu phạm, WATCHLIST.
 2. HARD GATE 2: đã chạm POI + có confirmation M5 (chế độ A) chưa? → nếu chưa, **BẮT BUỘC xét tiếp chế độ B (LIMIT-CHỜ-POI)** trước khi kết luận. Cả A lẫn B đều không thỏa → WATCHLIST.
 3. HARD GATE 3: RR **TP1 chính** (mục tiêu thanh khoản thật, chỉ lùi khi gặp RÀO CẢN CỨNG) còn ≥ 1:${config.minRr}? → nếu không, NO TRADE. Không dùng RR của "TP chốt non" để chấm cổng này.
 4. Cả 3 PASS → xuất ORDER. Tổng hợp mọi CẢNH BÁO (A–D, kill zone, thuận/ngược dòng H4, spread mỏng) để chọn confidence và % size — KHÔNG dùng chúng để hủy lệnh.
@@ -575,7 +584,7 @@ Viết phần này theo kiểu KỊCH BẢN HÀNH ĐỘNG, dễ đọc: "giá v�
 - Cấu trúc lệnh: **1 PHẦN (chỉ SCALP)** / **2 PHẦN (SCALP + POSITION)** — tùy chọn theo độ mạnh setup
 - Entry zone: [giá] (chung cho cả 2 phần nếu chia) — nếu LIMIT: cách giá hiện tại [X] USD (= [Y]× ATR H1, phải ≤ 1×)
 - Điều kiện kích hoạt (đã thỏa — HARD GATE 2): [chế độ A: POI nào + confirmation M5 nào | chế độ B: POI nào + vì sao đã chín để đặt chờ]
-- Vị trí range **tại entry dự kiến**: [premium/discount/EQ, X% range] (giá hiện tại [Y]% range) vs ngưỡng regime [75/25 | 60/40 | 55/45] — HARD GATE 1; Cảnh báo A nếu EQ mỏng
+- Vị trí **trong dealing range** tại entry dự kiến: [premium/discount/EQ, X% leg] (giá hiện tại [Y]% leg) — dealing range dùng: [low–high, size] — vs ngưỡng regime [75/25 | 60/40 | 55/45] — HARD GATE 1; Cảnh báo A nếu EQ mỏng
 - Regime H1: ADX [X] → [STRONG_TREND / WEAK_TREND / RANGE / KHÔNG XÁC ĐỊNH], lệnh thuận/ngược hướng ADX
 - Draw on Liquidity: [lên/xuống] — cùng chiều / ngược (Cảnh báo B nếu ngược)
 - Pool kẹp giữa entry-SL_SCALP (M5/M15): Không / Có → đã dời SL / chấp nhận rủi ro (Cảnh báo D)
@@ -603,7 +612,8 @@ Viết phần này theo kiểu KỊCH BẢN HÀNH ĐỘNG, dễ đọc: "giá v�
 - Chế độ vào lệnh: LIVE CONFIRM / LIMIT-CHỜ-POI / N/A (watchlist–no trade)
 - Context H4: BULLISH / BEARISH / NEUTRAL (lệnh thuận hay ngược dòng)
 - Bias H1: BULLISH / BEARISH / NEUTRAL
-- Premium/Discount: **tại entry dự kiến [X]% range** (giá hiện tại [Y]% range), biên cách EQ [Z% range] vs ngưỡng regime [W%] — **HARD GATE 1: PASS/FAIL** (Cảnh báo A nếu EQ mỏng)
+- Dealing range dùng làm mẫu số: [low–high, size, = N× ATR] (hoặc "range mở rộng" + lý do fallback)
+- Premium/Discount: **tại entry dự kiến [X]% leg** (giá hiện tại [Y]% leg), biên cách EQ [Z% leg] vs ngưỡng regime [W%] — **HARD GATE 1: PASS/FAIL** (Cảnh báo A nếu EQ mỏng)
 - Regime H1: ADX [X] → [STRONG_TREND / WEAK_TREND / RANGE / KHÔNG XÁC ĐỊNH] — ngưỡng cực đoan đã dùng
 - Draw on Liquidity: lên / xuống — cùng chiều / ngược (Cảnh báo B)
 - Dữ liệu M5: đủ/thiếu 30 nến — Impulsive leg: Có/Không — CHoCH nghi correction? (Cảnh báo C)
@@ -905,12 +915,24 @@ function formatTimeframeFacts(a: TimeframeAnalysis): string {
       + ` (+DI ${a.adx.plusDi} / −DI ${a.adx.minusDi} → nghiêng ${a.adx.direction})`
     : 'ADX(14): — (không đủ nến để tính, coi như regime KHÔNG XÁC ĐỊNH)';
 
+  // DEALING RANGE = mẫu số CHÍNH THỨC của HARD GATE 1. Range mở rộng ở trên chỉ là
+  // bối cảnh — đo entry scalp bằng nó sẽ chặn nhầm mọi pullback nông trong trend.
+  const leg = a.activeLeg;
+  const legLine = leg
+    ? `▶ DEALING RANGE (leg đang chạy — MẪU SỐ CHÍNH THỨC của Cổng 1):`
+      + ` ${leg.low}–${leg.high} | hướng ${leg.direction} | chân leg ${leg.from} (${leg.fromTime})`
+      + ` | Size: ${leg.size} (= ${leg.sizeAtr}× ATR) | EQ(50%): ${leg.equilibrium}`
+      + ` | Giá hiện tại ở ${leg.currentPct}% leg`
+      + (leg.sizeAtr < 1 ? ' | ⚠️ leg < 1× ATR = nhiễu, dùng range mở rộng thay thế' : '')
+    : '▶ DEALING RANGE (leg đang chạy): — (chưa đủ swing đối nghịch → dùng range mở rộng thay thế)';
+
   return [
     `Bias: ${a.bias} | ATR: ${a.atr} | Giá: ${a.lastPrice}`,
     adxLine,
     `Cấu trúc gần nhất (BOS/CHoCH): ${fmtStruct(a.recentStructure)}`,
-    `Range: ${r.rangeLow}–${r.rangeHigh} | Size: ${rangeSize} | EQ(50%): ${r.equilibrium} | Vùng: ${r.zone}`,
-    `Fib: 0.236=${r.fib['0.236']} 0.382=${r.fib['0.382']} 0.618=${r.fib['0.618']} 0.786=${r.fib['0.786']}`,
+    `Range mở rộng (${a.candleCount} nến gần nhất — chỉ để tham chiếu bối cảnh): ${r.rangeLow}–${r.rangeHigh} | Size: ${rangeSize} | EQ(50%): ${r.equilibrium} | Vùng: ${r.zone}`,
+    `Fib (range mở rộng): 0.236=${r.fib['0.236']} 0.382=${r.fib['0.382']} 0.618=${r.fib['0.618']} 0.786=${r.fib['0.786']}`,
+    legLine,
     `Swing highs: ${fmtSwings(a.swingHighs)}`,
     `Swing lows: ${fmtSwings(a.swingLows)}`,
     `FVG: ${fmtZones(a.fvgs)}`,

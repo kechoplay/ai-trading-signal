@@ -38,6 +38,34 @@ export interface RangeFib {
   zone: 'PREMIUM' | 'DISCOUNT';
 }
 
+/**
+ * LEG ĐANG CHẠY (dealing range thật sự) — nhịp giá hiện tại, tính từ pivot đối
+ * nghịch gần nhất tới cực trị hiện tại.
+ *
+ * Lý do tồn tại: `RangeFib` lấy high/low của N nến cố định (H1 = 80 nến ≈ 3 ngày
+ * giao dịch vàng). Dùng cái range macro đó làm mẫu số cho một lệnh scalp M5 risk
+ * ~6 USD là sai đơn vị đo: nó chỉ nói giá đang ở đâu so với 3 ngày trước, không
+ * nói nhịp hiện tại còn chạy được bao xa. Hệ quả thực tế: mọi pullback nông trong
+ * một leg tăng đều rơi vào "premium >60%" của range macro và bị HARD GATE 1 chặn,
+ * kể cả khi nó nằm ở discount của chính nhịp đang giao dịch.
+ */
+export interface ActiveLeg {
+  direction: 'UP' | 'DOWN';
+  /** Điểm khởi đầu leg (swing low nếu UP, swing high nếu DOWN). */
+  from: number;
+  fromTime: string;
+  /** Cực trị hiện tại của leg (đã tính cả phần leg đang mở rộng sau pivot). */
+  to: number;
+  low: number;
+  high: number;
+  size: number;
+  equilibrium: number;
+  /** size theo bội số ATR cùng khung — < 1 nghĩa là leg quá nhỏ, coi như nhiễu. */
+  sizeAtr: number;
+  /** Vị trí giá hiện tại trong leg: 0% = đáy leg, 100% = đỉnh leg. */
+  currentPct: number;
+}
+
 export interface Fvg {
   type: 'BULLISH' | 'BEARISH';
   top: number;
@@ -108,6 +136,8 @@ export interface TimeframeAnalysis {
   bias: Bias;
   atr: number;
   range: RangeFib;
+  /** null = chưa đủ swing đối nghịch để xác định nhịp đang chạy. */
+  activeLeg: ActiveLeg | null;
   swingHighs: Swing[];
   swingLows: Swing[];
   fvgs: Fvg[];
@@ -210,6 +240,68 @@ function rangeAndFib(candles: Candle[], lookbackBars = 80): RangeFib {
     },
     currentPrice: r2(last),
     zone: last > eq ? 'PREMIUM' : 'DISCOUNT',
+  };
+}
+
+// ─── 3b) LEG ĐANG CHẠY (dealing range cho HARD GATE 1) ───────────────────────
+
+/**
+ * Xác định nhịp giá đang chạy: lấy pivot mới nhất, lùi về pivot đối nghịch gần
+ * nhất trước nó → đó là chân leg. Đỉnh/đáy leg lấy theo cực trị THỰC TẾ từ chân
+ * leg tới nến cuối, nên leg tự mở rộng khi giá vượt pivot cũ (không bị đóng băng
+ * ở mức swing đã xác nhận).
+ */
+function findActiveLeg(
+  candles: Candle[],
+  swings: { highs: Swing[]; lows: Swing[] },
+  atrValue: number,
+): ActiveLeg | null {
+  const lastHigh = swings.highs[swings.highs.length - 1];
+  const lastLow = swings.lows[swings.lows.length - 1];
+  if (!lastHigh && !lastLow) return null;
+
+  // Pivot mới nhất quyết định chiều leg; chân leg là pivot đối nghịch TRƯỚC nó.
+  let upLeg: boolean;
+  let anchor: Swing | undefined;
+
+  if (lastHigh && lastLow) {
+    upLeg = lastHigh.index > lastLow.index;
+    const newestIndex = upLeg ? lastHigh.index : lastLow.index;
+    anchor = (upLeg ? swings.lows : swings.highs)
+      .filter((s) => s.index < newestIndex)
+      .pop();
+    // Không có pivot đối nghịch nào trước đó → dùng pivot đối nghịch gần nhất hiện có.
+    anchor ??= upLeg ? lastLow : lastHigh;
+  } else {
+    // Cấu trúc một chiều (chỉ có một loại pivot): leg chạy từ pivot đó tới hiện tại.
+    upLeg = Boolean(lastLow);
+    anchor = lastLow ?? lastHigh;
+  }
+  if (!anchor) return null;
+
+  const tail = candles.slice(anchor.index);
+  if (!tail.length) return null;
+
+  const from = anchor.price;
+  const to = upLeg ? Math.max(...tail.map((c) => c.high)) : Math.min(...tail.map((c) => c.low));
+  const low = Math.min(from, to);
+  const high = Math.max(from, to);
+  const size = high - low;
+  if (size <= 0) return null;
+
+  const last = candles[candles.length - 1].close;
+
+  return {
+    direction: upLeg ? 'UP' : 'DOWN',
+    from: r2(from),
+    fromTime: anchor.time,
+    to: r2(to),
+    low: r2(low),
+    high: r2(high),
+    size: r2(size),
+    equilibrium: r2((low + high) / 2),
+    sizeAtr: atrValue > 0 ? Number((size / atrValue).toFixed(2)) : 0,
+    currentPct: Number((((last - low) / size) * 100).toFixed(1)),
   };
 }
 
@@ -478,6 +570,7 @@ export function analyzeTimeframe(
     bias: structureBias(swings),
     atr: atrValue,
     range: rangeAndFib(candles, fibLookback),
+    activeLeg: findActiveLeg(candles, swings, atrValue),
     swingHighs: swings.highs.slice(-5),
     swingLows: swings.lows.slice(-5),
     fvgs: findFVGs(candles).slice(-6),

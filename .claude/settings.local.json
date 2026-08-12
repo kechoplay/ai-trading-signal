@@ -27,7 +27,10 @@
       "PowerShell(git -C \"D:\\\\Work\\\\ai-trading-signal\" status --short)",
       "Bash(awk 'NR>=290 && NR<=640' src/services/ai/ClaudeAnalystService.ts)",
       "Bash(grep -c '`')",
-      "Bash(echo \"exit=$?\")"
+      "Bash(echo \"exit=$?\")",
+      "Bash(sed -i \"s|'./src/services/ai/ict/IctPreprocessor'|'D:/ai-trading-signal/src/services/ai/ict/IctPreprocessor'|\" /tmp/legtest.ts)",
+      "Bash(npx tsx *)",
+      "Bash(cat >> *)"
     ]
   }
 }
