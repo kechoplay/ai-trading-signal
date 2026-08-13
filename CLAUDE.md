@@ -6,7 +6,7 @@
 
 ## Tổng quan
 
-**AI Trading Signal** là hệ thống phân tích kỹ thuật và phát tín hiệu giao dịch cho **XAU/USD (vàng)** và các cặp **crypto (BTC/USD, ETH/USD…)** sử dụng Claude AI (Anthropic). Hệ thống lấy dữ liệu nến từ API thị trường, gửi qua Claude để phân tích đa khung thời gian, lưu kết quả vào SQLite và gửi thông báo qua Telegram. Phân tích được trigger thủ công qua REST API / dashboard (không dùng cron).
+**AI Trading Signal** là hệ thống phân tích kỹ thuật và phát tín hiệu giao dịch cho **XAU/USD (vàng)** và các cặp **crypto (BTC/USD, ETH/USD…)** sử dụng Claude AI (Anthropic). Hệ thống lấy dữ liệu nến từ API thị trường, gửi qua Claude để phân tích đa khung thời gian, lưu kết quả vào SQLite và gửi thông báo qua Telegram. Phân tích được trigger theo hai đường: **scheduler nội bộ** (mặc định mỗi 15 phút, 8h–22h, T2–T6 giờ VN) và **thủ công** qua REST API / dashboard. Không dùng cron của OS — scheduler chạy trong process server.
 
 - **Ngôn ngữ phân tích AI**: Tiếng Việt
 - **Khung thời gian phân tích**: Vàng dùng H4 (context), H1 (bias), M15 (POI), M5 (entry). Crypto dùng bộ khung riêng từ M15: D (context), H4 (bias), H1 (POI), M15 (entry) — cấu hình qua `TRADING_CRYPTO_TIMEFRAMES`, áp dụng khi instrument là crypto và request không truyền timeframes.
@@ -43,7 +43,9 @@ D:/ai-trading-signal/
     │   ├── index.html                 ← bảng tín hiệu intraday + nút phân tích XAU / BTC
     │   └── docs.html                  ← trang tài liệu
     └── services/
-        ├── SignalOrchestrator.ts      ← pipeline chính (fetch→AI→DB→Telegram)
+        ├── SignalOrchestrator.ts      ← pipeline chính (fetch→AI→Telegram)
+        ├── AnalysisRunner.ts          ← orchestrator + lưu DB + single-flight lock
+        ├── AnalysisScheduler.ts       ← tự chạy theo chu kỳ (15p, 8h–22h, T2–T6)
         ├── MarketHoursService.ts      ← kiểm tra giờ giao dịch
         ├── ai/
         │   ├── ClaudeAnalystService.ts  ← gọi Claude (build prompt vàng/crypto, parse text)
@@ -83,9 +85,14 @@ D:/ai-trading-signal/
 ## Luồng dữ liệu
 
 ```
-[POST /api/analyze]  (symbol tùy chọn — XAU/USD hoặc BTC/USD…)
+[AnalysisScheduler]  (mỗi 15p, 8h–22h, T2–T6)   [POST /api/analyze]  (bấm tay)
+       └──────────────────┬─────────────────────────────┘
+                          ↓
+[runAnalysis()]  ← AnalysisRunner: đường DUY NHẤT có lưu DB
+       │  single-flight: đang chạy thì lượt/request thứ 2 bị chặn (scheduler bỏ lượt,
+       │  API trả 409) — một lượt mất ~3 phút và tiêu quota subscription dùng chung
        ↓
-[SignalOrchestrator.run(instrument?, timeframes?)]
+[SignalOrchestrator.run(instrument?, timeframes?, analysisType?)]
        │  timeframes: dùng tham số nếu có, fallback về TRADING_TIMEFRAMES trong .env
        ├─ MarketDataProvider.fetchCandles(symbol, H4/H1/M15/M5)  (crypto → exchange=Binance)
        ├─ MarketDataProvider.fetchCurrentPrice()
@@ -98,7 +105,8 @@ D:/ai-trading-signal/
        │    LONG→BUY, SHORT→SELL; WATCHLIST = canh setup, chưa vào lệnh
        └─ Trả về AnalysisResult (+ conditionalSetups)
        ↓
-[Prisma] → lưu TradingSignal vào SQLite (raw_ai_response chứa conditional_setups)
+[Prisma] → lưu TradingSignal + AnalysisLog vào SQLite (trong AnalysisRunner, KHÔNG
+       phải trong route — scheduler cần bản ghi này để carry-forward hoạt động)
        ↓
 [TelegramNotifier]
        ├─ formatSignalCard() → HTML card (badge BUY/SELL/WATCHLIST/NO_TRADE)
@@ -160,6 +168,15 @@ TRADING_MIN_RR=2.0
 MARKET_HOURS_OPEN=6
 MARKET_HOURS_CLOSE=22
 MARKET_HOURS_TIMEZONE=Asia/Ho_Chi_Minh
+
+# Scheduler — tự chạy phân tích intraday theo chu kỳ (dùng MARKET_HOURS_TIMEZONE)
+SCHEDULER_ENABLED=true
+SCHEDULER_INTERVAL_MIN=15           # mốc canh theo đồng hồ :00/:15/:30/:45
+SCHEDULER_START_HOUR=8
+SCHEDULER_END_HOUR=22               # 22 = lượt cuối 21:45
+SCHEDULER_WEEKDAYS=1,2,3,4,5        # 1=T2 … 5=T6 (0=CN, 6=T7)
+SCHEDULER_SYMBOLS=                  # trống = TRADING_INSTRUMENT
+SCHEDULER_OFFSET_SEC=0
 
 # API Keys
 TWELVEDATA_API_KEY=...
@@ -258,6 +275,12 @@ Trigger phân tích thủ công.
   "reasoning": "<HTML analysis>"
 }
 ```
+
+**409 Conflict** khi scheduler (hoặc một request khác) đang chạy phân tích — single-flight trong `AnalysisRunner`, không bao giờ có 2 lượt song song.
+
+### GET /api/scheduler
+
+Trạng thái scheduler: `enabled`, `interval_min`, `window`, `weekdays`, `symbols`, `runs_per_day`, `next_run_at`, `last_run_at`, `last_action`, `last_error`, `run_count`, `skip_count`, `running` (lượt đang chạy hoặc null). Dùng để soi mốc chạy kế tiếp và lỗi gần nhất mà không cần đọc log.
 
 ### GET /api/signals
 
@@ -368,3 +391,5 @@ GET https://api-fxpractice.oanda.com/v3/instruments/XAU_USD/candles
 4. **Telegram**: Dùng HTML parse_mode — không dùng MarkdownV2
 5. **Config**: Mọi giá trị cứng phải lấy từ `src/config/trading.ts`, không hardcode
 6. **Logging**: Dùng `logger` từ `src/logger.ts`, không dùng `console.log`
+7. **Chạy phân tích**: Mọi đường trigger mới PHẢI gọi `runAnalysis()` trong `AnalysisRunner.ts`, không gọi thẳng `SignalOrchestrator.run()` — nếu không sẽ gửi Telegram mà không lưu DB, làm carry-forward và dashboard mất dữ liệu (lỗi này còn tồn tại ở `mcp-server.ts:133`).
+8. **Quota subscription**: Một lượt phân tích tiêu ~50k input + ~12k output token và mất ~3 phút (Opus 5, effort=high), dùng CHUNG hạn mức với session Claude Code. Trước khi hạ `SCHEDULER_INTERVAL_MIN` xuống dưới 15 hoặc mở rộng khung giờ, tính lại số lượt/ngày (`runs_per_day` trong `/api/scheduler`) và kiểm `/usage`.

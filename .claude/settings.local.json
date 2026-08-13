@@ -30,7 +30,28 @@
       "Bash(echo \"exit=$?\")",
       "Bash(sed -i \"s|'./src/services/ai/ict/IctPreprocessor'|'D:/ai-trading-signal/src/services/ai/ict/IctPreprocessor'|\" /tmp/legtest.ts)",
       "Bash(npx tsx *)",
-      "Bash(cat >> *)"
+      "Bash(cat >> *)",
+      "Bash(awk '{n++;s+=$1; if\\($1<mn||n==1\\)mn=$1; if\\($1>mx\\)mx=$1; a[n]=$1} END{asort\\(a\\); print \"n=\"n, \"avg=\"s/n, \"min=\"mn, \"max=\"mx, \"median=\"a[int\\(n/2\\)+1], \"p90=\"a[int\\(n*0.9\\)]}')",
+      "Bash(awk '$1>1000{n++;s+=$1; if\\($1<mn||n==1\\)mn=$1; if\\($1>mx\\)mx=$1} END{print \"n=\"n, \"avg=\"s/n, \"min=\"mn, \"max=\"mx}')",
+      "Bash(grep -o '[0-9]*$')",
+      "Bash(awk '{n++;s+=$1;if\\($1>mx\\)mx=$1}END{print \"n=\"n,\"avg_ms=\"s/n,\"max_ms=\"mx}')",
+      "Bash(grep -oE '\\(elapsed|duration|took|ms\\)[^,}]{0,20}' logs/signal.log)",
+      "Bash(ls -la \"D:\\\\Log 23.81.45.160\\\\\" 2>/dev/null; echo \"=== size/lines ===\"; wc -l \"D:\\\\Log 23.81.45.160\\\\server-out.log\")",
+      "Read(//d/Log 23.81.45.160//**)",
+      "Read(//d/Log 23.81.45.160/**)",
+      "Bash(tail -c 6000 \"/d/Log 23.81.45.160/server-out.log\")",
+      "Read(//tmp/**)",
+      "Bash(cd \"/d/Log 23.81.45.160\"; echo \"=== errors/limits ===\"; grep -in 'usage limit\\\\|rate limit\\\\|429\\\\|limit reached\\\\|exceeded\\\\|error_during_execution\\\\|subtype\":\"error' server-out.log | tail -15; echo \"=== runs per day \\(Response meta with usage\\) ===\"; awk -F'|' '{split\\($1,d,\" \"\\); c[d[1]]++} END{for\\(k in c\\) print k, c[k]}' /tmp/rows.txt | sort | tail -12)",
+      "Bash(grep -aoE '^[0-9-]+ [0-9:]+ .{0,10}\\(error|warn\\).{0,10}: [^{]{0,120}' server-out.log)",
+      "Bash(awk -F'|' '$2==\"claude-opus-5\" && $3==\"high\"{n++; d=$4/1000; s+=d; if\\(d>300\\)o5++; if\\(d>240\\)o4++; if\\(d>180\\)o3++; if\\(d>mx\\)mx=d; a[n]=d; oc+=$7; cw+=$5; cr+=$6} END{asort\\(a\\); printf \"n=%d avg=%.0fs median=%.0fs p90=%.0fs max=%.0fs | >180s:%d \\(%.0f%%\\) >240s:%d \\(%.0f%%\\) >300s:%d\\\\n\", n, s/n, a[int\\(n/2\\)+1], a[int\\(n*0.9\\)], mx, o3, o3*100/n, o4, o4*100/n, o5; printf \"avg tokens: cache_write=%.0f cache_read=%.0f output=%.0f\\\\n\", cw/n, cr/n, oc/n}' /tmp/rows.txt)",
+      "Bash(npx prisma *)",
+      "Bash(API_SERVER_KEY= PORT=3099 SCHEDULER_ENABLED=true npx tsx src/index.ts)",
+      "Bash(curl -s http://localhost:3099/api/scheduler)",
+      "Bash(kill %1)",
+      "Bash(grep -n \"không dùng cron\\\\|SignalOrchestrator.ts\\\\|MarketHoursService.ts\\\\|POST /api/analyze$\\\\|### GET /api/signals\" CLAUDE.md)",
+      "Bash(awk '{print $1, $2}')",
+      "Bash(awk '$1>1')",
+      "Bash(node -e \"console.log\\('icu:', process.versions.icu, '| tz test:', new Intl.DateTimeFormat\\('en-GB',{timeZone:'Asia/Ho_Chi_Minh',hour:'2-digit',minute:'2-digit',hour12:false}\\).format\\(new Date\\(\\)\\)\\)\")"
     ]
   }
 }

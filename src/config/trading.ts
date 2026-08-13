@@ -57,6 +57,32 @@ export const config = {
     timezone: process.env.MARKET_HOURS_TIMEZONE ?? 'Asia/Ho_Chi_Minh',
   },
 
+  // Scheduler tự chạy phân tích intraday theo chu kỳ (trước đây chỉ trigger tay qua
+  // API/dashboard). Mốc chạy canh theo ĐỒNG HỒ (…:00/:15/:30/:45) để phân tích ngay sau
+  // khi nến M15 đóng. Múi giờ dùng chung marketHours.timezone.
+  // CẢNH BÁO QUOTA: mỗi lần chạy tiêu ~50k input + ~12k output token của subscription
+  // (dùng chung với session Claude Code). 15 phút × 8h–22h = 56 lần/ngày — trước khi
+  // hạ intervalMin xuống nữa thì kiểm `/usage` để chắc còn hạn mức.
+  scheduler: {
+    enabled: (process.env.SCHEDULER_ENABLED ?? 'false').toLowerCase() === 'true',
+    intervalMin: parseInt(process.env.SCHEDULER_INTERVAL_MIN ?? '15', 10),
+    startHour: parseInt(process.env.SCHEDULER_START_HOUR ?? '8', 10),
+    endHour: parseInt(process.env.SCHEDULER_END_HOUR ?? '22', 10),
+    // 1=T2 … 5=T6 (chuẩn Date.getDay: 0=CN, 6=T7). Vàng nghỉ T7/CN nên mặc định bỏ.
+    weekdays: (process.env.SCHEDULER_WEEKDAYS ?? '1,2,3,4,5')
+      .split(',')
+      .map((s) => parseInt(s.trim(), 10))
+      .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6),
+    // Trống → dùng TRADING_INSTRUMENT. Nhiều symbol → chạy LẦN LƯỢT trong cùng một tick
+    // (không song song, vì single-flight trong AnalysisRunner chặn chạy đồng thời).
+    symbols: (process.env.SCHEDULER_SYMBOLS ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+    // Lùi vài giây sau mốc nến đóng nếu provider trả nến cuối chậm.
+    offsetSec: parseInt(process.env.SCHEDULER_OFFSET_SEC ?? '0', 10),
+  },
+
   twelvedata: {
     apiKey: process.env.TWELVEDATA_API_KEY ?? '',
     baseUrl: process.env.TWELVEDATA_BASE_URL ?? 'https://api.twelvedata.com',

@@ -9,12 +9,14 @@ import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middlew
 import { prisma } from './db';
 import { logger } from './logger';
 import { config } from './config/trading';
-import { SignalOrchestrator } from './services/SignalOrchestrator';
-import { TelegramNotifier } from './services/telegram/TelegramNotifier';
+import { AnalysisBusyError, runAnalysis } from './services/AnalysisRunner';
+import { AnalysisScheduler } from './services/AnalysisScheduler';
 import { createMcpServer } from './mcp-server';
 import { McpOAuthProvider, createAuthCode } from './services/auth/McpOAuthProvider';
 
 const app = express();
+// Khởi tạo sớm để route /api/scheduler tham chiếu được; chỉ .start() sau khi listen.
+const scheduler = AnalysisScheduler.fromConfig();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
@@ -95,42 +97,25 @@ app.post('/api/analyze', requireApiKey, async (req, res) => {
   const startedAt = Date.now();
   try {
     logger.info('POST /api/analyze triggered', { symbol: symbol ?? config.instrument, timeframes: timeframes ?? 'default' });
-    const { result, rawText, instrument: sym, currentPrice } = await SignalOrchestrator.fromConfig().run(symbol, timeframes, 'intraday');
-    const durationMs = Date.now() - startedAt;
-
-    const notifier = TelegramNotifier.fromConfig();
-    const setup     = notifier.formatSignalCard(result, sym, currentPrice);
-    const reasoning = notifier.formatAnalysis(rawText);
-
-    await prisma.$transaction([
-      prisma.tradingSignal.create({
-        data: {
-          instrument:      sym,
-          action:          result.action,
-          timeframe:       (timeframes ?? config.timeframes)[0] ?? null,
-          analysis_type:   'intraday',
-          entry:           result.entry,
-          stop_loss:       result.stopLoss,
-          take_profit:     result.takeProfit,
-          risk_reward:     result.riskReward,
-          confidence:      result.confidence,
-          current_price:   currentPrice,
-          reasoning:       result.reasoning,
-          trend_bias:      result.trendBias,
-          raw_ai_response: JSON.stringify({ ...(result.raw ?? {}), conditional_setups: result.conditionalSetups }),
-          analyze_at:      new Date(startedAt),
-        },
-      }),
-      prisma.analysisLog.create({
-        data: { symbol: sym, duration_ms: durationMs, setup, reasoning },
-      }),
-    ]);
+    const { symbol: sym, durationMs, setup, reasoning } =
+      await runAnalysis({ symbol, timeframes, analysisType: 'intraday', trigger: 'api' });
 
     res.json({ ok: true, symbol: sym, duration_ms: durationMs, setup, reasoning });
   } catch (err: any) {
+    // Scheduler đang chạy đúng lúc bấm tay → 409 thay vì chạy song song (mỗi lần tốn
+    // ~3 phút + quota subscription dùng chung).
+    if (err instanceof AnalysisBusyError) {
+      logger.warn('POST /api/analyze bị chặn — đang có phân tích chạy', { error: err.message });
+      res.status(409).json({ error: err.message });
+      return;
+    }
     logger.error('POST /api/analyze failed', { error: err.message, duration_ms: Date.now() - startedAt });
     res.status(500).json({ error: err.message ?? 'Analysis failed' });
   }
+});
+
+app.get('/api/scheduler', requireApiKey, (_req, res) => {
+  res.json(scheduler.status());
 });
 
 // ─── Symbols ──────────────────────────────────────────────────────────────────
@@ -499,4 +484,5 @@ const { port } = config.server;
 app.listen(port, () => {
   logger.info(`Dashboard running at http://localhost:${port}`);
   logger.info(`MCP endpoint: http://localhost:${port}/mcp`);
+  scheduler.start();
 });
