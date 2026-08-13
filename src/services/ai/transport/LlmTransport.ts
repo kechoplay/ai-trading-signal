@@ -16,11 +16,49 @@ export interface LlmCompletionParams {
   effort: Effort;
 }
 
+/** Token tiêu thụ của MỘT lượt gọi LLM (đã chuẩn hoá giữa API key và subscription). */
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  /** Token đọc lại từ prompt cache (rẻ ~10%) — 0 nếu không cache. */
+  cacheReadTokens: number;
+  /** Token ghi vào prompt cache (đắt ~125%) — 0 nếu không cache. */
+  cacheCreationTokens: number;
+}
+
+/**
+ * Hạn mức còn lại đọc từ header `anthropic-ratelimit-*` của Messages API.
+ * CHỈ có ở đường API key — subscription (Agent SDK) không trả header này nên là null.
+ * `*Reset` là mốc ISO do server trả về; `retryAfterSec` chỉ có khi bị 429.
+ */
+export interface RateLimitSnapshot {
+  requestsLimit:      number | null;
+  requestsRemaining:  number | null;
+  requestsReset:      string | null;
+  inputTokensLimit:      number | null;
+  inputTokensRemaining:  number | null;
+  inputTokensReset:      string | null;
+  outputTokensLimit:     number | null;
+  outputTokensRemaining: number | null;
+  outputTokensReset:     string | null;
+  /** Hạn mức token gộp (một số tier chỉ trả header này thay vì tách in/out). */
+  tokensLimit:     number | null;
+  tokensRemaining: number | null;
+  tokensReset:     string | null;
+  retryAfterSec:   number | null;
+  /** Thời điểm đọc header (ISO) — để dashboard biết số liệu cũ bao lâu. */
+  capturedAt: string;
+}
+
 export interface LlmCompletionResult {
   /** Text đầu ra (đã ghép các text block, bỏ thinking). Parser regex xử lý tiếp. */
   text: string;
   /** Thông tin phụ để log/debug (usage, block types, subtype…) — không ảnh hưởng parse. */
   meta: Record<string, unknown>;
+  /** Token in/out của lượt gọi — null nếu transport không báo cáo. */
+  usage: TokenUsage | null;
+  /** Hạn mức còn lại lúc gọi — null nếu transport không có (subscription). */
+  rateLimit: RateLimitSnapshot | null;
 }
 
 export interface LlmTransport {

@@ -335,6 +335,33 @@
       color: var(--muted);
     }
     .sig-item-time { font-weight: 600; color: var(--text); }
+    /* Token của từng lượt phân tích, nằm cạnh thời gian trong header bản ghi */
+    .sig-tok {
+      margin-left: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .sig-tok b { color: var(--text); font-weight: 600; }
+    /* Dải tổng token trong ngày, ngay đầu modal */
+    .sig-summary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 14px;
+      align-items: center;
+      font-size: 12px;
+      color: var(--muted);
+      background: #f9fafb;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 12px;
+      margin-bottom: 12px;
+    }
+    .sig-summary b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+    .sig-summary .sep { width: 1px; height: 13px; background: var(--border); }
     .sig-item-body { padding: 12px 14px; font-size: 13px; line-height: 1.6; display: none; }
     .sig-item.open .sig-item-body { display: block; }
     .sig-item-body table { border-collapse: collapse; width: 100%; margin: 6px 0; }
@@ -598,6 +625,47 @@ function toggleSigItem(el) {
   el.classList.toggle('open');
 }
 
+function fmtTok(n) {
+  if (n == null) return '—';
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + 'M';
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'k';
+  return String(n);
+}
+
+/** Tổng input của 1 lượt = input mới + cache read + cache write (theo cách Anthropic tính). */
+function totalIn(log) {
+  return (log.input_tokens || 0) + (log.cache_read_tokens || 0) + (log.cache_write_tokens || 0);
+}
+
+/** Badge token cạnh thời gian — rỗng với bản ghi cũ (chưa có cột token). */
+function tokBadge(log) {
+  if (log.input_tokens == null && log.output_tokens == null) return '';
+  const cache = log.cache_read_tokens
+    ? ` <span title="Token đọc lại từ prompt cache">⚡${fmtTok(log.cache_read_tokens)}</span>`
+    : '';
+  return `<span class="sig-tok" title="Token lượt phân tích này">
+    ↓<b>${fmtTok(totalIn(log))}</b> ↑<b>${fmtTok(log.output_tokens)}</b>${cache}</span>`;
+}
+
+/** Dải tổng token của symbol trong ngày (cộng từ chính danh sách log đang hiển thị). */
+function tokSummary(logs) {
+  const scored = logs.filter(l => l.input_tokens != null || l.output_tokens != null);
+  if (!scored.length) return '';
+  const inTok  = scored.reduce((s, l) => s + totalIn(l), 0);
+  const outTok = scored.reduce((s, l) => s + (l.output_tokens || 0), 0);
+  const cache  = scored.reduce((s, l) => s + (l.cache_read_tokens || 0), 0);
+  const avgSec = logs.reduce((s, l) => s + (l.duration_ms || 0), 0) / logs.length / 1000;
+  return `<div class="sig-summary">
+    <span>📊 <b>${logs.length}</b> lượt hôm nay</span>
+    <span class="sep"></span>
+    <span>↓ Input <b>${fmtTok(inTok)}</b></span>
+    <span>↑ Output <b>${fmtTok(outTok)}</b></span>
+    ${cache ? `<span title="Token đọc lại từ prompt cache">⚡ Cache <b>${fmtTok(cache)}</b></span>` : ''}
+    <span class="sep"></span>
+    <span>⏱ TB <b>${avgSec.toFixed(1)}s</b></span>
+  </div>`;
+}
+
 async function showSignals(symbol) {
   const overlay = document.getElementById('sigOverlay');
   const body = document.getElementById('sigBody');
@@ -616,7 +684,7 @@ async function showSignals(symbol) {
       return;
     }
 
-    body.innerHTML = logs.map((log, i) => {
+    const items = logs.map((log, i) => {
       const time = new Date(log.analyzed_at).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
       const secs = log.duration_ms != null ? ` · ${(log.duration_ms / 1000).toFixed(1)}s` : '';
       // Mở sẵn bản ghi mới nhất
@@ -625,6 +693,7 @@ async function showSignals(symbol) {
       <div class="sig-item${open}">
         <div class="sig-item-head" onclick="toggleSigItem(this.parentElement)">
           <span class="sig-item-time">🕐 ${esc(time)}${secs}</span>
+          ${tokBadge(log)}
           <span class="sig-toggle">›</span>
         </div>
         <div class="sig-item-body">
@@ -633,6 +702,8 @@ async function showSignals(symbol) {
         </div>
       </div>`;
     }).join('');
+
+    body.innerHTML = tokSummary(logs) + items;
   } catch (e) {
     body.innerHTML = '<div class="empty">✗ ' + esc(e.message || 'Tải tín hiệu thất bại') + '</div>';
   }
@@ -682,7 +753,10 @@ async function runAnalyze(btnId = 'analyzeBtn', endpoint = '/api/analyze') {
     });
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Phân tích thất bại');
-    const secs = data.duration_ms != null ? ` (${(data.duration_ms / 1000).toFixed(1)}s)` : '';
+    const tok = data.usage
+      ? ` · ${fmtTok(data.usage.total_input_tokens)}↓ / ${fmtTok(data.usage.output_tokens)}↑`
+      : '';
+    const secs = data.duration_ms != null ? ` (${(data.duration_ms / 1000).toFixed(1)}s${tok})` : '';
     showToast(`✓ Phân tích ${activeSymbol} hoàn tất${secs} — xem ở trang Tín hiệu`, 'success');
   } catch (e) {
     showToast('✗ ' + (e.message || 'Phân tích thất bại'), 'error');

@@ -1,5 +1,5 @@
 import { config } from '../../../config/trading';
-import { LlmTransport, LlmCompletionParams, LlmCompletionResult } from './LlmTransport';
+import { LlmTransport, LlmCompletionParams, LlmCompletionResult, TokenUsage } from './LlmTransport';
 
 /**
  * Đường xác thực bằng SUBSCRIPTION Claude (Pro/Max) qua Claude Agent SDK
@@ -97,6 +97,29 @@ export class ClaudeSubscriptionTransport implements LlmTransport {
     // Ưu tiên text tích lũy từ assistant (giống pipeline cũ: lọc text block, bỏ thinking).
     // Fallback về result string nếu assistant rỗng.
     const text = chunks.join('') || resultText;
-    return { text, meta: { transport: this.name, subtype, durationMs, numTurns, usage } };
+    // Subscription KHÔNG trả header anthropic-ratelimit-* (Agent SDK gọi qua subprocess),
+    // nên chỉ có token in/out; quota còn lại phải xem bằng lệnh /usage của Claude Code.
+    return {
+      text,
+      meta:      { transport: this.name, subtype, durationMs, numTurns, usage },
+      usage:     normalizeUsage(usage),
+      rateLimit: null,
+    };
   }
+}
+
+/** Bóc token từ `result.usage` của Agent SDK (cùng tên field với Messages API). */
+function normalizeUsage(usage: unknown): TokenUsage | null {
+  if (typeof usage !== 'object' || usage === null) return null;
+  const u = usage as Record<string, unknown>;
+  const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+
+  const result: TokenUsage = {
+    inputTokens:         num(u.input_tokens),
+    outputTokens:        num(u.output_tokens),
+    cacheReadTokens:     num(u.cache_read_input_tokens),
+    cacheCreationTokens: num(u.cache_creation_input_tokens),
+  };
+  const total = result.inputTokens + result.outputTokens + result.cacheReadTokens + result.cacheCreationTokens;
+  return total > 0 ? result : null;
 }

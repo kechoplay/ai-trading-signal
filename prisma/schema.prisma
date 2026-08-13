@@ -53,6 +53,12 @@ model AnalysisLog {
   reasoning       String?  @db.LongText
   analysis_type   String   @default("intraday")
 
+  // Token tiêu thụ của lượt phân tích (null với bản ghi cũ / transport không báo cáo).
+  input_tokens       Int?
+  output_tokens      Int?
+  cache_read_tokens  Int?
+  cache_write_tokens Int?
+
   symbolRef     Symbol   @relation(fields: [symbol], references: [symbol])
 
   @@index([symbol, analyzed_at])

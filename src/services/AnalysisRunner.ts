@@ -1,5 +1,7 @@
 import { SignalOrchestrator } from './SignalOrchestrator';
 import { TelegramNotifier } from './telegram/TelegramNotifier';
+import { RateLimitSnapshot, TokenUsage } from './ai/transport/LlmTransport';
+import { recordUsage } from './ai/UsageTracker';
 import { config } from '../config/trading';
 import { logger } from '../logger';
 import { prisma } from '../db';
@@ -10,6 +12,8 @@ export interface AnalysisRunResult {
   durationMs: number;
   setup: string;
   reasoning: string;
+  usage: TokenUsage | null;
+  rateLimit: RateLimitSnapshot | null;
 }
 
 export interface AnalysisRunOptions {
@@ -57,7 +61,7 @@ export async function runAnalysis(opts: AnalysisRunOptions): Promise<AnalysisRun
   try {
     logger.info('Analysis started', { symbol: requested, timeframes: timeframes ?? 'default', analysisType, trigger });
 
-    const { result, rawText, instrument: sym, currentPrice } =
+    const { result, rawText, instrument: sym, currentPrice, usage, rateLimit } =
       await SignalOrchestrator.fromConfig().run(symbol, timeframes, analysisType);
     const durationMs = Date.now() - startedAt;
 
@@ -85,12 +89,26 @@ export async function runAnalysis(opts: AnalysisRunOptions): Promise<AnalysisRun
         },
       }),
       prisma.analysisLog.create({
-        data: { symbol: sym, duration_ms: durationMs, setup, reasoning },
+        data: {
+          symbol: sym, duration_ms: durationMs, setup, reasoning,
+          input_tokens:       usage?.inputTokens         ?? null,
+          output_tokens:      usage?.outputTokens        ?? null,
+          cache_read_tokens:  usage?.cacheReadTokens     ?? null,
+          cache_write_tokens: usage?.cacheCreationTokens ?? null,
+        },
       }),
     ]);
 
-    logger.info('Analysis finished', { symbol: sym, action: result.action, duration_ms: durationMs, trigger });
-    return { symbol: sym, action: result.action, durationMs, setup, reasoning };
+    // Ảnh chụp hạn mức + token lượt gần nhất cho /api/usage (không lưu DB — xem UsageTracker).
+    recordUsage({ symbol: sym, at: new Date().toISOString(), durationMs, usage }, rateLimit);
+
+    logger.info('Analysis finished', {
+      symbol: sym, action: result.action, duration_ms: durationMs, trigger,
+      input_tokens: usage?.inputTokens ?? null, output_tokens: usage?.outputTokens ?? null,
+      input_tokens_remaining:  rateLimit?.inputTokensRemaining  ?? null,
+      output_tokens_remaining: rateLimit?.outputTokensRemaining ?? null,
+    });
+    return { symbol: sym, action: result.action, durationMs, setup, reasoning, usage, rateLimit };
   } finally {
     inFlight = null;
   }

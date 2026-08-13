@@ -369,6 +369,26 @@
       font-size: 12px;
       color: var(--muted);
     }
+    /* ── Thanh token usage / hạn mức ── */
+    .usage-row {
+      max-width: 960px;
+      margin: 0 auto 16px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px 14px;
+      font-size: 12px;
+      color: var(--muted);
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 12px;
+    }
+    .usage-item { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+    .usage-item b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+    .usage-sep { width: 1px; height: 14px; background: var(--border); }
+    .usage-low b { color: var(--sell-accent); }
+    .usage-warn b { color: var(--neutral-accent); }
     .meta-dot {
       width: 6px; height: 6px; border-radius: 50%;
       background: #22c55e;
@@ -428,6 +448,8 @@
   <div class="meta-dot"></div>
   <span id="metaText"></span>
 </div>
+
+<div id="usageRow" class="usage-row" style="display:none"></div>
 
 <div id="main"></div>
 
@@ -674,6 +696,71 @@ function renderHistory(signals) {
   }).join('');
 }
 
+function fmtTok(n) {
+  if (n == null) return '—';
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + 'M';
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'k';
+  return String(n);
+}
+
+/** Nhãn "còn lại / hạn mức (xx%)" + tô màu khi tụt dưới ngưỡng. */
+function remainItem(label, remaining, limit, resetAt) {
+  if (remaining == null) return '';
+  const pct = limit ? Math.round((remaining / limit) * 100) : null;
+  const cls = pct == null ? '' : pct <= 10 ? ' usage-low' : pct <= 30 ? ' usage-warn' : '';
+  const resetStr = resetAt
+    ? ` · reset ${new Date(resetAt).toLocaleTimeString('vi-VN', {timeZone:'Asia/Ho_Chi_Minh',hour12:false,hour:'2-digit',minute:'2-digit'})}`
+    : '';
+  return `<span class="usage-item${cls}" title="Hạn mức Anthropic còn lại${resetStr}">${label}
+    <b>${fmtTok(remaining)}${limit ? ' / ' + fmtTok(limit) : ''}</b>${pct != null ? ` (${pct}%)` : ''}</span>`;
+}
+
+function renderUsage(u) {
+  const row = document.getElementById('usageRow');
+  if (!u || u.error) { row.style.display = 'none'; return; }
+
+  const t = u.today || {};
+  const parts = [
+    `<span class="usage-item" title="Cộng dồn các lượt phân tích trong ngày (giờ VN)">📊 Hôm nay <b>${t.runs || 0}</b> lượt</span>`,
+    `<span class="usage-item">↓ Input <b>${fmtTok(t.input_tokens)}</b></span>`,
+    `<span class="usage-item">↑ Output <b>${fmtTok(t.output_tokens)}</b></span>`,
+  ];
+  if (t.cache_read_tokens) parts.push(`<span class="usage-item" title="Token đọc lại từ prompt cache">⚡ Cache <b>${fmtTok(t.cache_read_tokens)}</b></span>`);
+
+  const last = u.last_run && u.last_run.usage;
+  if (last) {
+    parts.push('<span class="usage-sep"></span>');
+    parts.push(`<span class="usage-item" title="Lượt gần nhất: ${u.last_run.symbol}">Lượt cuối <b>${fmtTok(last.total_input_tokens)}↓ / ${fmtTok(last.output_tokens)}↑</b></span>`);
+  }
+
+  const rl = u.rate_limit;
+  if (rl) {
+    parts.push('<span class="usage-sep"></span>');
+    parts.push(remainItem('Còn input', rl.inputTokensRemaining, rl.inputTokensLimit, rl.inputTokensReset));
+    parts.push(remainItem('Còn output', rl.outputTokensRemaining, rl.outputTokensLimit, rl.outputTokensReset));
+    parts.push(remainItem('Còn token', rl.tokensRemaining, rl.tokensLimit, rl.tokensReset));
+    parts.push(remainItem('Còn request', rl.requestsRemaining, rl.requestsLimit, rl.requestsReset));
+  } else if (u.auth_mode === 'subscription') {
+    parts.push('<span class="usage-sep"></span>');
+    parts.push('<span class="usage-item" title="Agent SDK không trả header hạn mức — xem bằng /usage trong Claude Code">Hạn mức: subscription (không đo được)</span>');
+  } else {
+    // Hạn mức đọc từ header của lần gọi API gần nhất → chưa có gì cho tới lượt đầu tiên.
+    parts.push('<span class="usage-sep"></span>');
+    parts.push('<span class="usage-item" title="Đọc từ header anthropic-ratelimit-* của lượt gọi gần nhất">Hạn mức: chưa đo (chạy phân tích để cập nhật)</span>');
+  }
+
+  row.innerHTML = parts.filter(Boolean).join('');
+  row.style.display = 'flex';
+}
+
+async function loadUsage() {
+  try {
+    renderUsage(await fetch('/api/usage').then(r => r.json()));
+  } catch {
+    document.getElementById('usageRow').style.display = 'none';
+  }
+}
+
 async function loadLatest() {
   try {
     const [latest, all] = await Promise.all([
@@ -683,6 +770,7 @@ async function loadLatest() {
 
     if (latest.error) {
       document.getElementById('main').innerHTML = `<div class="grid"><div class="card col-full"><div class="empty">Chưa có tín hiệu nào.<br>Chạy <code>npm run analyze:force</code> để tạo tín hiệu đầu tiên.</div></div></div>`;
+      loadUsage();
       return;
     }
 
@@ -702,6 +790,7 @@ async function loadLatest() {
 
     document.getElementById('main').innerHTML = html;
     renderHistory(all);
+    loadUsage();
   } catch (e) {
     document.getElementById('main').innerHTML = `<div class="grid"><div class="card col-full"><div class="empty">Không thể kết nối server. Hãy chắc chắn server đang chạy.</div></div></div>`;
   }
@@ -762,7 +851,10 @@ async function runAnalyze(btnId = 'analyzeBtn', symbol, endpoint = '/api/analyze
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Phân tích thất bại');
 
-    showToast(`✓ Phân tích hoàn tất (${(data.duration_ms / 1000).toFixed(1)}s)`, 'success');
+    const tok = data.usage
+      ? ` · ${fmtTok(data.usage.total_input_tokens)}↓ / ${fmtTok(data.usage.output_tokens)}↑`
+      : '';
+    showToast(`✓ Phân tích hoàn tất (${(data.duration_ms / 1000).toFixed(1)}s${tok})`, 'success');
     await loadLatest();
   } catch (e) {
     showToast('✗ ' + (e.message || 'Phân tích thất bại'), 'error');

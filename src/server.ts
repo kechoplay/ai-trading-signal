@@ -10,6 +10,8 @@ import { prisma } from './db';
 import { logger } from './logger';
 import { config } from './config/trading';
 import { AnalysisBusyError, runAnalysis } from './services/AnalysisRunner';
+import { TokenUsage } from './services/ai/transport/LlmTransport';
+import { lastRateLimitSnapshot, lastRunUsage } from './services/ai/UsageTracker';
 import { AnalysisScheduler } from './services/AnalysisScheduler';
 import { createMcpServer } from './mcp-server';
 import { McpOAuthProvider, createAuthCode } from './services/auth/McpOAuthProvider';
@@ -97,10 +99,14 @@ app.post('/api/analyze', requireApiKey, async (req, res) => {
   const startedAt = Date.now();
   try {
     logger.info('POST /api/analyze triggered', { symbol: symbol ?? config.instrument, timeframes: timeframes ?? 'default' });
-    const { symbol: sym, durationMs, setup, reasoning } =
+    const { symbol: sym, durationMs, setup, reasoning, usage, rateLimit } =
       await runAnalysis({ symbol, timeframes, analysisType: 'intraday', trigger: 'api' });
 
-    res.json({ ok: true, symbol: sym, duration_ms: durationMs, setup, reasoning });
+    res.json({
+      ok: true, symbol: sym, duration_ms: durationMs, setup, reasoning,
+      usage:      usage ? toUsageJson(usage) : null,
+      rate_limit: rateLimit,
+    });
   } catch (err: any) {
     // Scheduler đang chạy đúng lúc bấm tay → 409 thay vì chạy song song (mỗi lần tốn
     // ~3 phút + quota subscription dùng chung).
@@ -116,6 +122,41 @@ app.post('/api/analyze', requireApiKey, async (req, res) => {
 
 app.get('/api/scheduler', requireApiKey, (_req, res) => {
   res.json(scheduler.status());
+});
+
+// ─── Token usage / hạn mức ────────────────────────────────────────────────────
+// Gộp 2 nguồn: tổng token trong ngày (cộng dồn từ analysis_logs) + ảnh chụp hạn mức
+// còn lại của lượt gọi gần nhất (header anthropic-ratelimit-*, giữ trong RAM).
+app.get('/api/usage', async (_req, res) => {
+  try {
+    const since = startOfTodayVN();
+    const agg = await prisma.analysisLog.aggregate({
+      where: { analyzed_at: { gte: since } },
+      _sum:  { input_tokens: true, output_tokens: true, cache_read_tokens: true, cache_write_tokens: true },
+      _count: { _all: true },
+    });
+
+    const last = lastRunUsage();
+    res.json({
+      today: {
+        since:               since.toISOString(),
+        runs:                agg._count._all,
+        input_tokens:        agg._sum.input_tokens       ?? 0,
+        output_tokens:       agg._sum.output_tokens      ?? 0,
+        cache_read_tokens:   agg._sum.cache_read_tokens  ?? 0,
+        cache_write_tokens:  agg._sum.cache_write_tokens ?? 0,
+      },
+      last_run: last
+        ? { symbol: last.symbol, at: last.at, duration_ms: last.durationMs, usage: last.usage ? toUsageJson(last.usage) : null }
+        : null,
+      // null khi chạy AI_AUTH_MODE=subscription (Agent SDK không trả header hạn mức).
+      rate_limit: lastRateLimitSnapshot(),
+      auth_mode:  config.claude.authMode,
+    });
+  } catch (err: any) {
+    logger.error('GET /api/usage failed', { error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // ─── Symbols ──────────────────────────────────────────────────────────────────
@@ -335,7 +376,11 @@ app.get('/api/symbols/:symbol/signals', requireApiKey, async (req, res) => {
       where:   { symbol, analyzed_at: { gte: startOfTodayVN() } },
       orderBy: { analyzed_at: 'desc' },
       take:    limit,
-      select:  { id: true, symbol: true, analyzed_at: true, duration_ms: true, setup: true, reasoning: true },
+      select:  {
+        id: true, symbol: true, analyzed_at: true, duration_ms: true, setup: true, reasoning: true,
+        // Token của lượt phân tích — dashboard hiện ngay trên từng bản ghi tín hiệu.
+        input_tokens: true, output_tokens: true, cache_read_tokens: true, cache_write_tokens: true,
+      },
     });
     res.json(logs);
   } catch (err: any) {
@@ -388,6 +433,17 @@ function startOfTodayVN(): Date {
   const m = parseInt(parts.find(p => p.type === 'minute')?.value ?? '0', 10);
   const s = parseInt(parts.find(p => p.type === 'second')?.value ?? '0', 10);
   return new Date(now.getTime() - (h * 3600 + m * 60 + s) * 1000 - now.getMilliseconds());
+}
+
+/** Đổi TokenUsage (camelCase) sang snake_case cho JSON API, kèm tổng input đã cộng cache. */
+function toUsageJson(u: TokenUsage) {
+  return {
+    input_tokens:       u.inputTokens,
+    output_tokens:      u.outputTokens,
+    cache_read_tokens:  u.cacheReadTokens,
+    cache_write_tokens: u.cacheCreationTokens,
+    total_input_tokens: u.inputTokens + u.cacheReadTokens + u.cacheCreationTokens,
+  };
 }
 
 function parseSignal(signal: any) {

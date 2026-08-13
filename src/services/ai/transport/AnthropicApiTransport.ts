@@ -1,6 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { Agent } from 'undici';
-import { LlmTransport, LlmCompletionParams, LlmCompletionResult } from './LlmTransport';
+import {
+  LlmTransport, LlmCompletionParams, LlmCompletionResult, RateLimitSnapshot, TokenUsage,
+} from './LlmTransport';
 
 /**
  * Đường xác thực gốc: gọi Anthropic Messages API bằng CLAUDE_API_KEY, stream adaptive
@@ -55,6 +57,52 @@ export class AnthropicApiTransport implements LlmTransport {
       .map((b) => b.text)
       .join('');
 
-    return { text, meta: { blockTypes, usage: message.usage } };
+    // Hạn mức còn lại nằm ở header HTTP, KHÔNG có trong body message → phải lấy từ
+    // Response gốc. `stream.response` là response của lần kết nối cuối (sau retry).
+    const rateLimit = parseRateLimit(stream.response ?? null);
+
+    const usage: TokenUsage = {
+      inputTokens:         message.usage.input_tokens ?? 0,
+      outputTokens:        message.usage.output_tokens ?? 0,
+      cacheReadTokens:     message.usage.cache_read_input_tokens ?? 0,
+      cacheCreationTokens: message.usage.cache_creation_input_tokens ?? 0,
+    };
+
+    return { text, meta: { blockTypes, usage: message.usage, rateLimit }, usage, rateLimit };
   }
+}
+
+/** Đọc bộ header `anthropic-ratelimit-*`; trả null nếu không có response/header. */
+function parseRateLimit(response: Response | null): RateLimitSnapshot | null {
+  const h = response?.headers;
+  if (!h) return null;
+
+  const num = (name: string): number | null => {
+    const raw = h.get(name);
+    if (raw == null || raw === '') return null;
+    const v = Number(raw);
+    return Number.isFinite(v) ? v : null;
+  };
+  const str = (name: string): string | null => h.get(name) || null;
+
+  const snapshot: RateLimitSnapshot = {
+    requestsLimit:         num('anthropic-ratelimit-requests-limit'),
+    requestsRemaining:     num('anthropic-ratelimit-requests-remaining'),
+    requestsReset:         str('anthropic-ratelimit-requests-reset'),
+    inputTokensLimit:      num('anthropic-ratelimit-input-tokens-limit'),
+    inputTokensRemaining:  num('anthropic-ratelimit-input-tokens-remaining'),
+    inputTokensReset:      str('anthropic-ratelimit-input-tokens-reset'),
+    outputTokensLimit:     num('anthropic-ratelimit-output-tokens-limit'),
+    outputTokensRemaining: num('anthropic-ratelimit-output-tokens-remaining'),
+    outputTokensReset:     str('anthropic-ratelimit-output-tokens-reset'),
+    tokensLimit:           num('anthropic-ratelimit-tokens-limit'),
+    tokensRemaining:       num('anthropic-ratelimit-tokens-remaining'),
+    tokensReset:           str('anthropic-ratelimit-tokens-reset'),
+    retryAfterSec:         num('retry-after'),
+    capturedAt:            new Date().toISOString(),
+  };
+
+  // Không có header nào → coi như không đo được (tránh hiển thị hàng loạt "—").
+  const hasAny = Object.entries(snapshot).some(([k, v]) => k !== 'capturedAt' && v != null);
+  return hasAny ? snapshot : null;
 }

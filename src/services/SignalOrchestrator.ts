@@ -3,6 +3,7 @@ import { AnalysisResult } from './ai/dto/AnalysisResult';
 import { Candle } from './market/Candle';
 import { makeMarketDataProvider } from './market/MarketDataProviderFactory';
 import { BinanceFuturesService } from './market/BinanceFuturesService';
+import { RateLimitSnapshot, TokenUsage } from './ai/transport/LlmTransport';
 import { TelegramNotifier } from './telegram/TelegramNotifier';
 import { config } from '../config/trading';
 import { logger } from '../logger';
@@ -27,7 +28,14 @@ export class SignalOrchestrator {
     );
   }
 
-  async run(instrument?: string, timeframes?: string[], analysisType?: string): Promise<{ result: AnalysisResult; rawText: string; instrument: string; currentPrice: number }> {
+  async run(instrument?: string, timeframes?: string[], analysisType?: string): Promise<{
+    result: AnalysisResult;
+    rawText: string;
+    instrument: string;
+    currentPrice: number;
+    usage: TokenUsage | null;
+    rateLimit: RateLimitSnapshot | null;
+  }> {
     const { instrument: defaultInstrument, timeframes: defaultTimeframes, cryptoTimeframes, candlesByTf: candlesByTfConfig, candlesByTfCrypto, candlesCount } = config;
     instrument = instrument ?? defaultInstrument;
     const isCrypto = isCryptoInstrument(instrument);
@@ -54,11 +62,12 @@ export class SignalOrchestrator {
     // trong cửa sổ thời gian → nhét lại để AI kiểm chứng thay vì phân tích lại từ đầu.
     const pending = await this.loadPendingSetup(instrument, analysisType);
 
-    const { result, rawText } = await this.claude.analyze(instrument, candlesByTf, currentPrice, extras, pending);
+    const { result, rawText, usage, rateLimit } =
+      await this.claude.analyze(instrument, candlesByTf, currentPrice, extras, pending);
 
     await this.notify(result, rawText, instrument, currentPrice);
 
-    return { result, rawText, instrument, currentPrice };
+    return { result, rawText, instrument, currentPrice, usage, rateLimit };
   }
 
   /**

@@ -4,7 +4,7 @@ import { config } from '../../config/trading';
 import { logger } from '../../logger';
 import { preprocess, IctFacts, TimeframeAnalysis } from './ict/IctPreprocessor';
 import { FuturesSentiment } from '../market/BinanceFuturesService';
-import { LlmTransport, Effort } from './transport/LlmTransport';
+import { LlmTransport, Effort, RateLimitSnapshot, TokenUsage } from './transport/LlmTransport';
 import { AnthropicApiTransport } from './transport/AnthropicApiTransport';
 import { ClaudeSubscriptionTransport } from './transport/ClaudeSubscriptionTransport';
 
@@ -74,7 +74,12 @@ export class ClaudeAnalystService {
     _currentPrice: number,
     extras?: CryptoExtras,
     pending?: PendingSetup | null,
-  ): Promise<{ result: AnalysisResult; rawText: string }> {
+  ): Promise<{
+    result: AnalysisResult;
+    rawText: string;
+    usage: TokenUsage | null;
+    rateLimit: RateLimitSnapshot | null;
+  }> {
     const systemPrompt = this.buildSystemPrompt(instrument);
 
     // Tiền xử lý: code tính sẵn swing/fib/ATR/FVG/OB/liquidity/kill-zone cho mọi khung.
@@ -106,7 +111,7 @@ export class ClaudeAnalystService {
       transport: this.transport.name,
     });
 
-    const { text: rawText, meta } = await this.transport.complete({
+    const { text: rawText, meta, usage, rateLimit } = await this.transport.complete({
       model:     this.model,
       system:    systemPrompt,
       userPrompt,
@@ -131,7 +136,7 @@ export class ClaudeAnalystService {
     logger.info('[Claude] Raw response:\n' + rawText);
 
     const result = this.parseAnalysisResult(rawText);
-    return { result, rawText };
+    return { result, rawText, usage, rateLimit };
   }
 
   private parseAnalysisResult(text: string): AnalysisResult {

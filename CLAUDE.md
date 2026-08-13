@@ -49,6 +49,7 @@ D:/ai-trading-signal/
         ├── MarketHoursService.ts      ← kiểm tra giờ giao dịch
         ├── ai/
         │   ├── ClaudeAnalystService.ts  ← gọi Claude (build prompt vàng/crypto, parse text)
+        │   ├── UsageTracker.ts           ← giữ token + hạn mức của lượt gần nhất (RAM)
         │   ├── transport/               ← lớp gọi LLM (API key hoặc subscription)
         │   │   ├── LlmTransport.ts        ← interface chung
         │   │   ├── AnthropicApiTransport.ts ← CLAUDE_API_KEY (messages.stream)
@@ -141,6 +142,10 @@ D:/ai-trading-signal/
 | created_at | DATETIME | Thời điểm tạo |
 
 Index: `(instrument, created_at)`
+
+**Bảng `analysis_logs`** (mỗi lượt chạy 1 bản ghi): ngoài `symbol/duration_ms/setup/reasoning` còn có
+`input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens` — token của lượt gọi Claude,
+null với bản ghi cũ hoặc khi transport không báo cáo. `/api/usage` cộng dồn 4 cột này theo ngày.
 
 ---
 
@@ -282,6 +287,26 @@ Trigger phân tích thủ công.
 
 Trạng thái scheduler: `enabled`, `interval_min`, `window`, `weekdays`, `symbols`, `runs_per_day`, `next_run_at`, `last_run_at`, `last_action`, `last_error`, `run_count`, `skip_count`, `running` (lượt đang chạy hoặc null). Dùng để soi mốc chạy kế tiếp và lỗi gần nhất mà không cần đọc log.
 
+### GET /api/usage
+
+Token đã dùng + hạn mức còn lại. Không yêu cầu API key (dashboard tự gọi mỗi 60s).
+
+```json
+{
+  "today":      { "since": "...", "runs": 12, "input_tokens": 604000, "output_tokens": 148000,
+                  "cache_read_tokens": 52000, "cache_write_tokens": 0 },
+  "last_run":   { "symbol": "XAU/USD", "at": "...", "duration_ms": 182000, "usage": { ... } },
+  "rate_limit": { "inputTokensRemaining": 180000, "inputTokensLimit": 2000000, "...": "..." },
+  "auth_mode":  "apikey"
+}
+```
+
+- `today.*`: cộng dồn từ cột token trong `analysis_logs` (giờ VN).
+- `rate_limit`: ảnh chụp header `anthropic-ratelimit-*` của lượt gọi Claude GẦN NHẤT, giữ trong RAM
+  (`src/services/ai/UsageTracker.ts`) — **null cho tới khi chạy lượt phân tích đầu tiên sau khi khởi động**,
+  và luôn null khi `AI_AUTH_MODE=subscription` (Agent SDK gọi qua subprocess nên không có header HTTP;
+  muốn xem quota subscription phải dùng lệnh `/usage` của Claude Code).
+
 ### GET /api/signals
 
 Lấy danh sách tín hiệu trong ngày (giờ VN). Query param: `?limit=20` (tối đa 100).
@@ -296,7 +321,9 @@ CRUD nhóm symbol.
 
 ### GET /api/symbols/:symbol/signals
 
-Lấy analysis logs của symbol trong ngày.
+Lấy analysis logs của symbol trong ngày — kèm `input_tokens`, `output_tokens`, `cache_read_tokens`,
+`cache_write_tokens` (null với bản ghi cũ). Modal "Tín hiệu từ Claude" ở `/chart` hiển thị badge token
+trên từng bản ghi + dải tổng token trong ngày.
 
 ---
 
@@ -308,6 +335,7 @@ Lấy analysis logs của symbol trong ngày.
 - API key lưu ở `localStorage`; nếu server trả 401 sẽ prompt nhập key rồi thử lại.
 - `renderSignalBanner()` hiển thị badge theo action: BUY/SELL/WATCHLIST (`👁 ĐANG CANH`)/NO_TRADE. Hàng Entry/SL/TP chỉ hiện cho BUY/SELL.
 - `renderConditionalSetups()` hiển thị chi tiết WATCHLIST (POI đang canh) — đọc `conditional_setups` từ `raw_ai_response` (server `parseSignal()` bóc ra).
+- `renderUsage()` (thanh `#usageRow` dưới header) hiển thị token in/out trong ngày + hạn mức còn lại — đọc `GET /api/usage`. Tô cam khi còn ≤30%, đỏ khi ≤10%.
 - Tự refresh mỗi 60s.
 
 ---

@@ -56,7 +56,13 @@
       "Bash(cp /tmp/t.ts ./tmp-check.ts)",
       "Bash(SCHEDULER_ENABLED=true SCHEDULER_SYMBOLS=XAU/USD SCHEDULER_START_HOUR=8 SCHEDULER_END_HOUR=22 TRADING_INSTRUMENT=XAU/USD MARKET_HOURS_TIMEZONE=Asia/Ho_Chi_Minh npx tsx tmp-check.ts)",
       "Bash(SCHEDULER_ENABLED=true SCHEDULER_SYMBOLS= SCHEDULER_START_HOUR=8 SCHEDULER_END_HOUR=22 TRADING_INSTRUMENT=XAU/USD MARKET_HOURS_TIMEZONE=Asia/Ho_Chi_Minh npx tsx tmp-check.ts)",
-      "Bash(SCHEDULER_ENABLED=true SCHEDULER_SYMBOLS=\" XAU/USD , BTC/USD \" SCHEDULER_START_HOUR=8 SCHEDULER_END_HOUR=22 MARKET_HOURS_TIMEZONE=Asia/Ho_Chi_Minh npx tsx tmp-check.ts)"
+      "Bash(SCHEDULER_ENABLED=true SCHEDULER_SYMBOLS=\" XAU/USD , BTC/USD \" SCHEDULER_START_HOUR=8 SCHEDULER_END_HOUR=22 MARKET_HOURS_TIMEZONE=Asia/Ho_Chi_Minh npx tsx tmp-check.ts)",
+      "Bash(curl -s -m 10 http://localhost:3000/api/usage)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" -m 8 http://localhost:3000/api/signals?limit=1)",
+      "Bash(netstat -ano)",
+      "Bash(curl -s -m 15 http://localhost:3000/api/usage)",
+      "Bash(echo \"TSC_EXIT=$?\")",
+      "Bash(echo \"EXIT=$?\")"
     ]
   }
 }
