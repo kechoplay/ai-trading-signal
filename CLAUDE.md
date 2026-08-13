@@ -302,10 +302,17 @@ Token đã dùng + hạn mức còn lại. Không yêu cầu API key (dashboard 
 ```
 
 - `today.*`: cộng dồn từ cột token trong `analysis_logs` (giờ VN).
-- `rate_limit`: ảnh chụp header `anthropic-ratelimit-*` của lượt gọi Claude GẦN NHẤT, giữ trong RAM
-  (`src/services/ai/UsageTracker.ts`) — **null cho tới khi chạy lượt phân tích đầu tiên sau khi khởi động**,
-  và luôn null khi `AI_AUTH_MODE=subscription` (Agent SDK gọi qua subprocess nên không có header HTTP;
-  muốn xem quota subscription phải dùng lệnh `/usage` của Claude Code).
+- `rate_limit`: ảnh chụp hạn mức của lượt gọi Claude GẦN NHẤT, giữ trong RAM
+  (`src/services/ai/UsageTracker.ts`) — **null cho tới lượt phân tích đầu tiên sau khi khởi động server**.
+  Là union phân biệt bằng `source`, hai đường xác thực cho hai loại số liệu KHÁC HẲN nhau:
+
+| `source` | Nguồn | Nội dung |
+|----------|-------|----------|
+| `api-headers` | Header `anthropic-ratelimit-*` của Messages API (`AI_AUTH_MODE=apikey`) | Còn bao nhiêu **token/request tuyệt đối** + mốc reset |
+| `subscription` | Message `rate_limit_event` của Claude Agent SDK (`AI_AUTH_MODE=subscription`) | **% đã dùng** của cửa sổ (`five_hour`/`seven_day`/`seven_day_opus`…) + mốc reset — Anthropic KHÔNG cho biết số token còn lại của gói |
+
+  Subscription: SDK chỉ phát `rate_limit_event` khi thông tin thay đổi → có lượt không có event, khi đó
+  `UsageTracker` giữ nguyên số liệu lần trước (chỉ ghi đè khi lượt mới thực sự đo được).
 
 ### GET /api/signals
 

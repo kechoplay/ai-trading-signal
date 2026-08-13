@@ -715,6 +715,34 @@ function remainItem(label, remaining, limit, resetAt) {
     <b>${fmtTok(remaining)}${limit ? ' / ' + fmtTok(limit) : ''}</b>${pct != null ? ` (${pct}%)` : ''}</span>`;
 }
 
+const WINDOW_LABEL = {
+  five_hour: 'cửa sổ 5h',
+  seven_day: 'tuần',
+  seven_day_opus: 'tuần (Opus)',
+  seven_day_sonnet: 'tuần (Sonnet)',
+  seven_day_overage_included: 'tuần (gồm vượt mức)',
+  overage: 'vượt mức',
+};
+
+/**
+ * Hạn mức gói subscription: Anthropic chỉ cho biết ĐÃ DÙNG bao nhiêu % của cửa sổ,
+ * không cho biết còn bao nhiêu token → quy về "còn lại %" cho dễ đọc.
+ */
+function subscriptionItem(rl) {
+  const win = WINDOW_LABEL[rl.windowType] || rl.windowType || 'gói';
+  const reset = rl.resetsAt
+    ? ' · reset ' + new Date(rl.resetsAt).toLocaleString('vi-VN', {timeZone:'Asia/Ho_Chi_Minh',hour12:false,hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'})
+    : '';
+  if (rl.utilizationPct == null) {
+    const st = rl.status === 'rejected' ? 'đã hết hạn mức' : rl.status === 'allowed_warning' ? 'sắp hết' : 'còn dùng được';
+    return `<span class="usage-item" title="Gói Claude Pro/Max">Gói: ${st}${reset}</span>`;
+  }
+  const left = Math.max(0, Math.round(100 - rl.utilizationPct));
+  const cls = left <= 10 ? ' usage-low' : left <= 30 ? ' usage-warn' : '';
+  return `<span class="usage-item${cls}" title="Hạn mức gói Claude (đã dùng ${Math.round(rl.utilizationPct)}%)${reset}">
+    Gói còn <b>${left}%</b> (${win})${reset}</span>`;
+}
+
 function renderUsage(u) {
   const row = document.getElementById('usageRow');
   if (!u || u.error) { row.style.display = 'none'; return; }
@@ -734,19 +762,17 @@ function renderUsage(u) {
   }
 
   const rl = u.rate_limit;
-  if (rl) {
-    parts.push('<span class="usage-sep"></span>');
+  parts.push('<span class="usage-sep"></span>');
+  if (rl && rl.source === 'api-headers') {
     parts.push(remainItem('Còn input', rl.inputTokensRemaining, rl.inputTokensLimit, rl.inputTokensReset));
     parts.push(remainItem('Còn output', rl.outputTokensRemaining, rl.outputTokensLimit, rl.outputTokensReset));
     parts.push(remainItem('Còn token', rl.tokensRemaining, rl.tokensLimit, rl.tokensReset));
     parts.push(remainItem('Còn request', rl.requestsRemaining, rl.requestsLimit, rl.requestsReset));
-  } else if (u.auth_mode === 'subscription') {
-    parts.push('<span class="usage-sep"></span>');
-    parts.push('<span class="usage-item" title="Agent SDK không trả header hạn mức — xem bằng /usage trong Claude Code">Hạn mức: subscription (không đo được)</span>');
+  } else if (rl && rl.source === 'subscription') {
+    parts.push(subscriptionItem(rl));
   } else {
-    // Hạn mức đọc từ header của lần gọi API gần nhất → chưa có gì cho tới lượt đầu tiên.
-    parts.push('<span class="usage-sep"></span>');
-    parts.push('<span class="usage-item" title="Đọc từ header anthropic-ratelimit-* của lượt gọi gần nhất">Hạn mức: chưa đo (chạy phân tích để cập nhật)</span>');
+    // Hạn mức đọc từ lượt gọi Claude gần nhất → chưa có gì cho tới lượt đầu tiên.
+    parts.push('<span class="usage-item" title="Cập nhật sau lượt phân tích đầu tiên kể từ khi khởi động server">Hạn mức: chưa đo</span>');
   }
 
   row.innerHTML = parts.filter(Boolean).join('');

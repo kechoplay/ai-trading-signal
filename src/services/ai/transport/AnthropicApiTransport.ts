@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { Agent } from 'undici';
 import {
-  LlmTransport, LlmCompletionParams, LlmCompletionResult, RateLimitSnapshot, TokenUsage,
+  ApiRateLimit, LlmTransport, LlmCompletionParams, LlmCompletionResult, TokenUsage,
 } from './LlmTransport';
 
 /**
@@ -73,7 +73,7 @@ export class AnthropicApiTransport implements LlmTransport {
 }
 
 /** Đọc bộ header `anthropic-ratelimit-*`; trả null nếu không có response/header. */
-function parseRateLimit(response: Response | null): RateLimitSnapshot | null {
+function parseRateLimit(response: Response | null): ApiRateLimit | null {
   const h = response?.headers;
   if (!h) return null;
 
@@ -85,7 +85,8 @@ function parseRateLimit(response: Response | null): RateLimitSnapshot | null {
   };
   const str = (name: string): string | null => h.get(name) || null;
 
-  const snapshot: RateLimitSnapshot = {
+  const snapshot: ApiRateLimit = {
+    source:                'api-headers',
     requestsLimit:         num('anthropic-ratelimit-requests-limit'),
     requestsRemaining:     num('anthropic-ratelimit-requests-remaining'),
     requestsReset:         str('anthropic-ratelimit-requests-reset'),
@@ -103,6 +104,7 @@ function parseRateLimit(response: Response | null): RateLimitSnapshot | null {
   };
 
   // Không có header nào → coi như không đo được (tránh hiển thị hàng loạt "—").
-  const hasAny = Object.entries(snapshot).some(([k, v]) => k !== 'capturedAt' && v != null);
+  const hasAny = Object.entries(snapshot)
+    .some(([k, v]) => k !== 'capturedAt' && k !== 'source' && v != null);
   return hasAny ? snapshot : null;
 }

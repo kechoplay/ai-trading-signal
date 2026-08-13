@@ -1,5 +1,7 @@
 import { config } from '../../../config/trading';
-import { LlmTransport, LlmCompletionParams, LlmCompletionResult, TokenUsage } from './LlmTransport';
+import {
+  LlmTransport, LlmCompletionParams, LlmCompletionResult, SubscriptionRateLimit, TokenUsage,
+} from './LlmTransport';
 
 /**
  * Đường xác thực bằng SUBSCRIPTION Claude (Pro/Max) qua Claude Agent SDK
@@ -54,6 +56,10 @@ export class ClaudeSubscriptionTransport implements LlmTransport {
     let usage: unknown;
     let durationMs: number | undefined;
     let numTurns: number | undefined;
+    // Hạn mức gói (5h / 7 ngày): SDK phát message `rate_limit_event` khi thông tin
+    // thay đổi — có lượt không phát cái nào, khi đó rateLimit = null và UsageTracker
+    // giữ lại số của lần trước.
+    let rateLimit: SubscriptionRateLimit | null = null;
 
     const iterator = query({
       prompt: params.userPrompt,
@@ -83,6 +89,8 @@ export class ClaudeSubscriptionTransport implements LlmTransport {
         for (const block of content) {
           if (block?.type === 'text' && typeof block.text === 'string') chunks.push(block.text);
         }
+      } else if (message?.type === 'rate_limit_event') {
+        rateLimit = toSubscriptionRateLimit(message.rate_limit_info) ?? rateLimit;
       } else if (message?.type === 'result') {
         subtype = message.subtype;
         if (typeof message.result === 'string') resultText = message.result;
@@ -97,15 +105,36 @@ export class ClaudeSubscriptionTransport implements LlmTransport {
     // Ưu tiên text tích lũy từ assistant (giống pipeline cũ: lọc text block, bỏ thinking).
     // Fallback về result string nếu assistant rỗng.
     const text = chunks.join('') || resultText;
-    // Subscription KHÔNG trả header anthropic-ratelimit-* (Agent SDK gọi qua subprocess),
-    // nên chỉ có token in/out; quota còn lại phải xem bằng lệnh /usage của Claude Code.
     return {
       text,
-      meta:      { transport: this.name, subtype, durationMs, numTurns, usage },
-      usage:     normalizeUsage(usage),
-      rateLimit: null,
+      meta:  { transport: this.name, subtype, durationMs, numTurns, usage, rateLimit },
+      usage: normalizeUsage(usage),
+      rateLimit,
     };
   }
+}
+
+/**
+ * Chuẩn hoá `rate_limit_info` của Agent SDK về SubscriptionRateLimit.
+ * `resetsAt` SDK trả dạng epoch number — nhận cả giây lẫn mili-giây (mốc 1e12 để phân biệt).
+ */
+function toSubscriptionRateLimit(info: unknown): SubscriptionRateLimit | null {
+  if (typeof info !== 'object' || info === null) return null;
+  const i = info as Record<string, unknown>;
+
+  const epoch = typeof i.resetsAt === 'number' && Number.isFinite(i.resetsAt) ? i.resetsAt : null;
+  const resetsAt = epoch == null
+    ? null
+    : new Date(epoch < 1e12 ? epoch * 1000 : epoch).toISOString();
+
+  return {
+    source:         'subscription',
+    status:         typeof i.status === 'string' ? i.status : null,
+    windowType:     typeof i.rateLimitType === 'string' ? i.rateLimitType : null,
+    utilizationPct: typeof i.utilization === 'number' && Number.isFinite(i.utilization) ? i.utilization : null,
+    resetsAt,
+    capturedAt:     new Date().toISOString(),
+  };
 }
 
 /** Bóc token từ `result.usage` của Agent SDK (cùng tên field với Messages API). */

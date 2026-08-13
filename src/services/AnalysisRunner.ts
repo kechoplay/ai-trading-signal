@@ -105,8 +105,11 @@ export async function runAnalysis(opts: AnalysisRunOptions): Promise<AnalysisRun
     logger.info('Analysis finished', {
       symbol: sym, action: result.action, duration_ms: durationMs, trigger,
       input_tokens: usage?.inputTokens ?? null, output_tokens: usage?.outputTokens ?? null,
-      input_tokens_remaining:  rateLimit?.inputTokensRemaining  ?? null,
-      output_tokens_remaining: rateLimit?.outputTokensRemaining ?? null,
+      // Log gọn hạn mức: API key → còn bao nhiêu token; subscription → đã dùng bao nhiêu % cửa sổ.
+      rate_limit: rateLimit == null ? null
+        : rateLimit.source === 'api-headers'
+          ? { input_remaining: rateLimit.inputTokensRemaining, output_remaining: rateLimit.outputTokensRemaining }
+          : { window: rateLimit.windowType, used_pct: rateLimit.utilizationPct, resets_at: rateLimit.resetsAt },
     });
     return { symbol: sym, action: result.action, durationMs, setup, reasoning, usage, rateLimit };
   } finally {

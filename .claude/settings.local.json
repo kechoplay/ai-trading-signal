@@ -62,7 +62,12 @@
       "Bash(netstat -ano)",
       "Bash(curl -s -m 15 http://localhost:3000/api/usage)",
       "Bash(echo \"TSC_EXIT=$?\")",
-      "Bash(echo \"EXIT=$?\")"
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(tar xzf *)",
+      "Bash(cd /tmp/agentsdk-probe && sed -n 3340,3450p package/sdk.d.ts)",
+      "Bash(cd /tmp/agentsdk-probe && sed -n 4400,4440p package/sdk.d.ts && echo \"=== Query interface ===\" && grep -n \"interface Query\\\\|declare type Query\" -A60 package/sdk.d.ts | grep -n \"usage\\\\|Usage\\\\|\\(\\\\|}\" | head -50)",
+      "Bash(cd /tmp/agentsdk-probe && sed -n 2495,2530p package/sdk.d.ts && echo \"=== getUsage sig ===\" && grep -n \"getUsage\\\\|GetUsageResponse\" package/sdk.d.ts | head)",
+      "Bash(rm -rf /tmp/agentsdk-probe)"
     ]
   }
 }

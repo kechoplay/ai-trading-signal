@@ -27,11 +27,11 @@ export interface TokenUsage {
 }
 
 /**
- * Hạn mức còn lại đọc từ header `anthropic-ratelimit-*` của Messages API.
- * CHỈ có ở đường API key — subscription (Agent SDK) không trả header này nên là null.
+ * Hạn mức còn lại đọc từ header `anthropic-ratelimit-*` của Messages API (đường API key).
  * `*Reset` là mốc ISO do server trả về; `retryAfterSec` chỉ có khi bị 429.
  */
-export interface RateLimitSnapshot {
+export interface ApiRateLimit {
+  source: 'api-headers';
   requestsLimit:      number | null;
   requestsRemaining:  number | null;
   requestsReset:      string | null;
@@ -49,6 +49,30 @@ export interface RateLimitSnapshot {
   /** Thời điểm đọc header (ISO) — để dashboard biết số liệu cũ bao lâu. */
   capturedAt: string;
 }
+
+/**
+ * Hạn mức gói subscription (Claude Pro/Max) — Agent SDK phát qua message
+ * `rate_limit_event` trong lúc chạy. KHÁC hẳn đường API key: Anthropic không cho biết
+ * còn bao nhiêu token, chỉ cho biết đã dùng bao nhiêu PHẦN TRĂM của cửa sổ hiện tại
+ * (5 giờ hoặc 7 ngày) và lúc nào cửa sổ reset.
+ *
+ * Lưu ý: SDK chỉ phát event khi thông tin THAY ĐỔI, nên có lượt chạy không có event
+ * nào — khi đó giữ nguyên số liệu lần trước (xem UsageTracker).
+ */
+export interface SubscriptionRateLimit {
+  source: 'subscription';
+  /** allowed | allowed_warning | rejected */
+  status: string | null;
+  /** five_hour | seven_day | seven_day_opus | seven_day_sonnet | overage… */
+  windowType: string | null;
+  /** % ĐÃ DÙNG của cửa sổ (0–100) → còn lại = 100 − giá trị này. */
+  utilizationPct: number | null;
+  /** Mốc reset cửa sổ (ISO). */
+  resetsAt: string | null;
+  capturedAt: string;
+}
+
+export type RateLimitSnapshot = ApiRateLimit | SubscriptionRateLimit;
 
 export interface LlmCompletionResult {
   /** Text đầu ra (đã ghép các text block, bỏ thinking). Parser regex xử lý tiếp. */
