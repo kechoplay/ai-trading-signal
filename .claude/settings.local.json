@@ -51,7 +51,12 @@
       "Bash(grep -n \"không dùng cron\\\\|SignalOrchestrator.ts\\\\|MarketHoursService.ts\\\\|POST /api/analyze$\\\\|### GET /api/signals\" CLAUDE.md)",
       "Bash(awk '{print $1, $2}')",
       "Bash(awk '$1>1')",
-      "Bash(node -e \"console.log\\('icu:', process.versions.icu, '| tz test:', new Intl.DateTimeFormat\\('en-GB',{timeZone:'Asia/Ho_Chi_Minh',hour:'2-digit',minute:'2-digit',hour12:false}\\).format\\(new Date\\(\\)\\)\\)\")"
+      "Bash(node -e \"console.log\\('icu:', process.versions.icu, '| tz test:', new Intl.DateTimeFormat\\('en-GB',{timeZone:'Asia/Ho_Chi_Minh',hour:'2-digit',minute:'2-digit',hour12:false}\\).format\\(new Date\\(\\)\\)\\)\")",
+      "Bash(cat)",
+      "Bash(cp /tmp/t.ts ./tmp-check.ts)",
+      "Bash(SCHEDULER_ENABLED=true SCHEDULER_SYMBOLS=XAU/USD SCHEDULER_START_HOUR=8 SCHEDULER_END_HOUR=22 TRADING_INSTRUMENT=XAU/USD MARKET_HOURS_TIMEZONE=Asia/Ho_Chi_Minh npx tsx tmp-check.ts)",
+      "Bash(SCHEDULER_ENABLED=true SCHEDULER_SYMBOLS= SCHEDULER_START_HOUR=8 SCHEDULER_END_HOUR=22 TRADING_INSTRUMENT=XAU/USD MARKET_HOURS_TIMEZONE=Asia/Ho_Chi_Minh npx tsx tmp-check.ts)",
+      "Bash(SCHEDULER_ENABLED=true SCHEDULER_SYMBOLS=\" XAU/USD , BTC/USD \" SCHEDULER_START_HOUR=8 SCHEDULER_END_HOUR=22 MARKET_HOURS_TIMEZONE=Asia/Ho_Chi_Minh npx tsx tmp-check.ts)"
     ]
   }
 }

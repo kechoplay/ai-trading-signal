@@ -444,8 +444,11 @@ Phân tích THUẦN TÚY từ price action theo đúng quy trình bên dưới. 
 
   ### ⛔ CỔNG 3 — RÀO CẢN NGHỊCH HƯỚNG (HARD GATE)
   - Xác định mọi POI nghịch hướng nằm giữa entry và TP1 chính (SELL: bullish OB/FVG bên dưới; BUY: bearish OB/FVG bên trên). Với mỗi rào cản, phân loại:
-    - **RÀO CẢN CỨNG** — POI **fresh, chưa từng bị giá xuyên qua bằng body close**, VÀ thuộc khung **≥ M15**. → TP1 chính **PHẢI lùi về trước** rào cản này. Không đặt mục tiêu xuyên qua một vùng còn nguyên vẹn ở khung lớn.
-    - **RÀO CẢN MỀM** — POI đã [mitigated], đã bị body close xuyên qua ít nhất một lần, hoặc chỉ thuộc khung M5. → **KHÔNG chặn TP1 chính**. Xử lý: đặt **TP chốt non** ngay trước nó, TP1 chính đi tiếp tới mục tiêu thanh khoản kế tiếp phía sau. Ghi rõ: "rào cản [vùng] xếp loại MỀM vì [lý do] → chốt non tại [giá], TP1 chính [giá]".
+    - **RÀO CẢN CỨNG** — POI **fresh, chưa từng bị giá xuyên qua bằng body close**, thuộc khung **≥ M15**, VÀ **đủ dày** (xem tiêu chí độ dày bên dưới). → TP1 chính **PHẢI lùi về trước** rào cản này. Không đặt mục tiêu xuyên qua một vùng còn nguyên vẹn ở khung lớn.
+    - **RÀO CẢN MỀM** — POI đã [mitigated], đã bị body close xuyên qua ít nhất một lần, chỉ thuộc khung M5, **hoặc quá mỏng**. → **KHÔNG chặn TP1 chính**. Xử lý: đặt **TP chốt non** ngay trước nó, TP1 chính đi tiếp tới mục tiêu thanh khoản kế tiếp phía sau. Ghi rõ: "rào cản [vùng] xếp loại MỀM vì [lý do] → chốt non tại [giá], TP1 chính [giá]".
+  - **TIÊU CHÍ ĐỘ DÀY (bắt buộc tính, kể cả khi rào cản còn fresh)**: đo bề rộng vùng = |mép trên − mép dưới|, chia cho **ATR H1** (lấy từ FACTS). Nếu **bề rộng < 0.25× ATR H1** → rào cản xếp **MỀM** dù fresh và dù thuộc khung ≥M15.
+    > LÝ DO: một khe hở vài phần mười ATR không phải bức tường — nó là chỗ giá đi xuyên trong một nến. Để nó chặn TP1 thì mọi nhịp scalp có FVG mỏng nằm giữa đường đều bị bóp RR xuống dưới ngưỡng và bị loại oan. Phần bảo vệ nằm ở **TP chốt non**: vẫn chốt 40–50% + dời BE ngay trước rào cản mỏng, phần còn lại mới chạy tiếp.
+    - Ghi rõ phép tính trong SUMMARY: "rào cản [vùng] dày [X] = [Y]× ATR H1 → CỨNG/MỀM".
   - Không có rào cản nào giữa entry và TP1 → không cần TP chốt non.
   - TUYỆT ĐỐI không dịch TP1 chính ra xa chỉ để ép RR đạt ngưỡng. TP1 phải là một mức thanh khoản CÓ THẬT trong FACTS — nêu đích danh mức đó (giá + nó là gì). Không gọi được tên mức → mức đó không tồn tại, chọn lại.
   - Cảnh báo thêm: nếu TP1 chính vẫn còn cao hơn swing low cũ (với SELL) / thấp hơn swing high cũ (với BUY) → lệnh không kỳ vọng phá cấu trúc, chỉ bắt một nhịp nhỏ → edge yếu, ghi rõ.
@@ -588,7 +591,7 @@ Viết phần này theo kiểu KỊCH BẢN HÀNH ĐỘNG, dễ đọc: "giá v�
 - Regime H1: ADX [X] → [STRONG_TREND / WEAK_TREND / RANGE / KHÔNG XÁC ĐỊNH], lệnh thuận/ngược hướng ADX
 - Draw on Liquidity: [lên/xuống] — cùng chiều / ngược (Cảnh báo B nếu ngược)
 - Pool kẹp giữa entry-SL_SCALP (M5/M15): Không / Có → đã dời SL / chấp nhận rủi ro (Cảnh báo D)
-- Rào cản nghịch hướng (Cổng 3): [vùng giá] — xếp loại **CỨNG / MỀM / không có** vì [lý do: fresh chưa bị body close xuyên & khung ≥M15 → CỨNG; đã mitigated / đã bị xuyên / chỉ khung M5 → MỀM]
+- Rào cản nghịch hướng (Cổng 3): [vùng giá] — dày [X] = [Y]× ATR H1 — xếp loại **CỨNG / MỀM / không có** vì [lý do: fresh chưa bị body close xuyên & khung ≥M15 & dày ≥0.25× ATR H1 → CỨNG; đã mitigated / đã bị xuyên / chỉ khung M5 / mỏng <0.25× ATR H1 → MỀM]
 
 **▸ PHẦN SCALP:**
 - SL: [giá] — neo cấu trúc M5 + đệm ≥1× ATR M5 — cách [X] USD
@@ -620,7 +623,7 @@ Viết phần này theo kiểu KỊCH BẢN HÀNH ĐỘNG, dễ đọc: "giá v�
 - Liquidity sweep tại POI: Có / Chưa
 - M5 confirmation: Có / Chưa / N/A (chế độ LIMIT) — **HARD GATE 2: PASS/FAIL** (ghi rõ thỏa qua chế độ A hay B)
 - Khoảng cách entry → giá hiện tại: [X] USD = [Y]× ATR H1 (chỉ ghi khi chế độ LIMIT; phải ≤ 1×)
-- Rào cản nghịch hướng: [vùng] — CỨNG / MỀM / không có → TP chốt non [giá] (RR [X:1], không tính cổng)
+- Rào cản nghịch hướng: [vùng] — dày [Y]× ATR H1 — CỨNG / MỀM / không có → TP chốt non [giá] (RR [X:1], không tính cổng)
 - TP1 chính — RR: [X:1] — **HARD GATE 3: PASS/FAIL** (≥1:${config.minRr})
 - Pool kẹp giữa entry-SL (M5/M15, và H1 nếu 2 phần): Không / Có → xử lý (Cảnh báo D)
 - Cấu trúc lệnh: 1 phần (SCALP) / 2 phần (SCALP+POSITION) — tùy chọn, chia 2 khi thuận H4 + range sâu ≥20% + tỷ lệ risk hai phần ≤4 lần

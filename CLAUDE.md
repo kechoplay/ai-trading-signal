@@ -162,7 +162,7 @@ TRADING_CANDLES_H4=30               # H4 chỉ làm context → ít nến
 TRADING_CANDLES_H1=214
 TRADING_CANDLES_M15=240
 TRADING_CANDLES_M5=180
-TRADING_MIN_RR=2.0
+TRADING_MIN_RR=1.0
 
 # Market Hours (Asia/Ho_Chi_Minh)
 MARKET_HOURS_OPEN=6
@@ -223,7 +223,7 @@ npm run db:migrate     # chạy migration
 - **HAI CHẾ ĐỘ VÀO LỆNH** (HARD GATE 2): `LIVE CONFIRM` (giá đã ở POI + M5 đã confirm) **hoặc** `LIMIT-CHỜ-POI` (POI fresh, entry dự kiến qua Gate 1 + Gate 3, cách giá hiện tại ≤ 1× ATR H1, có invalidation body-close → xuất ORDER lệnh chờ, tự hạ 1 bậc confidence). Lý do tồn tại: phân tích chạy rời rạc theo lần bấm nút, nếu bắt buộc live-confirm thì cửa sổ chỉ 1–2 nến M5 → gần như luôn trượt về WATCHLIST. WATCHLIST giờ chỉ dùng khi KHÔNG thỏa cả hai chế độ.
 - **HARD GATE 1 đo tại GIÁ VÀO LỆNH DỰ KIẾN**, không phải giá hiện tại — nếu không, giá hiện tại ở premium sâu sẽ chặn oan một lệnh BUY có entry nằm ở POI discount.
 - **HARD GATE 1 đo trên DEALING RANGE, không phải range 80 nến.** `RangeFib` trong `IctPreprocessor` lấy high/low của lookback cố định (H1 = 80 nến ≈ 3 ngày vàng) — dùng range macro ~120 USD đó làm mẫu số cho entry scalp SL 6–12 USD là sai đơn vị đo, mọi pullback nông trong leg tăng đều thành "premium >60%" và bị chặn oan. Mẫu số chính thức là `activeLeg` (`findActiveLeg()`): nhịp từ pivot đối nghịch gần nhất tới cực trị hiện tại, tự mở rộng khi giá vượt pivot cũ. Fallback về range mở rộng khi `activeLeg = null` hoặc `sizeAtr < 1` (leg nhỏ hơn 1× ATR = nhiễu). Range mở rộng vẫn gửi vào prompt làm bối cảnh + chọn mục tiêu thanh khoản xa, nhưng KHÔNG dùng để chặn lệnh. **Lưu ý: prompt crypto chưa áp dụng — vẫn dùng luật EQ trên range mở rộng.**
-- **THANG TP HAI TẦNG**: `TP chốt non` (mức thanh khoản/rào cản gần nhất, chốt 40–50% + dời breakeven, **không** bị Gate 3 ràng buộc) và `TP1 chính` (mục tiêu thật — **HARD GATE 3 đo RR trên mức này**). Cổng 3 phân loại rào cản nghịch hướng: **CỨNG** (fresh, chưa bị body close xuyên, khung ≥M15 → bắt buộc lùi TP1) vs **MỀM** (đã mitigated / đã bị xuyên / chỉ khung M5 → không chặn TP1, chỉ đặt chốt non trước nó).
+- **THANG TP HAI TẦNG**: `TP chốt non` (mức thanh khoản/rào cản gần nhất, chốt 40–50% + dời breakeven, **không** bị Gate 3 ràng buộc) và `TP1 chính` (mục tiêu thật — **HARD GATE 3 đo RR trên mức này**). Cổng 3 phân loại rào cản nghịch hướng: **CỨNG** (fresh, chưa bị body close xuyên, khung ≥M15, **và dày ≥0.25× ATR H1** → bắt buộc lùi TP1) vs **MỀM** (đã mitigated / đã bị xuyên / chỉ khung M5 / **mỏng <0.25× ATR H1** → không chặn TP1, chỉ đặt chốt non trước nó). Tiêu chí độ dày thêm vào 13/08/2026: một FVG rộng <0.25× ATR H1 không phải bức tường, để nó chặn TP1 thì mọi scalp có FVG mỏng nằm giữa đường đều bị bóp RR và loại oan.
 - Parser lấy `take_profit`/`risk_reward` từ dòng chứa token `TP1` **đầu tiên** trong block ORDER — dòng `TP chốt non` cố ý không chứa token đó nên không bị bắt nhầm. Đổi nhãn TP trong prompt phải kiểm lại `extractPriceFromLine(section, 'tp1')`.
 
 **Output là TEXT markdown (KHÔNG phải JSON)** — parse bằng regex, không dùng `JSON.parse`:
