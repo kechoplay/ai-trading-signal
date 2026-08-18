@@ -31,8 +31,13 @@ export class AnalysisScheduler {
   private runCount = 0;
   private skipCount = 0;
 
+  // Mutable: bật/tắt runtime qua dashboard (POST /api/scheduler/toggle), lưu DB
+  // (bảng `settings`, key `scheduler_enabled`) nên sống sót qua restart process.
+  // Giá trị khởi tạo từ SCHEDULER_ENABLED, DB override nếu có bản ghi.
+  private enabled: boolean;
+
   constructor(
-    private readonly enabled: boolean,
+    enabled: boolean,
     private readonly intervalMin: number,
     private readonly startHour: number,
     private readonly endHour: number,
@@ -40,7 +45,9 @@ export class AnalysisScheduler {
     private readonly symbols: string[],
     private readonly offsetSec: number,
     private readonly timezone: string,
-  ) {}
+  ) {
+    this.enabled = enabled;
+  }
 
   static fromConfig(): AnalysisScheduler {
     const s = config.scheduler;
@@ -54,6 +61,21 @@ export class AnalysisScheduler {
       s.offsetSec,
       config.marketHours.timezone,
     );
+  }
+
+  isEnabled(): boolean {
+    return this.enabled;
+  }
+
+  /** Bật/tắt runtime. Gọi lại từ route toggle SAU KHI đã ghi DB thành công. */
+  setEnabled(enabled: boolean): void {
+    this.enabled = enabled;
+    if (enabled) {
+      this.start();
+    } else {
+      this.stop();
+      logger.info('Scheduler tắt (qua dashboard) — chỉ chạy phân tích khi bấm tay');
+    }
   }
 
   start(): void {

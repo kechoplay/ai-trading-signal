@@ -66,6 +66,14 @@ model AnalysisLog {
   @@map("analysis_logs")
 }
 
+model Setting {
+  key        String   @id
+  value      String
+  updated_at DateTime @updatedAt
+
+  @@map("settings")
+}
+
 model TradingSignal {
   id                  Int       @id @default(autoincrement())
   instrument          String

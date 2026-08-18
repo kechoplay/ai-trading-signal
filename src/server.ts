@@ -124,6 +124,31 @@ app.get('/api/scheduler', requireApiKey, (_req, res) => {
   res.json(scheduler.status());
 });
 
+const SCHEDULER_ENABLED_KEY = 'scheduler_enabled';
+
+app.post('/api/scheduler/toggle', requireApiKey, async (req, res) => {
+  const enabled = req.body?.enabled;
+  if (typeof enabled !== 'boolean') {
+    res.status(400).json({ error: 'enabled (boolean) is required' });
+    return;
+  }
+  try {
+    // Ghi DB TRƯỚC — nếu lỗi thì không đổi trạng thái runtime, tránh lệch giữa
+    // DB và scheduler đang chạy trong RAM.
+    await prisma.setting.upsert({
+      where:  { key: SCHEDULER_ENABLED_KEY },
+      update: { value: String(enabled) },
+      create: { key: SCHEDULER_ENABLED_KEY, value: String(enabled) },
+    });
+    scheduler.setEnabled(enabled);
+    logger.info('Scheduler toggled qua API', { enabled });
+    res.json(scheduler.status());
+  } catch (err: any) {
+    logger.error('POST /api/scheduler/toggle failed', { error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ─── Token usage / hạn mức ────────────────────────────────────────────────────
 // Gộp 2 nguồn: tổng token trong ngày (cộng dồn từ analysis_logs) + ảnh chụp hạn mức
 // còn lại của lượt gọi gần nhất (header anthropic-ratelimit-*, giữ trong RAM).
@@ -537,8 +562,18 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 });
 
 const { port } = config.server;
-app.listen(port, () => {
+app.listen(port, async () => {
   logger.info(`Dashboard running at http://localhost:${port}`);
   logger.info(`MCP endpoint: http://localhost:${port}/mcp`);
-  scheduler.start();
+
+  // DB override SCHEDULER_ENABLED trong .env nếu user đã từng bấm toggle trên dashboard —
+  // ưu tiên lựa chọn gần nhất của user hơn giá trị tĩnh trong .env.
+  try {
+    const saved = await prisma.setting.findUnique({ where: { key: SCHEDULER_ENABLED_KEY } });
+    if (saved) scheduler.setEnabled(saved.value === 'true');
+    else scheduler.start();
+  } catch (err: any) {
+    logger.error('Đọc setting scheduler_enabled thất bại — dùng SCHEDULER_ENABLED từ .env', { error: err.message });
+    scheduler.start();
+  }
 });

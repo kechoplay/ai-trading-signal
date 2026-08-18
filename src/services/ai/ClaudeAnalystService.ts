@@ -162,7 +162,7 @@ export class ClaudeAnalystService {
     }
 
     const section    = this.extractSection(text, action);
-    const entry      = extractPriceFromLine(section, 'entry');
+    const entry      = extractEntryPrice(section);
     const stopLoss   = extractPriceFromLine(section, 'sl');
     const takeProfit = extractPriceFromLine(section, 'tp1');
     const riskReward = this.extractRRFromLine(section, 'tp1') ?? this.extractRR(section);
@@ -595,7 +595,7 @@ Viết phần này theo kiểu KỊCH BẢN HÀNH ĐỘNG, dễ đọc: "giá v�
 - Vị trí **trong dealing range** tại entry dự kiến: [premium/discount/EQ, X% leg] (giá hiện tại [Y]% leg) — dealing range dùng: [low–high, size] — vs ngưỡng regime [75/25 | 60/40 | 55/45] — HARD GATE 1; Cảnh báo A nếu EQ mỏng
 - Regime H1: ADX [X] → [STRONG_TREND / WEAK_TREND / RANGE / KHÔNG XÁC ĐỊNH], lệnh thuận/ngược hướng ADX
 - Draw on Liquidity: [lên/xuống] — cùng chiều / ngược (Cảnh báo B nếu ngược)
-- Pool kẹp giữa entry-SL_SCALP (M5/M15): Không / Có → đã dời SL / chấp nhận rủi ro (Cảnh báo D)
+- Pool kẹp giữa entry–stop SCALP (M5/M15): Không / Có → đã dời stop / chấp nhận rủi ro (Cảnh báo D)
 - Rào cản nghịch hướng (Cổng 3): [vùng giá] — dày [X] = [Y]× ATR H1 — xếp loại **CỨNG / MỀM / không có** vì [lý do: fresh chưa bị body close xuyên & khung ≥M15 & dày ≥0.25× ATR H1 → CỨNG; đã mitigated / đã bị xuyên / chỉ khung M5 / mỏng <0.25× ATR H1 → MỀM]
 
 **▸ PHẦN SCALP:**
@@ -604,7 +604,7 @@ Viết phần này theo kiểu KỊCH BẢN HÀNH ĐỘNG, dễ đọc: "giá v�
 - TP1: [giá] — mục tiêu thanh khoản chính (gọi tên đích danh mức đó là gì) — RR [X:1] — **HARD GATE 3**
 
 **▸ PHẦN POSITION** (chỉ khi chia 2 phần — tùy chọn):
-- Pool kẹp giữa entry-SL_POSITION (H1): Không / Có → đã dời SL / chấp nhận rủi ro (Cảnh báo D)
+- Pool kẹp giữa entry–stop POSITION (H1): Không / Có → đã dời stop / chấp nhận rủi ro (Cảnh báo D)
 - SL: [giá] — neo swing H1 + đệm 1× ATR H1 — cách [X] USD (rộng hơn SCALP)
 - TP1: [giá] — mục tiêu thanh khoản H1 (đã lùi khỏi vùng nghịch) — RR [X:1]
 - TP2: [giá] — mục tiêu thanh khoản H1/H4 xa — RR [X:1]
@@ -630,7 +630,7 @@ Viết phần này theo kiểu KỊCH BẢN HÀNH ĐỘNG, dễ đọc: "giá v�
 - Khoảng cách entry → giá hiện tại: [X] USD = [Y]× ATR H1 (chỉ ghi khi chế độ LIMIT; phải ≤ 1×)
 - Rào cản nghịch hướng: [vùng] — dày [Y]× ATR H1 — CỨNG / MỀM / không có → TP chốt non [giá] (RR [X:1], không tính cổng)
 - TP1 chính — RR: [X:1] — **HARD GATE 3: PASS/FAIL** (≥1:${config.minRr})
-- Pool kẹp giữa entry-SL (M5/M15, và H1 nếu 2 phần): Không / Có → xử lý (Cảnh báo D)
+- Pool kẹp giữa entry–stop (M5/M15, và H1 nếu 2 phần): Không / Có → xử lý (Cảnh báo D)
 - Cấu trúc lệnh: 1 phần (SCALP) / 2 phần (SCALP+POSITION) — tùy chọn, chia 2 khi thuận H4 + range sâu ≥20% + tỷ lệ risk hai phần ≤4 lần
 - Trong kill zone: Có / Không (đã xác định đúng giai đoạn DST)
 - Cảnh báo đang kích hoạt: [liệt kê A/B/C/D/kill zone/ngược dòng nếu có] → confidence [mức]
@@ -1099,11 +1099,68 @@ function tzOffsetMinutes(tz: string, at: Date): number {
   return (asUtc - at.getTime()) / 60_000;
 }
 
-function extractPriceFromLine(text: string, keyword: string): number | null {
-  const re   = new RegExp(`^[^\\n]*\\b${keyword}\\b[^\\n]*$`, 'im');
-  const line = text.match(re)?.[0];
-  if (!line) return null;
-  const nums = line.match(/\b\d{3,}(?:[.,]\d+)?\b/g);
+/** Bullet / markdown / mũi tên đứng trước nhãn của một dòng thông số. */
+const LABEL_PREFIX = /^[\s>▸•·◦\-*–—]+/;
+
+/**
+ * Dòng DIỄN GIẢI có nhắc tới entry/SL nhưng không khai báo giá của chúng.
+ * VD: "Pool kẹp giữa entry–SL (M5/M15): Có — 4388.47 (higher-low M5)" — 4388.47 là
+ * giá pool thanh khoản, KHÔNG phải stop loss. Các dòng này đứng TRƯỚC dòng "SL:"
+ * trong block ORDER nên match lỏng sẽ nuốt nhầm chúng.
+ */
+const NOISE_LINE = /pool|kẹp|breakeven|dời|hủy|thoát|trailing/i;
+
+/**
+ * Lấy phần giá trị (sau dấu ":") của dòng có NHÃN bắt đầu bằng `keyword`.
+ * "- SL: 4381.90 — ..."       → nhãn "SL"                    → khớp
+ * "- Entry zone: 4389.50 …"   → nhãn "Entry zone"            → khớp
+ * "- Pool kẹp giữa entry–SL:" → nhãn "Pool kẹp giữa entry–SL" → KHÔNG khớp
+ */
+function findLabelValue(text: string, keyword: string): string | null {
+  const atLabelStart = new RegExp(`^\\*{0,2}${keyword}\\b`, 'i');
+
+  for (const line of text.split('\n')) {
+    const colon = line.indexOf(':');
+    if (colon < 0) continue;
+    const label = line.slice(0, colon).replace(LABEL_PREFIX, '').trim();
+    if (atLabelStart.test(label)) return line.slice(colon + 1);
+  }
+  return null;
+}
+
+function firstPrice(text: string): number | null {
+  const nums = text.match(/\b\d{3,}(?:[.,]\d+)?\b/g);
   if (!nums) return null;
   return parseFloat(nums[0].replace(',', ''));
+}
+
+function extractPriceFromLine(text: string, keyword: string): number | null {
+  // Ưu tiên dòng khai báo đúng chuẩn "<keyword>: <giá>".
+  const value = findLabelValue(text, keyword);
+  if (value) {
+    const price = firstPrice(value);
+    if (price !== null) return price;
+  }
+
+  // Fallback cho cách viết lạc chuẩn ("Stop loss (SL) 4381.90") — vẫn loại dòng diễn giải.
+  for (const line of text.split('\n')) {
+    if (!new RegExp(`\\b${keyword}\\b`, 'i').test(line)) continue;
+    if (NOISE_LINE.test(line)) continue;
+    const price = firstPrice(line);
+    if (price !== null) return price;
+  }
+
+  return null;
+}
+
+/**
+ * Entry: ưu tiên "mốc [giá]" — điểm khớp AI chỉ định trong vùng entry.
+ * Lấy số đầu dòng sẽ ra mép vùng (VD "Entry zone: 4389.50 – 4391.50 (mốc 4390.30)"
+ * → 4389.50), khiến entry/SL/TP lưu vào DB không khớp với RR do AI tự tính.
+ */
+function extractEntryPrice(text: string): number | null {
+  const value  = findLabelValue(text, 'entry');
+  const anchor = value?.match(/mốc\s*:?\s*(\d{3,}(?:[.,]\d+)?)/i);
+  if (anchor) return parseFloat(anchor[1].replace(',', ''));
+  return extractPriceFromLine(text, 'entry');
 }

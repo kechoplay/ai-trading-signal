@@ -437,6 +437,7 @@
   </div>
   <div class="header-actions">
     <button class="nav-btn menu-btn" onclick="openDrawer()">☰ Symbol</button>
+    <button id="schedulerToggleBtn" class="nav-btn" onclick="toggleScheduler()" disabled>⏱ …</button>
     <button id="analyzeBtn" class="nav-btn analyze-btn" onclick="runAnalyze()">⚡ Phân tích</button>
     <a href="/" class="nav-btn">🏠 Tín hiệu</a>
     <a href="/docs" target="_blank" class="nav-btn">📖 Docs</a>
@@ -865,7 +866,65 @@ async function loadSymbols() {
   }
 }
 
+function renderSchedulerBtn(status) {
+  const btn = document.getElementById('schedulerToggleBtn');
+  btn.disabled = false;
+  if (status == null) {
+    btn.textContent = '⏱ Scheduler: lỗi';
+    btn.title = 'Không đọc được trạng thái scheduler';
+    return;
+  }
+  const on = !!status.enabled;
+  btn.textContent = on ? '⏱ Scheduler: BẬT' : '⏱ Scheduler: TẮT';
+  btn.title = on
+    ? `Chạy mỗi ${status.interval_min} phút, ${status.window} (${status.weekdays.join(',')}). Bấm để tắt.`
+    : 'Đang tắt — chỉ chạy phân tích khi bấm tay. Bấm để bật.';
+  btn.style.opacity = on ? '1' : '.6';
+}
+
+async function loadSchedulerStatus() {
+  try {
+    const res = await fetch('/api/scheduler', { headers: getApiKey() ? { 'x-api-key': getApiKey() } : {} });
+    if (!res.ok) { renderSchedulerBtn(null); return; }
+    renderSchedulerBtn(await res.json());
+  } catch {
+    renderSchedulerBtn(null);
+  }
+}
+
+async function toggleScheduler() {
+  const btn = document.getElementById('schedulerToggleBtn');
+  if (btn.disabled) return;
+
+  if (btn.textContent.includes('lỗi')) {
+    // Chưa biết trạng thái thật (lỗi mạng/401) — click đầu chỉ đọc lại, không đoán
+    // chiều bật/tắt để tránh ghi nhầm.
+    btn.disabled = true;
+    await loadSchedulerStatus();
+    return;
+  }
+
+  const next = !btn.textContent.includes('BẬT');
+  btn.disabled = true;
+  try {
+    const res = await apiFetch('/api/scheduler/toggle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: next }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Đổi trạng thái thất bại');
+    renderSchedulerBtn(data);
+    showToast(next ? '✓ Đã bật scheduler' : '✓ Đã tắt scheduler', 'success');
+  } catch (e) {
+    showToast('✗ ' + (e.message || 'Đổi trạng thái thất bại'), 'error');
+    await loadSchedulerStatus();
+  }
+}
+
 loadSymbols();
+loadSchedulerStatus();
+setInterval(loadSchedulerStatus, 60_000);
 </script>
 </body>
 </html>
