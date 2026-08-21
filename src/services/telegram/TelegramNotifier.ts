@@ -353,6 +353,39 @@ export class TelegramNotifier {
     return lines.join('\n');
   }
 
+  /** Bản gọn cho channel chính — chỉ header + entry/SL/TP, không kèm giá/xu hướng/confidence/kịch bản. */
+  formatSignalSummary(result: AnalysisResult, instrument: string): string {
+    const SEP = '━━━━━━━━━━━━━━━━━━━━━';
+    const time = formatDate(new Date());
+
+    const actionLine =
+      result.action === 'BUY'  ? '🟢 <b>MUA (BUY)</b>'  :
+      result.action === 'SELL' ? '🔴 <b>BÁN (SELL)</b>' :
+      result.action === 'WATCHLIST' ? '👁 <b>ĐANG CANH (WATCHLIST)</b>' :
+      '⚪ <b>KHÔNG VÀO LỆNH</b>';
+
+    const lines: string[] = [
+      SEP,
+      `📊 <b>${htmlEscape(instrument)}</b>  ${actionLine}`,
+      SEP,
+      `🕐 ${time} <i>(Giờ VN)</i>`,
+    ];
+
+    if (result.action === 'BUY' || result.action === 'SELL') {
+      lines.push('');
+      if (result.entry != null) lines.push(`🎯 Entry:       <code>${formatPrice(result.entry, 2)}</code>`);
+      if (result.stopLoss != null) lines.push(`🛡 Stop Loss:   <code>${formatPrice(result.stopLoss, 2)}</code>`);
+      if (result.takeProfit != null) lines.push(`💰 Take Profit: <code>${formatPrice(result.takeProfit, 2)}</code>`);
+      if (result.riskReward != null) lines.push(`⚖️ R:R:         <code>1 : ${formatPrice(result.riskReward, 2)}</code>`);
+    }
+
+    lines.push('');
+    lines.push(SEP);
+    lines.push('<i>⚠️ Tín hiệu tham khảo từ AI, không phải lời khuyên đầu tư.</i>');
+
+    return lines.join('\n');
+  }
+
   formatSignalCard(result: AnalysisResult, instrument: string, currentPrice?: number): string {
     const SEP = '━━━━━━━━━━━━━━━━━━━━━';
     const time = formatDate(new Date());

@@ -166,15 +166,16 @@ export class SignalOrchestrator {
     currentPrice: number,
   ): Promise<void> {
     try {
-      // 1. Gửi signal card lên channel
-      const signalCard = this.telegram.formatSignalCard(result, instrument, currentPrice);
-      const messageId = await this.telegram.send(signalCard);
+      // 1. Gửi bản gọn (chỉ entry/SL/TP) lên channel
+      const summary = this.telegram.formatSignalSummary(result, instrument);
+      const messageId = await this.telegram.send(summary);
       logger.info('Telegram signal sent', { message_id: messageId, action: result.action });
 
       if (messageId) {
-        // 2. Gửi phân tích chi tiết vào discussion thread
+        // 2. Gửi bản đầy đủ (giá/xu hướng/confidence/kịch bản + phân tích chi tiết) vào discussion thread
+        const signalCard = this.telegram.formatSignalCard(result, instrument, currentPrice);
         const analysisHtml = this.telegram.formatAnalysis(rawText);
-        await this.telegram.sendComment(analysisHtml, messageId);
+        await this.telegram.sendComment(`${signalCard}\n\n${analysisHtml}`, messageId);
         logger.info('Telegram analysis thread sent', { reply_to: messageId });
 
       }

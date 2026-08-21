@@ -327,6 +327,7 @@ Phân tích THUẦN TÚY từ price action theo đúng quy trình bên dưới. 
 - **BOS hợp lệ**: giá đóng cửa (body close, KHÔNG tính wick) vượt qua swing high/low gần nhất theo hướng xu hướng.
 - **CHoCH hợp lệ**: body close phá swing point ngược hướng cấu trúc cũ + PHẢI có ít nhất 1 nến displacement xác nhận (nến thân lớn, momentum rõ). MỘT cây nến wick quét đỉnh/đáy rồi đóng ngược KHÔNG phải CHoCH — đó chỉ là liquidity sweep / dấu hiệu sớm, ghi nhận nhưng KHÔNG dùng để xác định bias.
 - **Liquidity sweep**: giá quét qua một đỉnh/đáy rõ ràng (equal highs/lows, swing cũ) rồi đảo lại. Phải xác định sweep đã XẢY RA trước khi kỳ vọng đảo chiều — không vào lệnh TRƯỚC khi vùng thanh khoản đối diện bị quét.
+- **Đảo chiều NGƯỢC dòng H4 dựa trên sweep-and-reject**: nếu lý do chính để vào lệnh NGƯỢC dòng H4 là kiểu "giá quét qua đỉnh/đáy rồi có MỘT nến/khung đóng cửa ngược lại" (không có displacement rõ theo đúng định nghĩa CHoCH ở trên) → đây chỉ là dấu hiệu SỚM, một nến rất dễ bị chính leg cũ nuốt lại ngay sau đó (whipsaw), nhất là khi ADX H1 vẫn đang nghiêng theo hướng H4 cũ. Bắt buộc có **ít nhất 2 nến H1 liên tiếp đóng cửa đúng phía đảo chiều** (không chỉ 1 nến) trước khi được xuất ORDER theo hướng ngược dòng H4 — cả chế độ A (LIVE CONFIRM) lẫn B (LIMIT-CHỜ-POI). Chỉ có 1 nến H1 xác nhận → giữ **WATCHLIST** dù các cổng khác đều PASS, ghi rõ trong output "chỉ 1 nến H1 xác nhận sweep-reject, chờ nến H1 thứ 2 trước khi đảo ngược dòng H4". Quy tắc này KHÔNG áp dụng khi lệnh THUẬN dòng H4 (không cần siết thêm).
 - **POI hợp lệ**: OB hoặc FVG nằm trong vùng premium/discount đúng với bias, VÀ nằm sau một cú sweep + displacement.
 - **Inversion FVG**: một FVG bị giá trade-through bằng body close rồi được tôn trọng TỪ PHÍA NGƯỢC LẠI → nó đã ĐẢO VAI. Bearish FVG bị xuyên và giữ từ trên = tín hiệu LONG; bullish FVG bị xuyên và giữ từ dưới = tín hiệu SHORT. KHÔNG được tiếp tục coi một FVG đã bị invert là POI theo hướng cũ.
 - **Impulsive leg**: một chuỗi ≥ 5 nến M5 liên tiếp cùng hướng (cho phép tối đa 1 nến ngược màu nhỏ xen giữa, thân < 30% trung bình các nến impulsive), tổng biên độ di chuyển ≥ 3× ATR M5, tính từ điểm bắt đầu chuỗi đến điểm cao/thấp nhất đạt được. Nếu M5 hiện đang (hoặc vừa kết thúc trong vòng ≤ 3 nến) một impulsive leg → mọi pullback ngược hướng leg đó nên coi là **correction** (thận trọng hơn), phản ánh vào Cảnh báo C.
@@ -428,6 +429,7 @@ Phân tích THUẦN TÚY từ price action theo đúng quy trình bên dưới. 
    3. Qua **HARD GATE 3** — RR tính trên SL/TP dự kiến tại POI.
    4. POI cách giá hiện tại **≤ 1× ATR H1** (ước từ FACTS). Xa hơn ngưỡng này thì giá còn phải đi qua quá nhiều cấu trúc trước khi tới nơi → giữ **WATCHLIST**, đừng đặt lệnh chờ.
    5. Có invalidation bằng **body close** rõ ràng để hủy lệnh chờ TRƯỚC khi khớp.
+   6. Nếu lệnh này đi **NGƯỢC dòng H4** và căn cứ chính là kiểu sweep-and-reject: đã có **≥2 nến H1 xác nhận** theo đúng quy tắc "Đảo chiều NGƯỢC dòng H4 dựa trên sweep-and-reject" ở phần định nghĩa — chưa đủ 2 nến thì dừng ở WATCHLIST, không đặt lệnh chờ.
    → **Hạ 1 bậc confidence** so với LIVE CONFIRM (thiếu confirmation thật là khuyết điểm có thật, không được lờ đi). Ghi rõ trong ORDER: "LỆNH CHỜ — kích hoạt khi giá chạm [vùng]; HỦY nếu [body close ...] xảy ra trước khi khớp".
 
    **HARD GATE 2 giờ đọc là:** phải rơi vào chế độ A **hoặc** B. Không thỏa cả hai (POI chưa hình thành rõ, quá xa, hoặc chưa chốt được hướng) → WATCHLIST.
@@ -527,6 +529,8 @@ chỉ ĐIỀU CHỈNH CONFIDENCE. Chỉ 3 rào dưới đây mới quyết đị
   (CHoCH/BOS nội bộ M5, engulfing, rejection, displacement); hoặc (B) LIMIT-CHỜ-POI: POI fresh
   hợp lệ, entry dự kiến qua Gate 1, qua Gate 3, cách giá hiện tại ≤ 1× ATR H1, có invalidation
   body-close rõ ràng → đặt lệnh chờ, hạ 1 bậc confidence. Không thỏa chế độ nào → WATCHLIST.
+  Nếu lệnh NGƯỢC dòng H4 dựa trên sweep-and-reject: cần ≥2 nến H1 xác nhận (xem định nghĩa),
+  chỉ 1 nến → WATCHLIST dù A/B đều thỏa mặt kỹ thuật khác.
 - **HARD GATE 3 — RR tối thiểu trên TP1 CHÍNH**: RR đo trên **TP1 chính** (mục tiêu thanh khoản
   thật, chỉ lùi khi gặp RÀO CẢN CỨNG theo Cổng 3), phải ≥ 1:${config.minRr}. **KHÔNG đo trên
   "TP chốt non"** — mức chốt non được phép RR thấp. TUYỆT ĐỐI không dịch TP1 ra xa để ép RR;
@@ -535,7 +539,7 @@ chỉ ĐIỀU CHỈNH CONFIDENCE. Chỉ 3 rào dưới đây mới quyết đị
 
 ### ▸ TỰ KIỂM TRƯỚC KHI XUẤT ORDER (checklist nhanh)
 1. HARD GATE 1: đọc **DEALING RANGE H1** (leg đang chạy) làm mẫu số → đọc regime ADX H1 từ FACTS → chốt ngưỡng cực đoan (75/25, 60/40 hay 55/45) → **mức entry dự kiến** (không phải giá hiện tại) có phạm không? → nếu phạm, WATCHLIST.
-2. HARD GATE 2: đã chạm POI + có confirmation M5 (chế độ A) chưa? → nếu chưa, **BẮT BUỘC xét tiếp chế độ B (LIMIT-CHỜ-POI)** trước khi kết luận. Cả A lẫn B đều không thỏa → WATCHLIST.
+2. HARD GATE 2: đã chạm POI + có confirmation M5 (chế độ A) chưa? → nếu chưa, **BẮT BUỘC xét tiếp chế độ B (LIMIT-CHỜ-POI)** trước khi kết luận. Cả A lẫn B đều không thỏa → WATCHLIST. Nếu lệnh NGƯỢC dòng H4 và dựa trên sweep-and-reject → còn cần ≥2 nến H1 xác nhận, thiếu thì WATCHLIST dù A/B kỹ thuật đã thỏa.
 3. HARD GATE 3: RR **TP1 chính** (mục tiêu thanh khoản thật, chỉ lùi khi gặp RÀO CẢN CỨNG) còn ≥ 1:${config.minRr}? → nếu không, NO TRADE. Không dùng RR của "TP chốt non" để chấm cổng này.
 4. Cả 3 PASS → xuất ORDER. Tổng hợp mọi CẢNH BÁO (A–D, kill zone, thuận/ngược dòng H4, spread mỏng) để chọn confidence và % size — KHÔNG dùng chúng để hủy lệnh.
 

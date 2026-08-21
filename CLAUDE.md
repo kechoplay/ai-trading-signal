@@ -110,9 +110,10 @@ D:/ai-trading-signal/
        phải trong route — scheduler cần bản ghi này để carry-forward hoạt động)
        ↓
 [TelegramNotifier]
-       ├─ formatSignalCard() → HTML card (badge BUY/SELL/WATCHLIST/NO_TRADE)
+       ├─ formatSignalSummary() → bản gọn (badge + entry/SL/TP/RR only)
        ├─ send() → kênh Telegram chính (auto-split nếu >4000 ký tự)
-       └─ sendComment() → discussion thread
+       └─ formatSignalCard() (đầy đủ: giá/xu hướng/confidence/kịch bản) + formatAnalysis()
+          → sendComment() → discussion thread
 ```
 
 ---
@@ -229,6 +230,7 @@ npm run db:migrate     # chạy migration
 - **HARD GATE 1 đo tại GIÁ VÀO LỆNH DỰ KIẾN**, không phải giá hiện tại — nếu không, giá hiện tại ở premium sâu sẽ chặn oan một lệnh BUY có entry nằm ở POI discount.
 - **HARD GATE 1 đo trên DEALING RANGE, không phải range 80 nến.** `RangeFib` trong `IctPreprocessor` lấy high/low của lookback cố định (H1 = 80 nến ≈ 3 ngày vàng) — dùng range macro ~120 USD đó làm mẫu số cho entry scalp SL 6–12 USD là sai đơn vị đo, mọi pullback nông trong leg tăng đều thành "premium >60%" và bị chặn oan. Mẫu số chính thức là `activeLeg` (`findActiveLeg()`): nhịp từ pivot đối nghịch gần nhất tới cực trị hiện tại, tự mở rộng khi giá vượt pivot cũ. Fallback về range mở rộng khi `activeLeg = null` hoặc `sizeAtr < 1` (leg nhỏ hơn 1× ATR = nhiễu). Range mở rộng vẫn gửi vào prompt làm bối cảnh + chọn mục tiêu thanh khoản xa, nhưng KHÔNG dùng để chặn lệnh. **Lưu ý: prompt crypto chưa áp dụng — vẫn dùng luật EQ trên range mở rộng.**
 - **THANG TP HAI TẦNG**: `TP chốt non` (mức thanh khoản/rào cản gần nhất, chốt 40–50% + dời breakeven, **không** bị Gate 3 ràng buộc) và `TP1 chính` (mục tiêu thật — **HARD GATE 3 đo RR trên mức này**). Cổng 3 phân loại rào cản nghịch hướng: **CỨNG** (fresh, chưa bị body close xuyên, khung ≥M15, **và dày ≥0.25× ATR H1** → bắt buộc lùi TP1) vs **MỀM** (đã mitigated / đã bị xuyên / chỉ khung M5 / **mỏng <0.25× ATR H1** → không chặn TP1, chỉ đặt chốt non trước nó). Tiêu chí độ dày thêm vào 13/08/2026: một FVG rộng <0.25× ATR H1 không phải bức tường, để nó chặn TP1 thì mọi scalp có FVG mỏng nằm giữa đường đều bị bóp RR và loại oan.
+- **ĐẢO CHIỀU NGƯỢC DÒNG H4 DỰA TRÊN SWEEP-AND-REJECT — cần ≥2 nến H1 xác nhận** (thêm 21/08/2026, phần "ĐỊNH NGHĨA KỸ THUẬT BẮT BUỘC" + Hard Gate 2 chế độ B trong `buildGoldSystemPrompt`). Trước đó, một lệnh ngược dòng H4 có thể được xuất ORDER chỉ dựa vào MỘT nến H1 đóng cửa ngược lại sau cú sweep đỉnh/đáy (kiểu "giá quét lên rồi H1 đóng nến quay lại dưới mức cũ" = sweep-and-reject) — không phải CHoCH thật (thiếu displacement). Sự cố quan sát được: 21/08/2026 giá quét 4547.99 rồi H1 đóng nến 4541.01 (dưới 4544.49), hệ thống lập tức đảo từ BUY sang SELL dù H4 vẫn BULLISH và ADX H1 vẫn nghiêng bullish suốt — 15–20 phút sau giá phá ngược trở lại, vô hiệu hoàn toàn setup SELL (whipsaw). Luật mới: lệnh ngược dòng H4 dùng lý do sweep-and-reject phải có **≥2 nến H1 liên tiếp** đóng cửa đúng phía đảo chiều mới được xuất ORDER (cả LIVE CONFIRM lẫn LIMIT-CHỜ-POI); chỉ 1 nến → giữ WATCHLIST. Không áp dụng khi lệnh THUẬN dòng H4. **Lưu ý: prompt crypto (`buildCryptoSystemPrompt`) chưa áp dụng luật này**, theo đúng quy ước hiện tại là các luật đọc H1/dealing-range mới chỉ vá ở prompt vàng trước.
 - Parser lấy `take_profit`/`risk_reward` từ dòng chứa token `TP1` **đầu tiên** trong block ORDER — dòng `TP chốt non` cố ý không chứa token đó nên không bị bắt nhầm. Đổi nhãn TP trong prompt phải kiểm lại `extractPriceFromLine(section, 'tp1')`.
 
 **Output là TEXT markdown (KHÔNG phải JSON)** — parse bằng regex, không dùng `JSON.parse`:
@@ -351,6 +353,7 @@ trên từng bản ghi + dải tổng token trong ngày.
 
 **File:** `src/services/telegram/TelegramNotifier.ts`
 
+- **Kênh chính** nhận bản gọn (`formatSignalSummary`): chỉ header + entry/SL/TP/RR, không kèm giá hiện tại/xu hướng/confidence/kịch bản tiềm năng. **Comment** (discussion thread) mới nhận bản đầy đủ: `formatSignalCard` (giá, xu hướng, confidence, kịch bản) nối với `formatAnalysis` (phân tích chi tiết). `setup` trả về trong response `POST /api/analyze` (cho dashboard) vẫn dùng `formatSignalCard` đầy đủ, không đổi.
 - Gửi signal card dạng HTML (không dùng Markdown)
 - Badge action: 🟢 MUA / 🔴 BÁN / 👁 ĐANG CANH (WATCHLIST) / ⚪ KHÔNG VÀO LỆNH
 - Auto-split tin nhắn >4000 ký tự
@@ -358,25 +361,22 @@ trên từng bản ghi + dải tổng token trong ngày.
 - Chuyển đổi markdown AI → HTML Telegram (bảng, bold, italic, bullet)
 - Thanh confidence: `████████░░` (10 ký tự)
 
-**Format signal card:**
+**Bản gọn — gửi kênh chính (`formatSignalSummary`):**
 ```
 ━━━━━━━━━━━━━━━━━━━━━
 📊 XAU/USD  🟢 MUA (BUY)
 ━━━━━━━━━━━━━━━━━━━━━
 🕐 14/05/2026 10:30 (Giờ VN)
-💵 Giá hiện tại: 2343.50
-📐 Xu hướng: 📈 Tăng
-─ Thông số lệnh ─────────────
+
 🎯 Entry:      2343.00
 🛡 Stop Loss:  2340.00
 💰 Take Profit: 2350.00
 ⚖️ R:R:        1 : 2.33
-─ Đánh giá AI ───────────────
-🔎 Độ tin cậy: 82/100
-████████░░
 ━━━━━━━━━━━━━━━━━━━━━
 ⚠️ Tín hiệu tham khảo từ AI, không phải lời khuyên đầu tư.
 ```
+
+**Bản đầy đủ — gửi comment/discussion thread (`formatSignalCard` + `formatAnalysis`):** thêm 💵 Giá hiện tại, 📐 Xu hướng, ─ Đánh giá AI ─ (confidence bar), ─ Kịch bản tiềm năng ─ (nếu có conditional setups), rồi tới 📋 PHÂN TÍCH CHI TIẾT.
 
 ---
 
