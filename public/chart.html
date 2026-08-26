@@ -439,6 +439,7 @@
     <button class="nav-btn menu-btn" onclick="openDrawer()">☰ Symbol</button>
     <button id="schedulerToggleBtn" class="nav-btn" onclick="toggleScheduler()" disabled>⏱ …</button>
     <button id="analyzeBtn" class="nav-btn analyze-btn" onclick="runAnalyze()">⚡ Phân tích</button>
+    <button id="swingBtn" class="nav-btn" onclick="runSwing()">🔁 Nhịp nhỏ</button>
     <a href="/" class="nav-btn">🏠 Tín hiệu</a>
     <a href="/docs" target="_blank" class="nav-btn">📖 Docs</a>
   </div>
@@ -451,7 +452,7 @@
 <div id="sigOverlay" class="sig-overlay" onclick="if(event.target===this) closeSignals()">
   <div class="sig-modal">
     <div class="sig-modal-header">
-      <div class="sig-modal-title">📋 Tín hiệu từ Claude <span id="sigSymbol"></span></div>
+      <div class="sig-modal-title"><span id="sigTitle">📋 Tín hiệu từ Claude</span> <span id="sigSymbol"></span></div>
       <button class="sig-modal-close" onclick="closeSignals()" aria-label="Đóng">×</button>
     </div>
     <div class="sig-modal-body" id="sigBody">
@@ -670,6 +671,7 @@ function tokSummary(logs) {
 async function showSignals(symbol) {
   const overlay = document.getElementById('sigOverlay');
   const body = document.getElementById('sigBody');
+  document.getElementById('sigTitle').textContent = '📋 Tín hiệu từ Claude';
   document.getElementById('sigSymbol').textContent = symbol;
   body.innerHTML = '<div class="empty">Đang tải…</div>';
   overlay.classList.add('show');
@@ -708,6 +710,127 @@ async function showSignals(symbol) {
   } catch (e) {
     body.innerHTML = '<div class="empty">✗ ' + esc(e.message || 'Tải tín hiệu thất bại') + '</div>';
   }
+}
+
+// ── Nhịp nhỏ: zigzag pivot trên symbol đang xem (cơ học, không gọi Claude) ──
+
+const swingNum = n => n == null ? '—' : Number(n).toLocaleString('en-US', { maximumFractionDigits: 6 });
+// "2026-08-27 02:00:00" → "02:00 27/08" (mọi nến trong báo cáo đều thuộc vài phiên gần nhất)
+const swingTime = t => {
+  const m = String(t ?? '').match(/(\d{2})-(\d{2})[T ](\d{2}:\d{2})/);
+  return m ? `${m[3]} ${m[2]}/${m[1]}` : (t ?? '—');
+};
+const swingResult = s => {
+  if (s.status === 'SL')      return `❌ SL (${s.resultR}R)`;
+  if (s.status === 'RUNNING') return `⏳ chạy (${s.resultR >= 0 ? '+' : ''}${s.resultR}R)`;
+  return `✅ ${s.status} (+${s.resultR}R)`;
+};
+
+async function runSwing() {
+  const btn = document.getElementById('swingBtn');
+  if (btn.disabled) return;
+  if (!activeSymbol) { showToast('Chưa chọn symbol nào', 'error'); return; }
+
+  const original = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Đang dò...';
+
+  const body = document.getElementById('sigBody');
+  document.getElementById('sigTitle').textContent = '🔁 Nhịp nhỏ';
+  document.getElementById('sigSymbol').textContent = activeSymbol;
+  body.innerHTML = '<div class="empty">Đang dò nhịp…</div>';
+  document.getElementById('sigOverlay').classList.add('show');
+
+  try {
+    const res = await apiFetch('/api/swing?symbol=' + encodeURIComponent(activeSymbol));
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Dò nhịp thất bại');
+    body.innerHTML = renderSwing(data);
+  } catch (e) {
+    body.innerHTML = '<div class="empty">✗ ' + esc(e.message || 'Dò nhịp thất bại') + '</div>';
+    showToast('✗ ' + (e.message || 'Dò nhịp thất bại'), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = original;
+  }
+}
+
+function renderSwing(data) {
+  const { latest, stats, signals, params } = data;
+
+  const summary = `<div class="sig-summary">
+    <span>🔁 <b>${stats.total}</b> nhịp · <b>${stats.resolved}</b> đã đóng</span>
+    <span class="sep"></span>
+    <span>Winrate <b>${stats.winRatePct == null ? '—' : stats.winRatePct + '%'}</b></span>
+    <span>Tổng <b>${stats.totalR >= 0 ? '+' : ''}${stats.totalR}R</b></span>
+    <span>TB <b>${stats.avgR == null ? '—' : (stats.avgR >= 0 ? '+' : '') + stats.avgR + 'R'}</b></span>
+    <span class="sep"></span>
+    <span>${esc(data.timeframe)} · pivot ${params.pivotLookback} nến · lọc ≥ ${params.minLegAtr}× ATR</span>
+  </div>`;
+
+  if (!latest) {
+    return summary + '<div class="empty">Không có nhịp nào đủ lớn so với ngưỡng lọc — thị trường đang đi ngang trong biên hẹp.</div>';
+  }
+
+  // Tín hiệu đã đóng hoặc quá cũ vẫn hiện, nhưng ghi rõ là không vào được nữa.
+  const note = data.actionable
+    ? `✅ Còn vào được — tín hiệu ra cách đây ${latest.barsAgo} nến.`
+    : latest.status !== 'RUNNING'
+      ? `⛔ Nhịp này đã đóng (${latest.status}) — chờ pivot mới.`
+      : `⛔ Đã ra cách đây ${latest.barsAgo} nến, giá rời entry quá xa — chờ nhịp mới.`;
+
+  const tps = latest.takeProfits
+    .map((tp, i) => `TP${i + 1} <b>${swingNum(tp)}</b> (${params.tpR[i]}R)`).join(' · ');
+
+  const latestBlock = `<div class="sig-item open">
+    <div class="sig-item-head" onclick="toggleSigItem(this.parentElement)">
+      <span class="sig-item-time">${latest.direction === 'BUY' ? '🟢 BUY' : '🔴 SELL'} @ ${swingNum(latest.entry)}</span>
+      <span class="sig-tok">${esc(swingTime(latest.signalTime))}</span>
+      <span class="sig-toggle">›</span>
+    </div>
+    <div class="sig-item-body">
+      <div style="margin-bottom:8px">${esc(note)}</div>
+      <table>
+        <tr><td>Entry</td><td><b>${swingNum(latest.entry)}</b></td></tr>
+        <tr><td>Stop loss</td><td><b>${swingNum(latest.stopLoss)}</b> — 1R = ${swingNum(latest.risk)}</td></tr>
+        <tr><td>Take profit</td><td>${tps}</td></tr>
+        <tr><td>Pivot</td><td>${swingNum(latest.pivotPrice)} (${esc(swingTime(latest.pivotTime))}) — nhịp trước dài <b>${latest.legAtr}× ATR</b></td></tr>
+        <tr><td>Trạng thái</td><td>${esc(swingResult(latest))}</td></tr>
+      </table>
+      ${latest.provisional
+        ? '<div style="margin-top:8px">⚠️ Nhịp đảo chiều chưa đủ lớn — pivot còn có thể bị dời (repaint), tín hiệu này có thể biến mất.</div>'
+        : ''}
+    </div>
+  </div>`;
+
+  const rows = signals.slice(-15).reverse().map(s => `<tr>
+      <td>${esc(swingTime(s.signalTime))}</td>
+      <td>${s.direction === 'BUY' ? '🟢 BUY' : '🔴 SELL'}</td>
+      <td>${swingNum(s.entry)}</td>
+      <td>${swingNum(s.stopLoss)}</td>
+      <td>${swingNum(s.takeProfits[0])}</td>
+      <td>${s.legAtr}×</td>
+      <td>${esc(swingResult(s))}</td>
+    </tr>`).join('');
+
+  const history = `<div class="sig-item open">
+    <div class="sig-item-head" onclick="toggleSigItem(this.parentElement)">
+      <span class="sig-item-time">📜 ${Math.min(15, signals.length)} nhịp gần nhất</span>
+      <span class="sig-toggle">›</span>
+    </div>
+    <div class="sig-item-body">
+      <table>
+        <tr><th>Xác nhận</th><th>Chiều</th><th>Entry</th><th>SL</th><th>TP1</th><th>Nhịp</th><th>Kết quả</th></tr>
+        ${rows}
+      </table>
+      <div style="margin-top:10px;color:var(--muted);font-size:12px">
+        Tín hiệu cơ học, không đọc bối cảnh POI/thanh khoản như phân tích AI.
+        Winrate đo trên chính đoạn nến đang xét (backtest trong mẫu) — dùng để chỉnh tham số, không phải kỳ vọng tương lai.
+      </div>
+    </div>
+  </div>`;
+
+  return summary + latestBlock + history;
 }
 
 function getApiKey() { return localStorage.getItem('apiKey') || ''; }

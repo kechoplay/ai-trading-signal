@@ -101,12 +101,25 @@ interface Pivot {
 
 // ─── Tiện ích ────────────────────────────────────────────────────────────────
 
-/** Làm tròn theo độ lớn giá: vàng/BTC 2 số, altcoin nhỏ cần nhiều số hơn. */
-function round(price: number): number {
+/** Số chữ số thập phân theo độ lớn giá: vàng/BTC 2 số, altcoin nhỏ cần nhiều số hơn. */
+const digitsFor = (price: number): number => {
   const abs = Math.abs(price);
-  const digits = abs >= 100 ? 2 : abs >= 1 ? 4 : 6;
-  const f = 10 ** digits;
+  return abs >= 100 ? 2 : abs >= 1 ? 4 : 6;
+};
+
+function round(price: number): number {
+  const f = 10 ** digitsFor(price);
   return Math.round(price * f) / f;
+}
+
+/**
+ * Làm tròn một KHOẢNG giá (risk, ATR) theo độ chính xác của mức giá tham chiếu.
+ * Tự đo theo chính nó thì sai đơn vị: risk 2.3737 USD của vàng nhỏ hơn 100 nên bị
+ * hiển thị 4 số lẻ như altcoin, trong khi entry cạnh nó chỉ có 2.
+ */
+function roundLike(value: number, ref: number): number {
+  const f = 10 ** digitsFor(ref);
+  return Math.round(value * f) / f;
 }
 
 /**
@@ -281,7 +294,7 @@ export function analyzeSwings(
       signalTime: candles[confirmIndex].time,
       entry: round(entry),
       stopLoss: round(stopLoss),
-      risk: round(risk),
+      risk: roundLike(risk, entry),
       takeProfits: tps.map(round),
       legAtr: Math.round((Math.abs(p.price - prev.price) / (atrAt || 1)) * 10) / 10,
       status: sim.status,
@@ -295,7 +308,7 @@ export function analyzeSwings(
   return {
     timeframe,
     bars: candles.length,
-    atr: round(lastAtr),
+    atr: roundLike(lastAtr, currentPrice),
     currentPrice: round(currentPrice),
     lastCandleTime: lastCandle?.time ?? '',
     signals,
