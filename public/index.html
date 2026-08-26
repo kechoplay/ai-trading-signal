@@ -441,6 +441,7 @@
     <button class="refresh-btn" onclick="loadLatest()">↻ Refresh</button>
     <button id="analyzeBtn" class="refresh-btn analyze-btn" onclick="runAnalyze('analyzeBtn')">⚡ Phân tích XAU</button>
     <button id="analyzeBtcBtn" class="refresh-btn btc-btn" onclick="runAnalyze('analyzeBtcBtn', 'BTC/USD')">₿ Phân tích BTC</button>
+    <button id="swingBtn" class="refresh-btn" onclick="runSwing()">🔁 Nhịp nhỏ</button>
   </div>
 </div>
 
@@ -450,6 +451,10 @@
 </div>
 
 <div id="usageRow" class="usage-row" style="display:none"></div>
+
+<!-- Nhịp nhỏ (zigzag pivot) — tính lại từ nến mỗi lần bấm, KHÔNG lưu DB nên không nằm
+     trong loadLatest(); panel này tự render từ JSON của /api/swing. -->
+<div class="grid" id="swingPanel" style="max-width:960px;margin:16px auto 0;display:none"></div>
 
 <div id="main"></div>
 
@@ -888,6 +893,113 @@ async function runAnalyze(btnId = 'analyzeBtn', symbol, endpoint = '/api/analyze
     btn.disabled = false;
     btn.innerHTML = original;
   }
+}
+
+// ─── Nhịp nhỏ (zigzag pivot, không dùng AI) ─────────────────────────────────
+
+async function runSwing(symbol) {
+  const btn = document.getElementById('swingBtn');
+  if (btn.disabled) return;
+  const original = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Đang dò...';
+
+  const url = '/api/swing' + (symbol ? `?symbol=${encodeURIComponent(symbol)}` : '');
+  try {
+    const call = key => fetch(url, { headers: key ? { 'x-api-key': key } : {} });
+    let res = await call(getApiKey());
+    if (res.status === 401) {
+      const key = promptApiKey();
+      if (!key) throw new Error('Cần API key để dò nhịp');
+      res = await call(key);
+    }
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Dò nhịp thất bại');
+
+    renderSwing(data);
+    showToast(`✓ ${data.stats.total} nhịp trong ${data.duration_ms}ms`, 'success');
+  } catch (e) {
+    showToast('✗ ' + (e.message || 'Dò nhịp thất bại'), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = original;
+  }
+}
+
+// "2026-08-27 02:00:00" → "02:00 27/08" (mọi nến trong báo cáo đều thuộc vài phiên gần nhất).
+const swingTime = t => {
+  const m = String(t ?? '').match(/(\d{2})-(\d{2})[T ](\d{2}:\d{2})/);
+  return m ? `${m[3]} ${m[2]}/${m[1]}` : (t ?? '—');
+};
+
+const swingStatus = s => {
+  if (s.status === 'SL')      return `<span class="tag down">SL ${s.resultR}R</span>`;
+  if (s.status === 'RUNNING') return `<span class="tag neutral">chạy ${s.resultR >= 0 ? '+' : ''}${s.resultR}R</span>`;
+  return `<span class="tag up">${s.status} +${s.resultR}R</span>`;
+};
+
+function renderSwing(data) {
+  const { latest, stats, signals, params } = data;
+  const dirCls = latest ? latest.direction.toLowerCase() : 'no_trade';
+  const head = latest
+    ? `${latest.direction === 'BUY' ? '🟢 BUY' : '🔴 SELL'} @ ${fmt(latest.entry)}`
+    : '⚪ Chưa có nhịp';
+
+  // Tín hiệu quá cũ hoặc đã chốt → vẫn hiện nhưng ghi rõ không vào được nữa.
+  const note = !latest ? 'Không có nhịp nào đủ lớn so với ngưỡng lọc.'
+    : data.actionable ? `Còn vào được — tín hiệu ra cách đây ${latest.barsAgo} nến.`
+    : latest.status !== 'RUNNING' ? `Nhịp này đã đóng (${latest.status}) — chờ pivot mới.`
+    : `Đã ra cách đây ${latest.barsAgo} nến, giá rời entry quá xa — chờ nhịp mới.`;
+
+  const detail = latest ? `
+    <div class="kpi-row">
+      <div class="kpi"><div class="kpi-label">Entry</div><div class="kpi-value">${fmt(latest.entry)}</div></div>
+      <div class="kpi"><div class="kpi-label">Stop loss</div><div class="kpi-value sell">${fmt(latest.stopLoss)}</div></div>
+      <div class="kpi"><div class="kpi-label">TP1 / TP2 / TP3</div><div class="kpi-value buy">${latest.takeProfits.map(t => fmt(t)).join(' · ')}</div></div>
+      <div class="kpi"><div class="kpi-label">1R</div><div class="kpi-value">${fmt(latest.risk)}</div></div>
+      <div class="kpi"><div class="kpi-label">Độ lớn nhịp</div><div class="kpi-value">${latest.legAtr}× ATR</div></div>
+    </div>
+    ${latest.provisional ? '<div class="meta-row" style="margin-top:10px">⚠️ Nhịp đảo chiều chưa đủ lớn — pivot còn có thể bị dời (repaint).</div>' : ''}
+  ` : '';
+
+  document.getElementById('swingPanel').innerHTML = `
+    <div class="card col-full">
+      <div class="card-header"><div class="dot"></div>🔁 Nhịp nhỏ — ${esc(data.symbol)} · ${esc(data.timeframe)}
+        <span style="margin-left:auto;font-weight:400;color:var(--muted);font-size:11px">
+          pivot ${params.pivotLookback} nến · lọc ≥ ${params.minLegAtr}× ATR · SL đệm ${params.slBufferAtr}× ATR
+        </span>
+      </div>
+      <div class="signal-banner">
+        <div class="signal-left">
+          <span class="action-badge ${dirCls}">${head}</span>
+          <span style="color:var(--muted);font-size:12px">${esc(note)}</span>
+        </div>
+        <div class="signal-right">
+          <div class="price-label">Winrate / Tổng R (${stats.resolved} nhịp đã đóng)</div>
+          <div class="current-price">${stats.winRatePct == null ? '—' : stats.winRatePct + '%'}
+            <span style="font-size:15px;color:var(--muted)">/ ${stats.totalR >= 0 ? '+' : ''}${stats.totalR}R</span></div>
+        </div>
+      </div>
+      ${detail}
+      <div style="overflow-x:auto;margin-top:12px">
+        <table class="history-table">
+          <thead><tr><th>Xác nhận</th><th>Chiều</th><th>Entry</th><th>SL</th><th>TP1</th><th>Nhịp</th><th>Kết quả</th></tr></thead>
+          <tbody>${signals.slice(-15).reverse().map(s => `
+            <tr>
+              <td>${esc(swingTime(s.signalTime))}</td>
+              <td class="kpi-value ${s.direction.toLowerCase()}" style="font-size:13px">${s.direction}</td>
+              <td>${fmt(s.entry)}</td><td>${fmt(s.stopLoss)}</td><td>${fmt(s.takeProfits[0])}</td>
+              <td>${s.legAtr}×</td><td>${swingStatus(s)}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div style="margin-top:10px;font-size:11px;color:var(--muted)">
+        Tín hiệu cơ học, không đọc bối cảnh POI/thanh khoản như phân tích AI.
+        Winrate đo trên chính đoạn nến đang xét (backtest trong mẫu) — dùng để chỉnh tham số, không phải kỳ vọng tương lai.
+      </div>
+    </div>`;
+  document.getElementById('swingPanel').style.display = '';
 }
 
 loadLatest();

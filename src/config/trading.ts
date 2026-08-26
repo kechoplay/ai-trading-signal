@@ -51,6 +51,25 @@ export const config = {
     orderWindowMin: parseInt(process.env.CARRY_FORWARD_ORDER_WINDOW_MIN ?? '240', 10),
   },
 
+  // SWING SCALP — dò điểm BUY/SELL theo từng nhịp nhỏ bằng zigzag pivot (KHÔNG dùng AI,
+  // không tiêu quota). Xem src/services/swing/SwingSignalService.ts.
+  // minLegAtr là núm chỉnh chính: cao → ít tín hiệu, chỉ nhịp lớn; thấp → bắt nhịp nhỏ
+  // hơn nhưng nhiễu nhiều. slBufferAtr là đệm SL sau đỉnh/đáy pivot để không bị quét râu.
+  swing: {
+    timeframe: process.env.SWING_TIMEFRAME ?? 'M5',
+    candles: parseInt(process.env.SWING_CANDLES ?? '300', 10),
+    pivotLookback: parseInt(process.env.SWING_PIVOT_LOOKBACK ?? '2', 10),
+    minLegAtr: parseFloat(process.env.SWING_MIN_LEG_ATR ?? '1.0'),
+    slBufferAtr: parseFloat(process.env.SWING_SL_BUFFER_ATR ?? '0.25'),
+    tpR: (process.env.SWING_TP_R ?? '1,2,3')
+      .split(',')
+      .map((s) => parseFloat(s.trim()))
+      .filter((n) => Number.isFinite(n) && n > 0),
+    atrPeriod: parseInt(process.env.SWING_ATR_PERIOD ?? '14', 10),
+    // Tín hiệu cũ hơn ngần này nến thì giá đã rời entry — coi như hết hiệu lực.
+    staleBars: parseInt(process.env.SWING_STALE_BARS ?? '6', 10),
+  },
+
   marketHours: {
     open: parseInt(process.env.MARKET_HOURS_OPEN ?? '6', 10),
     close: parseInt(process.env.MARKET_HOURS_CLOSE ?? '22', 10),

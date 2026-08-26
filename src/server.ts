@@ -10,6 +10,7 @@ import { prisma } from './db';
 import { logger } from './logger';
 import { config } from './config/trading';
 import { AnalysisBusyError, runAnalysis } from './services/AnalysisRunner';
+import { runSwingAnalysis } from './services/swing/SwingRunner';
 import { TokenUsage } from './services/ai/transport/LlmTransport';
 import { lastRateLimitSnapshot, lastRunUsage } from './services/ai/UsageTracker';
 import { AnalysisScheduler } from './services/AnalysisScheduler';
@@ -117,6 +118,32 @@ app.post('/api/analyze', requireApiKey, async (req, res) => {
     }
     logger.error('POST /api/analyze failed', { error: err.message, duration_ms: Date.now() - startedAt });
     res.status(500).json({ error: err.message ?? 'Analysis failed' });
+  }
+});
+
+/**
+ * Dò điểm BUY/SELL theo từng nhịp nhỏ (zigzag pivot) — cơ học, không gọi Claude nên
+ * chạy trong vài ms và KHÔNG tiêu quota. Không đụng single-flight của runAnalysis vì
+ * không có gì để tranh chấp (không gọi AI, không ghi trading_signals).
+ */
+app.get('/api/swing', requireApiKey, async (req, res) => {
+  try {
+    const result = await runSwingAnalysis({
+      symbol:    typeof req.query.symbol === 'string' ? req.query.symbol : undefined,
+      timeframe: typeof req.query.timeframe === 'string' ? req.query.timeframe : undefined,
+      limit:     req.query.limit ? Math.min(parseInt(String(req.query.limit), 10), 100) : undefined,
+      notify:    String(req.query.notify ?? '') === 'true',
+    });
+    res.json({
+      ok: true, symbol: result.symbol, duration_ms: result.durationMs,
+      timeframe: result.report.timeframe, actionable: result.actionable,
+      latest: result.report.latest, stats: result.report.stats,
+      signals: result.report.signals, params: result.report.params,
+      setup: result.setup, reasoning: result.reasoning,
+    });
+  } catch (err: any) {
+    logger.error('GET /api/swing failed', { error: err?.message ?? String(err) });
+    res.status(500).json({ error: err?.message ?? 'Swing analysis failed' });
   }
 });
 

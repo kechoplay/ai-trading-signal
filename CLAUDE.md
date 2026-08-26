@@ -62,6 +62,9 @@ D:/ai-trading-signal/
         │   ├── MarketDataProviderFactory.ts  ← chọn provider theo config
         │   ├── TwelveDataProvider.ts  ← provider mặc định
         │   └── OandaProvider.ts       ← provider thay thế
+        ├── swing/
+        │   ├── SwingSignalService.ts  ← engine zigzag pivot (nhịp nhỏ, KHÔNG dùng AI)
+        │   └── SwingRunner.ts         ← fetch nến + format báo cáo + Telegram (tùy chọn)
         └── telegram/
             └── TelegramNotifier.ts   ← format + gửi tín hiệu lên Telegram
 ```
@@ -210,6 +213,7 @@ npm start              # chạy compiled JS (production)
 npm run build          # biên dịch TypeScript → dist/
 npm run analyze        # chạy phân tích 1 lần (có check giờ)
 npm run analyze:force  # chạy phân tích 1 lần (bỏ qua check giờ)
+npm run swing          # dò nhịp nhỏ (zigzag, không dùng AI): npm run swing -- BTC/USD M15 [--notify]
 npm run db:generate    # generate Prisma client
 npm run db:push        # sync schema → DB
 npm run db:migrate     # chạy migration
@@ -250,6 +254,36 @@ npm run db:migrate     # chạy migration
 
 ---
 
+## Nhịp nhỏ (Swing scalp) — Chi tiết quan trọng
+
+**File:** `src/services/swing/SwingSignalService.ts` (engine) + `SwingRunner.ts` (chạy + format)
+
+Lớp tín hiệu **CƠ HỌC, KHÔNG gọi Claude** — dò điểm BUY/SELL theo từng nhịp nhỏ giống họ
+indicator zigzag/fractal trên TradingView. Chạy vài ms, **không tiêu quota**, nên gọi bao
+nhiêu lần cũng được. Đây là lớp **song song**, KHÔNG thay thế phân tích ICT/AI.
+
+Thuật toán: pivot fractal (`lookback` nến mỗi bên) → zigzag ép xen kẽ HIGH/LOW và loại
+nhịp nhỏ hơn `minLegAtr × ATR` → pivot LOW = BUY, pivot HIGH = SELL → SL sau pivot một
+khoảng `slBufferAtr × ATR`, TP1/2/3 theo bội số R → forward-test từng tín hiệu cũ trên
+chính bộ nến để có winrate/tổng R thật.
+
+Ba điểm phải nhớ trước khi sửa:
+- **Entry lấy tại nến XÁC NHẬN (`pivot.index + lookback`), không phải tại pivot.** Pivot chỉ
+  biết được sau `lookback` nến; lấy giá pivot làm entry là nhìn trộm tương lai → winrate ảo.
+- **Tín hiệu MỚI NHẤT có thể repaint** — pivot cùng loại cực đoan hơn sẽ dời zigzag. Trường
+  `provisional` đánh dấu trường hợp này. Mọi tín hiệu trước đó đã cố định.
+- **Nến chạm cả SL lẫn TP trong cùng một cây → tính SL** (không có dữ liệu tick). Chọn phía
+  bi quan để winrate không bị thổi phồng.
+
+Kết quả **KHÔNG ghi `trading_signals`**: đây là số liệu tính lại được từ nến bất cứ lúc nào,
+lưu vào đó sẽ trộn với tín hiệu AI trên dashboard và làm hỏng carry-forward
+(`SignalOrchestrator.loadPendingSetup` đọc bản ghi gần nhất theo instrument).
+
+Ba đường gọi: `GET /api/swing`, nút **🔁 Nhịp nhỏ** trên dashboard, `npm run swing`.
+Tham số chỉnh trong `.env` (`SWING_*`) — `SWING_MIN_LEG_ATR` là núm chính.
+
+---
+
 ## REST API Server — Chi tiết quan trọng
 
 **File:** `src/server.ts`
@@ -284,6 +318,17 @@ Trigger phân tích thủ công.
 ```
 
 **409 Conflict** khi scheduler (hoặc một request khác) đang chạy phân tích — single-flight trong `AnalysisRunner`, không bao giờ có 2 lượt song song.
+
+### GET /api/swing
+
+Dò nhịp nhỏ (zigzag pivot) — **không gọi AI**, trả về trong vài ms.
+
+Query: `?symbol=XAU/USD&timeframe=M5&limit=15&notify=true` (đều tùy chọn; `notify=true` mới
+gửi Telegram). Trả `latest` (tín hiệu mới nhất), `actionable` (còn vào được không),
+`stats` (winrate / tổng R trên chính bộ nến), `signals[]`, `setup`/`reasoning` (HTML cùng
+định dạng với phân tích AI).
+
+Không đụng single-flight của `runAnalysis` — không gọi AI, không ghi DB nên không tranh chấp gì.
 
 ### GET /api/scheduler
 

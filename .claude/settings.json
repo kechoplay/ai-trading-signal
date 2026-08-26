@@ -24,7 +24,10 @@
       "PowerShell(npx tsx \"C:\\\\Users\\\\Admin\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--Work-ai-trading-signal\\\\e93b2a22-e5e0-4c10-8a23-b5aa682c67df\\\\scratchpad\\\\gatecheck3.ts\")",
       "PowerShell(npx tsx \"C:\\\\Users\\\\Admin\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--Work-ai-trading-signal\\\\e93b2a22-e5e0-4c10-8a23-b5aa682c67df\\\\scratchpad\\\\gatecheck3.ts\" 2>&1)",
       "Skill(claude-api)",
-      "Skill(claude-api:*)"
+      "Skill(claude-api:*)",
+      "Bash(grep -o 'Response meta.\\\\{0,400\\\\}' logs/signal.log)",
+      "Bash(cd \"d:/Work/ai-trading-signal\" && grep -E \"AI_AUTH_MODE|CLAUDE_MODEL|CLAUDE_EFFORT|SCHEDULER_\" .env 2>/dev/null | sed 's/=.*TOKEN.*/=***/'; echo \"--- projects dirs ---\"; ls -1 ~/.claude/projects/ 2>/dev/null | head -20)",
+      "Read(//c/Users/Admin/.claude/projects/**)"
     ]
   }
 }

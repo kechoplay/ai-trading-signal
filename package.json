@@ -8,6 +8,7 @@
     "build": "tsc",
     "analyze": "tsx src/commands/analyzeSignal.ts",
     "analyze:force": "tsx src/commands/analyzeSignal.ts --force",
+    "swing": "tsx src/commands/analyzeSwing.ts",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
