@@ -803,12 +803,17 @@ function renderSwing(data) {
     </div>
   </div>`;
 
+  // Bội số R lấy từ params (SWING_TP_R có thể cấu hình ít hơn 3 mức) → bỏ trống nếu thiếu.
+  const tpHead = i => `TP${i + 1}${params.tpR[i] == null ? '' : ` (${params.tpR[i]}R)`}`;
+
   const rows = signals.slice(-15).reverse().map(s => `<tr>
       <td>${esc(swingTime(s.signalTime))}</td>
       <td>${s.direction === 'BUY' ? '🟢 BUY' : '🔴 SELL'}</td>
       <td>${swingNum(s.entry)}</td>
       <td>${swingNum(s.stopLoss)}</td>
       <td>${swingNum(s.takeProfits[0])}</td>
+      <td>${swingNum(s.takeProfits[1])}</td>
+      <td>${swingNum(s.takeProfits[2])}</td>
       <td>${s.legAtr}×</td>
       <td>${esc(swingResult(s))}</td>
     </tr>`).join('');
@@ -819,10 +824,15 @@ function renderSwing(data) {
       <span class="sig-toggle">›</span>
     </div>
     <div class="sig-item-body">
-      <table>
-        <tr><th>Xác nhận</th><th>Chiều</th><th>Entry</th><th>SL</th><th>TP1</th><th>Nhịp</th><th>Kết quả</th></tr>
-        ${rows}
-      </table>
+      <!-- 9 cột không đủ chỗ trong modal 720px trên màn hẹp → cho cuộn ngang thay vì bóp chữ. -->
+      <div style="overflow-x:auto">
+        <table style="white-space:nowrap">
+          <tr><th>Xác nhận</th><th>Chiều</th><th>Entry</th><th>SL</th>
+            <th>${tpHead(0)}</th><th>${tpHead(1)}</th><th>${tpHead(2)}</th>
+            <th>Nhịp</th><th>Kết quả</th></tr>
+          ${rows}
+        </table>
+      </div>
       <div style="margin-top:10px;color:var(--muted);font-size:12px">
         Tín hiệu cơ học, không đọc bối cảnh POI/thanh khoản như phân tích AI.
         Winrate đo trên chính đoạn nến đang xét (backtest trong mẫu) — dùng để chỉnh tham số, không phải kỳ vọng tương lai.
