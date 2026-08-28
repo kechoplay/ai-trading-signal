@@ -721,7 +721,6 @@ const swingTime = t => {
   return m ? `${m[3]} ${m[2]}/${m[1]}` : (t ?? '—');
 };
 const swingR = n => `${n >= 0 ? '+' : ''}${n}R`;
-const swingPct = n => n == null ? '—' : n + '%';
 // status = ĐƯỜNG ĐI với SL gốc; resultR = kết quả theo LUẬT THOÁT đang chọn. "SL sau
 // TP{n}" nói thẳng chi phí của việc giữ lệnh — bản cũ tính trường hợp đó thành thắng.
 const swingResult = s => {
@@ -845,41 +844,7 @@ function renderSwing(data) {
     </div>
   </div>`;
 
-  // Khối trả lời "giữ hay chốt" bằng số: xác suất có điều kiện + so sánh 3 luật thoát.
-  const cond = stats.conditional || { reachedTp1: 0, levels: [], giveBack: 0, giveBackPct: null };
-  const ruleRows = Object.entries(data.exit_rules || {}).map(([key, label]) => {
-    const r = (stats.byRule || {})[key];
-    if (!r) return '';
-    const active = key === params.exitRule;
-    return `<tr${active ? ' style="font-weight:600"' : ''}>
-      <td>${esc(label)}${active ? ' ◀' : ''}</td><td>${r.closed}</td>
-      <td>${swingPct(r.winRatePct)}</td><td>${swingR(r.totalR)}</td>
-      <td>${r.avgR == null ? '—' : swingR(r.avgR)}</td></tr>`;
-  }).join('');
-
-  const hold = !stats.total ? '' : `<div class="sig-item open">
-    <div class="sig-item-head" onclick="toggleSigItem(this.parentElement)">
-      <span class="sig-item-time">🎯 Giữ tới TP xa có đáng không?</span>
-      <span class="sig-toggle">›</span>
-    </div>
-    <div class="sig-item-body">
-      <div style="margin-bottom:8px">
-        ${cond.reachedTp1
-          ? `${cond.reachedTp1}/${stats.total} lệnh chạm TP1. `
-            + cond.levels.map(l => `Đi tiếp tới <b>TP${l.level}: ${swingPct(l.pctGivenTp1)}</b>`).join(' · ')
-            + `<br>Chạm TP1 rồi vẫn về SL gốc: <b>${cond.giveBack}/${cond.reachedTp1} (${swingPct(cond.giveBackPct)})</b>`
-          : 'Chưa lệnh nào chạm TP1 trong bộ nến này — không đủ dữ liệu.'}
-        <br>MFE trung vị <b>${stats.mfeMedianR == null ? '—' : stats.mfeMedianR + 'R'}</b>
-        · MAE trung vị ${stats.maeMedianR == null ? '—' : stats.maeMedianR + 'R'}
-      </div>
-      <table>
-        <tr><th>Luật thoát</th><th>Đã đóng</th><th>Winrate</th><th>Tổng R</th><th>R/lệnh</th></tr>
-        ${ruleRows}
-      </table>
-    </div>
-  </div>`;
-
-  return summary + latestBlock + hold + history;
+  return summary + latestBlock + history;
 }
 
 function getApiKey() { return localStorage.getItem('apiKey') || ''; }
