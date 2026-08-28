@@ -11,6 +11,7 @@ import { logger } from './logger';
 import { config } from './config/trading';
 import { AnalysisBusyError, runAnalysis } from './services/AnalysisRunner';
 import { runSwingAnalysis } from './services/swing/SwingRunner';
+import { EXIT_RULES, EXIT_RULE_LABEL, ExitRuleName } from './services/swing/SwingSignalService';
 import { TokenUsage } from './services/ai/transport/LlmTransport';
 import { lastRateLimitSnapshot, lastRunUsage } from './services/ai/UsageTracker';
 import { AnalysisScheduler } from './services/AnalysisScheduler';
@@ -128,16 +129,22 @@ app.post('/api/analyze', requireApiKey, async (req, res) => {
  */
 app.get('/api/swing', requireApiKey, async (req, res) => {
   try {
+    // `rule` ghi đè luật thoát dùng cho thống kê chính, chỉ trong lần gọi này — tiện để
+    // so nhanh ba luật mà không phải sửa .env.
+    const rule = typeof req.query.rule === 'string' ? String(req.query.rule).toUpperCase() : '';
+
     const result = await runSwingAnalysis({
       symbol:    typeof req.query.symbol === 'string' ? req.query.symbol : undefined,
       timeframe: typeof req.query.timeframe === 'string' ? req.query.timeframe : undefined,
       limit:     req.query.limit ? Math.min(parseInt(String(req.query.limit), 10), 100) : undefined,
       notify:    String(req.query.notify ?? '') === 'true',
+      exitRule:  (EXIT_RULES as string[]).includes(rule) ? (rule as ExitRuleName) : undefined,
     });
     res.json({
       ok: true, symbol: result.symbol, duration_ms: result.durationMs,
       timeframe: result.report.timeframe, actionable: result.actionable,
       latest: result.report.latest, stats: result.report.stats,
+      exit_rules: EXIT_RULE_LABEL,
       signals: result.report.signals, params: result.report.params,
       setup: result.setup, reasoning: result.reasoning,
     });

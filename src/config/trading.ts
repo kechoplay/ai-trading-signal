@@ -1,3 +1,14 @@
+import { EXIT_RULES, ExitRuleName } from '../services/swing/SwingSignalService';
+
+/** "1,2,3" → [1,2,3]; bỏ mọi phần tử không phải số dương (rỗng → []). */
+const numList = (raw: string): number[] =>
+  raw.split(',').map((x) => parseFloat(x.trim())).filter((n) => Number.isFinite(n) && n > 0);
+
+const exitRule = (raw?: string): ExitRuleName => {
+  const v = (raw ?? '').trim().toUpperCase();
+  return (EXIT_RULES as string[]).includes(v) ? (v as ExitRuleName) : 'PARTIAL_BE';
+};
+
 export const config = {
   provider: process.env.MARKET_PROVIDER ?? 'twelvedata',
 
@@ -61,10 +72,10 @@ export const config = {
     pivotLookback: parseInt(process.env.SWING_PIVOT_LOOKBACK ?? '2', 10),
     minLegAtr: parseFloat(process.env.SWING_MIN_LEG_ATR ?? '1.0'),
     slBufferAtr: parseFloat(process.env.SWING_SL_BUFFER_ATR ?? '0.25'),
-    tpR: (process.env.SWING_TP_R ?? '1,2,3')
-      .split(',')
-      .map((s) => parseFloat(s.trim()))
-      .filter((n) => Number.isFinite(n) && n > 0),
+    tpR: numList(process.env.SWING_TP_R ?? '1,2,3'),
+    // Luật thoát dùng cho winrate/tổng R chính. Cả ba luật luôn được tính song song để
+    // so sánh (xem stats.byRule) — đây là cách trả lời "giữ tới TP cuối có đáng không".
+    exitRule: exitRule(process.env.SWING_EXIT_RULE),
     atrPeriod: parseInt(process.env.SWING_ATR_PERIOD ?? '14', 10),
     // Tín hiệu cũ hơn ngần này nến thì giá đã rời entry — coi như hết hiệu lực.
     staleBars: parseInt(process.env.SWING_STALE_BARS ?? '6', 10),

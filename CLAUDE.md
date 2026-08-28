@@ -213,7 +213,8 @@ npm start              # chạy compiled JS (production)
 npm run build          # biên dịch TypeScript → dist/
 npm run analyze        # chạy phân tích 1 lần (có check giờ)
 npm run analyze:force  # chạy phân tích 1 lần (bỏ qua check giờ)
-npm run swing          # dò nhịp nhỏ (zigzag, không dùng AI): npm run swing -- BTC/USD M15 [--notify]
+npm run swing          # dò nhịp nhỏ (zigzag, không dùng AI):
+                       #   npm run swing -- BTC/USD M15 [--rule=TP1_FULL] [--notify]
 npm run db:generate    # generate Prisma client
 npm run db:push        # sync schema → DB
 npm run db:migrate     # chạy migration
@@ -267,6 +268,22 @@ nhịp nhỏ hơn `minLegAtr × ATR` → pivot LOW = BUY, pivot HIGH = SELL → 
 khoảng `slBufferAtr × ATR`, TP1/2/3 theo bội số R → forward-test từng tín hiệu cũ trên
 chính bộ nến để có winrate/tổng R thật.
 
+**BA LUẬT THOÁT + kế toán kết quả** (thêm 26/08/2026 — đọc trước khi động vào `simulate`):
+bản cũ tính lệnh "chạm TP2 rồi quay về SL" thành **+2R**, tức ngầm giả định đã thoát đúng
+đỉnh → winrate và tổng R bị thổi phồng, và câu hỏi "giữ tới TP3 có đáng không" tự có lời
+giải đẹp một cách giả tạo. Nay:
+- `status` chỉ mô tả đường đi với SL GỐC: `SL` (dù trước đó chạm TP nào — xem `maxTpHit`),
+  `TP{n}` khi chạm đủ mọi mốc, `RUNNING`.
+- `resultR` là kết quả của LUẬT THOÁT đang chọn (`SWING_EXIT_RULE`), không phải "sự thật"
+  duy nhất. Cả ba luật — `TP1_FULL`, `PARTIAL_BE` (mặc định), `TRAIL_PIVOT` — luôn chạy
+  song song trên cùng đường giá và nằm trong `signal.exits` + `stats.byRule`.
+- `stats.conditional` cho P(TP2|TP1), P(TP3|TP1) và tỉ lệ "chạm TP1 rồi vẫn về SL";
+  `mfeR`/`maeR` (đi xa nhất / thụt lùi sâu nhất, quy ra R) có trên từng tín hiệu và tổng
+  hợp trung vị trong `stats`. Đây là bộ số để đặt luật giữ lệnh — muốn biết có nên giữ tới
+  TP xa thì đọc bảng so sánh luật thoát, đừng đọc winrate gộp.
+- `stats.byContext` chia theo độ lớn nhịp và cấu trúc HH/HL — LUÔN đọc kèm cột `n`, 300 nến
+  M5 chỉ cho 15–30 nhịp nên mỗi ô còn vài lệnh. Muốn số có nghĩa thì nâng `SWING_CANDLES`.
+
 Ba điểm phải nhớ trước khi sửa:
 - **Entry lấy tại nến XÁC NHẬN (`pivot.index + lookback`), không phải tại pivot.** Pivot chỉ
   biết được sau `lookback` nến; lấy giá pivot làm entry là nhìn trộm tương lai → winrate ảo.
@@ -280,7 +297,9 @@ lưu vào đó sẽ trộn với tín hiệu AI trên dashboard và làm hỏng 
 (`SignalOrchestrator.loadPendingSetup` đọc bản ghi gần nhất theo instrument).
 
 Ba đường gọi: `GET /api/swing`, nút **🔁 Nhịp nhỏ** trên dashboard, `npm run swing`.
-Tham số chỉnh trong `.env` (`SWING_*`) — `SWING_MIN_LEG_ATR` là núm chính.
+KHÔNG có scheduler nào chạy lớp này — mỗi lần gọi là fetch nến mới rồi tính lại từ đầu,
+không giữ state, không ghi DB. Tham số chỉnh trong `.env` (`SWING_*`) — `SWING_MIN_LEG_ATR`
+là núm chính; `?rule=` (và `--rule=` ở CLI) đổi luật thoát cho riêng một lần gọi.
 
 ---
 
@@ -323,10 +342,14 @@ Trigger phân tích thủ công.
 
 Dò nhịp nhỏ (zigzag pivot) — **không gọi AI**, trả về trong vài ms.
 
-Query: `?symbol=XAU/USD&timeframe=M5&limit=15&notify=true` (đều tùy chọn; `notify=true` mới
-gửi Telegram). Trả `latest` (tín hiệu mới nhất), `actionable` (còn vào được không),
-`stats` (winrate / tổng R trên chính bộ nến), `signals[]`, `setup`/`reasoning` (HTML cùng
-định dạng với phân tích AI).
+Query: `?symbol=XAU/USD&timeframe=M5&limit=15&notify=true&rule=TP1_FULL` (đều tùy chọn;
+`notify=true` mới gửi Telegram). `rule` = luật thoát dùng cho thống kê chính, ghi đè
+`SWING_EXIT_RULE` cho riêng lần gọi đó.
+
+Trả `latest` (tín hiệu mới nhất), `actionable` (còn vào được không), `stats` (winrate /
+tổng R + `conditional` P(TPn|TP1) + `byRule` so sánh 3 luật thoát + `byContext`),
+`exit_rules` (nhãn 3 luật), `signals[]`, `setup`/`reasoning` (HTML cùng định dạng với phân
+tích AI).
 
 Không đụng single-flight của `runAnalysis` — không gọi AI, không ghi DB nên không tranh chấp gì.
 

@@ -17,17 +17,68 @@ import { Candle } from '../market/Candle';
  *  2. Lọc nhiễu bằng zigzag: pivot đối nghịch chỉ được nhận khi nhịp vừa chạy ≥
  *     `minLegAtr × ATR`; pivot cùng loại liên tiếp thì giữ cái cực đoan hơn.
  *  3. Mỗi pivot LOW → tín hiệu BUY, pivot HIGH → tín hiệu SELL. SL đặt sau đỉnh/đáy
- *     pivot một khoảng đệm ATR; TP1/2/3 = bội số R (mặc định 1R/2R/3R).
+ *     pivot một khoảng đệm ATR; TP1/2/3 = bội số R (`tpR`, mặc định 1R/2R/3R).
  *  4. Chạy tới (forward test) từng tín hiệu cũ trên chính dữ liệu nến để biết nó chạm
  *     TP hay SL → có winrate/tổng R thật thay vì chỉ liệt kê mũi tên.
+ *
+ * ĐỌC KỸ TRƯỚC KHI SỬA PHẦN KẾ TOÁN KẾT QUẢ:
+ *  - `status` mô tả ĐƯỜNG ĐI với SL GỐC và giữ nguyên lệnh: `SL` = đã dính SL gốc (dù
+ *    trước đó có chạm TP nào — xem `maxTpHit`), `TP{n}` = chạm hết tới TP cuối,
+ *    `RUNNING` = chưa đóng. Bản cũ trả `TP{best}` cho cả lệnh chạm TP rồi quay về SL,
+ *    tức ngầm giả định đã thoát đúng đỉnh → winrate và tổng R bị thổi phồng, và câu hỏi
+ *    "có nên giữ tới TP cuối không" tự nhiên có lời giải đẹp một cách giả tạo.
+ *  - `resultR` KHÔNG còn là một con số duy nhất mang tính "sự thật": nó là kết quả của
+ *    LUẬT THOÁT được chọn (`exitRule`). Cả ba luật (`TP1_FULL`, `PARTIAL_BE`,
+ *    `TRAIL_PIVOT`) đều chạy song song trên cùng bộ nến và nằm trong `exits` để so sánh
+ *    — đây mới là cách trả lời "giữ tới TP cuối có đáng không".
+ *  - `mfeR`/`maeR` (đi xa nhất / thụt lùi sâu nhất, quy ra R) và `stats.conditional`
+ *    (P(TP2|TP1), P(TP3|TP1), tỉ lệ chạm TP1 rồi vẫn về SL) là số liệu để đặt luật giữ
+ *    lệnh. Không có chúng thì mọi quyết định "giữ hay chốt" chỉ là cảm giác.
  *
  * CẢNH BÁO REPAINT: tín hiệu MỚI NHẤT có thể bị rút lại — nếu giá tạo pivot cùng loại
  * cực đoan hơn thì zigzag dời pivot, nhãn cũ biến mất. Tín hiệu đó được đánh dấu
  * `provisional = true`. Mọi tín hiệu phía trước đã cố định.
+ *
+ * CẢNH BÁO CỠ MẪU: 300 nến M5 ≈ 1,5 ngày → thường chỉ 15–30 nhịp. Winrate/tổng R ở cỡ
+ * đó là backtest TRONG MẪU, và `byContext` chia nhỏ nữa thì còn vài lệnh mỗi ô. Dùng để
+ * so sánh tham số, không phải kỳ vọng tương lai — muốn số liệu có nghĩa phải nâng
+ * `SWING_CANDLES` lên vài nghìn nến.
  */
 
 export type SwingDirection = 'BUY' | 'SELL';
 export type SwingStatus = 'RUNNING' | 'SL' | 'TP1' | 'TP2' | 'TP3';
+/** Cấu trúc thị trường tại pivot: HH/HL (thuận) hay LH/LL (ngược) so với pivot cùng loại liền trước. */
+export type SwingStructure = 'WITH' | 'AGAINST' | 'UNKNOWN';
+
+/**
+ * Ba luật thoát chạy song song trên cùng dữ liệu — con số của chúng là cách duy nhất để
+ * biết nên chốt sớm hay giữ, thay vì đoán từng lệnh.
+ *  - `TP1_FULL`:    chốt toàn bộ tại TP1. Mốc so sánh cơ sở.
+ *  - `PARTIAL_BE`:  chốt 50% tại TP1, dời SL về hòa vốn, 50% còn lại chạy tới TP cuối.
+ *  - `TRAIL_PIVOT`: KHÔNG có TP cứng — dời SL theo từng pivot đối nghịch mới được xác
+ *                   nhận (đáy sau cho BUY), thoát khi bị quét. Luật này đo xem "để nó
+ *                   chạy" có thật sự ăn hơn không.
+ */
+export type ExitRuleName = 'TP1_FULL' | 'PARTIAL_BE' | 'TRAIL_PIVOT';
+
+export const EXIT_RULES: ExitRuleName[] = ['TP1_FULL', 'PARTIAL_BE', 'TRAIL_PIVOT'];
+
+export const EXIT_RULE_LABEL: Record<ExitRuleName, string> = {
+  TP1_FULL:    'Chốt hết ở TP1',
+  PARTIAL_BE:  'Chốt 50% ở TP1 + BE, phần còn lại tới TP cuối',
+  TRAIL_PIVOT: 'Trailing theo pivot (không TP cứng)',
+};
+
+export interface SwingExit {
+  /** Kết quả quy ra R theo luật này (SL = −1). */
+  r: number;
+  /** Đã đóng hẳn chưa (false = còn chạy tới nến cuối, `r` là lãi/lỗ tạm tính). */
+  closed: boolean;
+  /** Số nến từ lúc vào tới lúc đóng (null nếu còn chạy). */
+  barsToResolve: number | null;
+  /** Mô tả ngắn cách thoát: "TP1", "SL", "BE sau TP1", "trailing 4512.30". */
+  note: string;
+}
 
 export interface SwingSignal {
   direction: SwingDirection;
@@ -43,26 +94,76 @@ export interface SwingSignal {
   takeProfits: number[];
   /** Độ lớn nhịp vừa kết thúc tại pivot, quy ra bội số ATR — nhịp càng lớn tín hiệu càng đáng tin. */
   legAtr: number;
+  /** HH/HL hay LH/LL so với pivot cùng loại liền trước — dùng chia nhóm trong `byContext`. */
+  structure: SwingStructure;
+  /** TP xa nhất giá đã CHẠM trước khi dính SL gốc (0 = chưa chạm TP nào). */
+  maxTpHit: number;
+  /** Đã dính SL GỐC chưa (giữ nguyên lệnh, không dời SL). */
+  hitSl: boolean;
+  /** Đi xa nhất bao nhiêu R theo hướng có lợi trước khi đóng (Max Favorable Excursion). */
+  mfeR: number;
+  /** Thụt lùi sâu nhất bao nhiêu R trước khi đóng (Max Adverse Excursion, số dương). */
+  maeR: number;
   status: SwingStatus;
-  /** Kết quả quy ra R: SL = −1, TPn = bội số R của TP đó, RUNNING = lãi/lỗ tạm tính. */
+  /** Kết quả theo LUẬT THOÁT đang chọn (`params.exitRule`) — xem `exits` để so cả ba. */
   resultR: number;
-  /** Số nến từ lúc vào tới lúc chốt (null nếu còn chạy). */
+  /** Số nến từ lúc vào tới lúc chốt theo luật đang chọn (null nếu còn chạy). */
   barsToResolve: number | null;
+  /** Kết quả của cả ba luật thoát trên cùng đường giá. */
+  exits: Record<ExitRuleName, SwingExit>;
   /** Tín hiệu đã ra cách đây bao nhiêu nến — 0 = vừa xuất hiện ở nến cuối. */
   barsAgo: number;
   /** True với tín hiệu cuối khi nhịp đảo chiều chưa đủ lớn → còn khả năng bị dời. */
   provisional: boolean;
 }
 
+/** Xác suất CÓ ĐIỀU KIỆN — trả lời "chạm TP1 rồi thì cửa đi tiếp bao nhiêu". */
+export interface SwingConditional {
+  /** Số tín hiệu đã chạm TP1. */
+  reachedTp1: number;
+  /** Với mỗi mốc TP2, TP3…: số lệnh chạm tới + % trong số đã chạm TP1. */
+  levels: { level: number; hit: number; pctGivenTp1: number | null }[];
+  /** Số lệnh chạm TP1 rồi vẫn quay về dính SL gốc (giữ nguyên lệnh = mất trắng 1R). */
+  giveBack: number;
+  giveBackPct: number | null;
+}
+
+export interface SwingRuleStats {
+  closed: number;
+  winRatePct: number | null;
+  totalR: number;
+  avgR: number | null;
+}
+
+export interface SwingContextBucket {
+  key: string;
+  n: number;
+  closed: number;
+  winRatePct: number | null;
+  avgR: number | null;
+  /** % lệnh trong nhóm chạm được TP cuối. */
+  tpFinalPct: number | null;
+}
+
 export interface SwingStats {
   total: number;
   resolved: number;
+  /** Số lệnh CHẠM TP1 (kể cả sau đó quay về SL). */
   hitTp1: number;
+  /** Số lệnh dính SL GỐC. */
   hitSl: number;
+  /** % lệnh đã đóng có R dương THEO LUẬT ĐANG CHỌN. */
   winRatePct: number | null;
-  /** Tổng R của các tín hiệu đã đóng (giả định thoát toàn bộ tại TP xa nhất chạm được). */
   totalR: number;
   avgR: number | null;
+  /** Đi xa nhất được bao nhiêu R (trung vị / trung bình) — mốc để đặt TP thực tế. */
+  mfeMedianR: number | null;
+  mfeAvgR: number | null;
+  /** Thụt lùi sâu nhất (trung vị) — mốc để biết SL có bị đặt quá sát không. */
+  maeMedianR: number | null;
+  conditional: SwingConditional;
+  byRule: Record<ExitRuleName, SwingRuleStats>;
+  byContext: SwingContextBucket[];
 }
 
 export interface SwingReport {
@@ -81,8 +182,11 @@ export interface SwingParams {
   pivotLookback: number;
   minLegAtr: number;
   slBufferAtr: number;
+  /** TP1/TP2/TP3 theo bội số R. */
   tpR: number[];
   atrPeriod: number;
+  /** Luật thoát dùng cho `resultR`/`stats` chính. Cả ba luật vẫn luôn được tính. */
+  exitRule: ExitRuleName;
 }
 
 export const DEFAULT_SWING_PARAMS: SwingParams = {
@@ -91,6 +195,7 @@ export const DEFAULT_SWING_PARAMS: SwingParams = {
   slBufferAtr: 0.25,
   tpR: [1, 2, 3],
   atrPeriod: 14,
+  exitRule: 'PARTIAL_BE',
 };
 
 interface Pivot {
@@ -114,12 +219,21 @@ function round(price: number): number {
 
 /**
  * Làm tròn một KHOẢNG giá (risk, ATR) theo độ chính xác của mức giá tham chiếu.
- * Tự đo theo chính nó thì sai đơn vị: risk 2.3737 USD của vàng nhỏ hơn 100 nên bị
- * hiển thị 4 số lẻ như altcoin, trong khi entry cạnh nó chỉ có 2.
+ * Tự đo theo chính nó thì sai đơn vị: risk 2.3737 USD của vàng nhỏ hơn 100 nên bị hiển
+ * thị 4 số lẻ như altcoin, trong khi entry cạnh nó chỉ có 2.
  */
 function roundLike(value: number, ref: number): number {
   const f = 10 ** digitsFor(ref);
   return Math.round(value * f) / f;
+}
+
+const r2 = (n: number): number => Math.round(n * 100) / 100;
+
+function median(xs: number[]): number | null {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return r2(s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2);
 }
 
 /**
@@ -193,12 +307,26 @@ function zigzag(pivots: Pivot[], atr: number[], minLegAtr: number): Pivot[] {
   return zz;
 }
 
+// ─── Mô phỏng đường giá ──────────────────────────────────────────────────────
+
+interface TradePath {
+  /** Nến chạm từng TP (index tuyệt đối), null nếu chưa chạm. */
+  tpBars: (number | null)[];
+  /** Nến dính SL gốc, null nếu chưa. */
+  slBar: number | null;
+  maxTpHit: number;
+  mfeR: number;
+  maeR: number;
+}
+
 /**
- * Chạy tới từ nến sau nến vào lệnh để xem chạm SL hay TP nào trước.
- * Nến chạm CẢ SL lẫn TP trong cùng một cây → tính SL (không có dữ liệu tick để biết
- * cái nào tới trước, nên chọn phía bi quan, tránh thổi phồng winrate).
+ * Đi tới từng nến với SL GỐC, giữ nguyên lệnh — ghi lại toàn bộ đường đi để mọi luật
+ * thoát và mọi thống kê đọc lại từ cùng một sự thật.
+ * Nến chạm CẢ SL lẫn TP trong cùng một cây → tính SL (không có dữ liệu tick để biết cái
+ * nào tới trước, nên chọn phía bi quan, tránh thổi phồng winrate). Vì thế nến dính SL
+ * KHÔNG được tính vào MFE.
  */
-function simulate(
+function walkPath(
   candles: Candle[],
   from: number,
   dir: SwingDirection,
@@ -206,42 +334,132 @@ function simulate(
   stopLoss: number,
   tps: number[],
   risk: number,
-): { status: SwingStatus; resultR: number; barsToResolve: number | null } {
-  let best = 0; // số TP đã chạm
+): TradePath {
+  const tpBars: (number | null)[] = tps.map(() => null);
+  let maxTpHit = 0;
+  let mfeR = 0;
+  let maeR = 0;
+
   for (let i = from; i < candles.length; i++) {
     const c = candles[i];
+    const adverse = dir === 'BUY' ? entry - c.low : c.high - entry;
+    if (adverse > 0) maeR = Math.max(maeR, adverse / risk);
+
     const hitSl = dir === 'BUY' ? c.low <= stopLoss : c.high >= stopLoss;
-    if (hitSl) {
-      // Đã chạm TP1 trước đó ở nến khác → coi như đã dời SL về breakeven, kết quả tính theo TP đã chạm.
-      if (best > 0) {
-        return { status: `TP${best}` as SwingStatus, resultR: bestR(best, tps, entry, risk, dir), barsToResolve: i - from + 1 };
-      }
-      return { status: 'SL', resultR: -1, barsToResolve: i - from + 1 };
-    }
-    while (best < tps.length) {
-      const tp = tps[best];
+    if (hitSl) return { tpBars, slBar: i, maxTpHit, mfeR: r2(mfeR), maeR: r2(maeR) };
+
+    const favorable = dir === 'BUY' ? c.high - entry : entry - c.low;
+    if (favorable > 0) mfeR = Math.max(mfeR, favorable / risk);
+
+    while (maxTpHit < tps.length) {
+      const tp = tps[maxTpHit];
       const hit = dir === 'BUY' ? c.high >= tp : c.low <= tp;
       if (!hit) break;
-      best++;
+      tpBars[maxTpHit] = i;
+      maxTpHit++;
     }
-    if (best === tps.length) {
-      return { status: `TP${best}` as SwingStatus, resultR: bestR(best, tps, entry, risk, dir), barsToResolve: i - from + 1 };
-    }
+    if (maxTpHit === tps.length) return { tpBars, slBar: null, maxTpHit, mfeR: r2(mfeR), maeR: r2(maeR) };
   }
 
-  const last = candles[candles.length - 1];
-  if (best > 0) {
-    // Đã ăn được TP nhưng chưa chạm SL/TP cuối → vẫn coi là đang chạy, R tính theo TP đã chạm.
-    return { status: 'RUNNING', resultR: bestR(best, tps, entry, risk, dir), barsToResolve: null };
-  }
-  const openR = last ? ((dir === 'BUY' ? last.close - entry : entry - last.close) / risk) : 0;
-  return { status: 'RUNNING', resultR: Math.round(openR * 100) / 100, barsToResolve: null };
+  return { tpBars, slBar: null, maxTpHit, mfeR: r2(mfeR), maeR: r2(maeR) };
 }
 
-function bestR(count: number, tps: number[], entry: number, risk: number, dir: SwingDirection): number {
-  const tp = tps[count - 1];
-  const r = (dir === 'BUY' ? tp - entry : entry - tp) / risk;
-  return Math.round(r * 100) / 100;
+/** Lãi/lỗ tạm tính tại nến cuối, quy ra R. */
+function openR(candles: Candle[], dir: SwingDirection, entry: number, risk: number): number {
+  const last = candles[candles.length - 1];
+  if (!last) return 0;
+  return r2((dir === 'BUY' ? last.close - entry : entry - last.close) / risk);
+}
+
+/** Luật 1 — chốt toàn bộ tại TP1. */
+function exitTp1Full(
+  candles: Candle[], path: TradePath, from: number,
+  dir: SwingDirection, entry: number, risk: number, tpR: number[],
+): SwingExit {
+  const tp1Bar = path.tpBars[0];
+  if (tp1Bar != null) {
+    return { r: tpR[0], closed: true, barsToResolve: tp1Bar - from + 1, note: 'TP1' };
+  }
+  if (path.slBar != null) {
+    return { r: -1, closed: true, barsToResolve: path.slBar - from + 1, note: 'SL' };
+  }
+  return { r: openR(candles, dir, entry, risk), closed: false, barsToResolve: null, note: 'đang chạy' };
+}
+
+/**
+ * Luật 2 — chốt 50% tại TP1, dời SL về hòa vốn, phần còn lại chạy tới TP CUỐI.
+ * Phải quét lại từ sau nến chạm TP1 vì SL hòa vốn nằm TRƯỚC SL gốc (chặt hơn) nên
+ * `walkPath` không nhìn thấy thời điểm nó bị quét.
+ */
+function exitPartialBe(
+  candles: Candle[], path: TradePath, from: number,
+  dir: SwingDirection, entry: number, risk: number, tps: number[], tpR: number[],
+): SwingExit {
+  const tp1Bar = path.tpBars[0];
+  if (tp1Bar == null) {
+    if (path.slBar != null) {
+      return { r: -1, closed: true, barsToResolve: path.slBar - from + 1, note: 'SL trước TP1' };
+    }
+    return { r: openR(candles, dir, entry, risk), closed: false, barsToResolve: null, note: 'đang chạy, chưa tới TP1' };
+  }
+  if (tps.length === 1) {
+    // Chỉ một mốc TP → TP1 chính là TP cuối, không có phần chạy tiếp.
+    return { r: tpR[0], closed: true, barsToResolve: tp1Bar - from + 1, note: 'TP1 (mốc duy nhất)' };
+  }
+
+  const booked = tpR[0] / 2;               // nửa lệnh đã chốt tại TP1
+  const target = tps[tps.length - 1];
+  const targetR = tpR[tpR.length - 1];
+
+  for (let i = tp1Bar + 1; i < candles.length; i++) {
+    const c = candles[i];
+    // Bi quan như mọi chỗ khác: cùng một nến chạm cả BE lẫn TP cuối thì tính BE.
+    const hitBe = dir === 'BUY' ? c.low <= entry : c.high >= entry;
+    if (hitBe) return { r: r2(booked), closed: true, barsToResolve: i - from + 1, note: 'BE sau TP1' };
+
+    const hitTarget = dir === 'BUY' ? c.high >= target : c.low <= target;
+    if (hitTarget) {
+      return { r: r2(booked + targetR / 2), closed: true, barsToResolve: i - from + 1, note: `TP1 + TP${tps.length}` };
+    }
+  }
+  return {
+    r: r2(booked + openR(candles, dir, entry, risk) / 2),
+    closed: false, barsToResolve: null, note: 'nửa lệnh còn chạy sau TP1',
+  };
+}
+
+/**
+ * Luật 3 — trailing theo pivot, KHÔNG có TP cứng.
+ * SL dời lên đáy zigzag mới nhất ĐÃ ĐƯỢC XÁC NHẬN (pivot + lookback nến) trừ đệm ATR,
+ * và chỉ dời theo hướng có lợi. Đây là luật "để nó chạy" — dùng để đo xem giữ lệnh có
+ * thật sự ăn hơn chốt sớm không, thay vì tranh luận cảm tính.
+ */
+function exitTrailPivot(
+  candles: Candle[], pivots: Pivot[], atr: number[], from: number, pivotIndex: number,
+  dir: SwingDirection, entry: number, stopLoss: number, risk: number,
+  pivotLookback: number, slBufferAtr: number,
+): SwingExit {
+  const wantType = dir === 'BUY' ? 'LOW' : 'HIGH';
+  let stop = stopLoss;
+
+  for (let i = from; i < candles.length; i++) {
+    // Dời SL bằng các pivot đối nghịch đã xác nhận tính tới nến i (sau pivot vào lệnh).
+    for (const p of pivots) {
+      if (p.type !== wantType || p.index <= pivotIndex) continue;
+      if (p.index + pivotLookback > i) continue;
+      const buf = slBufferAtr * (atr[p.index] || 0);
+      const cand = dir === 'BUY' ? p.price - buf : p.price + buf;
+      stop = dir === 'BUY' ? Math.max(stop, cand) : Math.min(stop, cand);
+    }
+
+    const c = candles[i];
+    const hit = dir === 'BUY' ? c.low <= stop : c.high >= stop;
+    if (hit) {
+      const r = r2((dir === 'BUY' ? stop - entry : entry - stop) / risk);
+      return { r, closed: true, barsToResolve: i - from + 1, note: `trailing ${round(stop)}` };
+    }
+  }
+  return { r: openR(candles, dir, entry, risk), closed: false, barsToResolve: null, note: 'đang chạy (trailing)' };
 }
 
 // ─── Engine ──────────────────────────────────────────────────────────────────
@@ -252,9 +470,10 @@ export function analyzeSwings(
   currentPrice: number,
   params: SwingParams = DEFAULT_SWING_PARAMS,
 ): SwingReport {
-  const { pivotLookback, minLegAtr, slBufferAtr, tpR, atrPeriod } = params;
+  const { pivotLookback, minLegAtr, slBufferAtr, tpR, atrPeriod, exitRule } = params;
   const atr = atrSeries(candles, atrPeriod);
-  const zz = zigzag(rawPivots(candles, pivotLookback), atr, minLegAtr);
+  const allPivots = rawPivots(candles, pivotLookback);
+  const zz = zigzag(allPivots, atr, minLegAtr);
   const lastCandle = candles[candles.length - 1];
   const lastAtr = atr[atr.length - 1] ?? 0;
 
@@ -277,7 +496,24 @@ export function analyzeSwings(
     if (risk <= 0 || risk > 2 * atrAt) continue;
 
     const tps = tpR.map((r) => (dir === 'BUY' ? entry + r * risk : entry - r * risk));
-    const sim = simulate(candles, confirmIndex + 1, dir, entry, stopLoss, tps, risk);
+
+    const from = confirmIndex + 1;
+    const path = walkPath(candles, from, dir, entry, stopLoss, tps, risk);
+    const exits: Record<ExitRuleName, SwingExit> = {
+      TP1_FULL:    exitTp1Full(candles, path, from, dir, entry, risk, tpR),
+      PARTIAL_BE:  exitPartialBe(candles, path, from, dir, entry, risk, tps, tpR),
+      TRAIL_PIVOT: exitTrailPivot(
+        candles, allPivots, atr, from, p.index, dir, entry, stopLoss, risk,
+        pivotLookback, slBufferAtr,
+      ),
+    };
+    const chosen = exits[exitRule] ?? exits.PARTIAL_BE;
+
+    const status: SwingStatus = path.slBar != null
+      ? 'SL'
+      : path.maxTpHit === tps.length
+        ? (`TP${Math.min(path.maxTpHit, 3)}` as SwingStatus)
+        : 'RUNNING';
 
     // Nhịp đảo chiều tính từ pivot tới cực trị hiện có — chưa đủ minLegAtr nghĩa là
     // zigzag chưa chốt pivot này, giá còn có thể phá qua và dời nhãn.
@@ -286,6 +522,14 @@ export function analyzeSwings(
       ? Math.max(...tail.map((c) => c.high))
       : Math.min(...tail.map((c) => c.low));
     const provisional = Math.abs(extreme - p.price) < minLegAtr * atrAt;
+
+    // Cấu trúc: so với pivot CÙNG LOẠI liền trước (zigzag xen kẽ nên cách 2 bậc).
+    const prevSame = zz[k - 2];
+    const structure: SwingStructure = !prevSame
+      ? 'UNKNOWN'
+      : dir === 'BUY'
+        ? (p.price > prevSame.price ? 'WITH' : 'AGAINST')
+        : (p.price < prevSame.price ? 'WITH' : 'AGAINST');
 
     signals.push({
       direction: dir,
@@ -297,9 +541,15 @@ export function analyzeSwings(
       risk: roundLike(risk, entry),
       takeProfits: tps.map(round),
       legAtr: Math.round((Math.abs(p.price - prev.price) / (atrAt || 1)) * 10) / 10,
-      status: sim.status,
-      resultR: sim.resultR,
-      barsToResolve: sim.barsToResolve,
+      structure,
+      maxTpHit: path.maxTpHit,
+      hitSl: path.slBar != null,
+      mfeR: path.mfeR,
+      maeR: path.maeR,
+      status,
+      resultR: chosen.r,
+      barsToResolve: chosen.barsToResolve,
+      exits,
       barsAgo: candles.length - 1 - confirmIndex,
       provisional: provisional && k === zz.length - 1,
     });
@@ -313,23 +563,83 @@ export function analyzeSwings(
     lastCandleTime: lastCandle?.time ?? '',
     signals,
     latest: signals[signals.length - 1] ?? null,
-    stats: summarize(signals),
+    stats: summarize(signals, exitRule),
     params,
   };
 }
 
-function summarize(signals: SwingSignal[]): SwingStats {
-  const closed = signals.filter((s) => s.status !== 'RUNNING');
-  const hitTp1 = closed.filter((s) => s.status.startsWith('TP')).length;
-  const hitSl = closed.filter((s) => s.status === 'SL').length;
-  const totalR = closed.reduce((sum, s) => sum + s.resultR, 0);
+// ─── Thống kê ────────────────────────────────────────────────────────────────
+
+function ruleStats(signals: SwingSignal[], rule: ExitRuleName): SwingRuleStats {
+  const closed = signals.filter((s) => s.exits[rule].closed);
+  const totalR = closed.reduce((sum, s) => sum + s.exits[rule].r, 0);
+  const wins = closed.filter((s) => s.exits[rule].r > 0).length;
+  return {
+    closed: closed.length,
+    winRatePct: closed.length ? Math.round((wins / closed.length) * 100) : null,
+    totalR: r2(totalR),
+    avgR: closed.length ? r2(totalR / closed.length) : null,
+  };
+}
+
+function bucket(key: string, signals: SwingSignal[], rule: ExitRuleName): SwingContextBucket {
+  const rs = ruleStats(signals, rule);
+  const tpFinal = signals.filter((s) => s.maxTpHit === s.takeProfits.length).length;
+  return {
+    key,
+    n: signals.length,
+    closed: rs.closed,
+    winRatePct: rs.winRatePct,
+    avgR: rs.avgR,
+    tpFinalPct: signals.length ? Math.round((tpFinal / signals.length) * 100) : null,
+  };
+}
+
+function summarize(signals: SwingSignal[], exitRule: ExitRuleName): SwingStats {
+  const main = ruleStats(signals, exitRule);
+  const hitTp1 = signals.filter((s) => s.maxTpHit >= 1).length;
+  const hitSl = signals.filter((s) => s.hitSl).length;
+
+  const tpCount = signals[0]?.takeProfits.length ?? 0;
+  const levels: SwingConditional['levels'] = [];
+  for (let lvl = 2; lvl <= tpCount; lvl++) {
+    const hit = signals.filter((s) => s.maxTpHit >= lvl).length;
+    levels.push({ level: lvl, hit, pctGivenTp1: hitTp1 ? Math.round((hit / hitTp1) * 100) : null });
+  }
+  const giveBack = signals.filter((s) => s.maxTpHit >= 1 && s.hitSl).length;
+
+  const byRule = EXIT_RULES.reduce((acc, r) => {
+    acc[r] = ruleStats(signals, r);
+    return acc;
+  }, {} as Record<ExitRuleName, SwingRuleStats>);
+
+  // Chia nhóm bối cảnh: chỉ 2 trục rẻ tiền và đọc được ngay từ zigzag. Cỡ mẫu nhỏ nên
+  // `n` luôn hiển thị kèm — dưới ~10 lệnh thì con số chỉ để tham khảo.
+  const byContext: SwingContextBucket[] = [
+    bucket('Nhịp lớn (≥1.5× ATR)', signals.filter((s) => s.legAtr >= 1.5), exitRule),
+    bucket('Nhịp nhỏ (<1.5× ATR)', signals.filter((s) => s.legAtr < 1.5), exitRule),
+    bucket('Thuận cấu trúc (HH/HL)', signals.filter((s) => s.structure === 'WITH'), exitRule),
+    bucket('Ngược cấu trúc (LH/LL)', signals.filter((s) => s.structure === 'AGAINST'), exitRule),
+  ].filter((b) => b.n > 0);
+
   return {
     total: signals.length,
-    resolved: closed.length,
+    resolved: main.closed,
     hitTp1,
     hitSl,
-    winRatePct: closed.length ? Math.round((hitTp1 / closed.length) * 100) : null,
-    totalR: Math.round(totalR * 100) / 100,
-    avgR: closed.length ? Math.round((totalR / closed.length) * 100) / 100 : null,
+    winRatePct: main.winRatePct,
+    totalR: main.totalR,
+    avgR: main.avgR,
+    mfeMedianR: median(signals.map((s) => s.mfeR)),
+    mfeAvgR: signals.length ? r2(signals.reduce((a, s) => a + s.mfeR, 0) / signals.length) : null,
+    maeMedianR: median(signals.map((s) => s.maeR)),
+    conditional: {
+      reachedTp1: hitTp1,
+      levels,
+      giveBack,
+      giveBackPct: hitTp1 ? Math.round((giveBack / hitTp1) * 100) : null,
+    },
+    byRule,
+    byContext,
   };
 }

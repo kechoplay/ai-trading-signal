@@ -1,7 +1,10 @@
 import { AnalysisResult } from '../ai/dto/AnalysisResult';
 import { makeMarketDataProvider } from '../market/MarketDataProviderFactory';
 import { TelegramNotifier } from '../telegram/TelegramNotifier';
-import { analyzeSwings, SwingReport, SwingSignal } from './SwingSignalService';
+import {
+  analyzeSwings, EXIT_RULES, EXIT_RULE_LABEL, ExitRuleName,
+  SwingReport, SwingSignal,
+} from './SwingSignalService';
 import { config } from '../../config/trading';
 import { logger } from '../../logger';
 
@@ -12,6 +15,8 @@ export interface SwingRunOptions {
   limit?: number;
   /** Gửi Telegram như luồng phân tích AI (mặc định false — tránh spam mỗi lần gọi API). */
   notify?: boolean;
+  /** Luật thoát dùng cho winrate/tổng R chính, đè `SWING_EXIT_RULE`. */
+  exitRule?: ExitRuleName;
 }
 
 export interface SwingRunResult {
@@ -58,6 +63,7 @@ export async function runSwingAnalysis(opts: SwingRunOptions = {}): Promise<Swin
     slBufferAtr:   config.swing.slBufferAtr,
     tpR:           config.swing.tpR,
     atrPeriod:     config.swing.atrPeriod,
+    exitRule:      opts.exitRule ?? config.swing.exitRule,
   });
 
   const actionable = isActionable(report.latest, config.swing.staleBars);
@@ -70,7 +76,7 @@ export async function runSwingAnalysis(opts: SwingRunOptions = {}): Promise<Swin
   logger.info('Swing analysis finished', {
     symbol, timeframe, bars: report.bars, signals: report.stats.total,
     latest: report.latest ? `${report.latest.direction}@${report.latest.entry}` : null,
-    actionable, duration_ms: Date.now() - startedAt,
+    actionable, exit_rule: report.params.exitRule, duration_ms: Date.now() - startedAt,
   });
 
   if (opts.notify) {
@@ -135,10 +141,24 @@ function shortTime(t: string): string {
   return m ? `${m[3]} ${m[2]}/${m[1]}` : t;
 }
 
+const sign = (n: number): string => `${n >= 0 ? '+' : ''}${n}`;
+const pct = (n: number | null): string => (n == null ? '—' : `${n}%`);
+const num = (n: number | null): string => (n == null ? '—' : String(n));
+
+/**
+ * Nhãn trạng thái theo ĐƯỜNG ĐI (SL gốc, giữ nguyên lệnh) — cố tình nói rõ trường hợp
+ * "chạm TP rồi vẫn về SL", vì đó chính là chi phí của việc giữ lệnh mà bản cũ giấu đi.
+ */
 function statusLabel(s: SwingSignal): string {
-  if (s.status === 'SL') return `❌ SL (${s.resultR}R)`;
-  if (s.status === 'RUNNING') return `⏳ đang chạy (${s.resultR >= 0 ? '+' : ''}${s.resultR}R)`;
-  return `✅ ${s.status} (+${s.resultR}R)`;
+  if (s.status === 'SL') {
+    return s.maxTpHit > 0
+      ? `❌ SL sau khi chạm TP${s.maxTpHit}`
+      : '❌ SL';
+  }
+  if (s.status === 'RUNNING') {
+    return `⏳ đang chạy (${s.maxTpHit ? `đã chạm TP${s.maxTpHit}` : 'chưa chạm TP nào'})`;
+  }
+  return `✅ ${s.status} (đủ mọi mốc TP)`;
 }
 
 export function formatSwingMarkdown(
@@ -148,6 +168,7 @@ export function formatSwingMarkdown(
   limit: number,
 ): string {
   const { stats, params } = report;
+  const cond = stats.conditional;
   const lines: string[] = [];
 
   lines.push(`## NHỊP NHỎ — ${symbol} · ${report.timeframe}`);
@@ -178,31 +199,81 @@ export function formatSwingMarkdown(
   }
   lines.push('');
 
+  // ── Giữ hay chốt: phần trả lời bằng số, không bằng cảm giác ────────────────
+  lines.push('### Giữ tới TP xa có đáng không?');
+  if (!cond.reachedTp1) {
+    lines.push('Chưa có lệnh nào chạm TP1 trong bộ nến này — không đủ dữ liệu để nói.');
+  } else {
+    lines.push(`Trong ${stats.total} nhịp, **${cond.reachedTp1}** lệnh chạm TP1. Đi tiếp được:`);
+    for (const lv of cond.levels) {
+      lines.push(`- **TP${lv.level}: ${lv.hit}/${cond.reachedTp1} = ${pct(lv.pctGivenTp1)}** số lệnh đã chạm TP1`);
+    }
+    lines.push(
+      `- Chạm TP1 rồi vẫn quay về dính SL gốc: **${cond.giveBack}/${cond.reachedTp1} = ${pct(cond.giveBackPct)}** `
+      + '→ đây là cái giá của việc giữ nguyên lệnh mà không dời SL.',
+    );
+  }
+  lines.push(
+    `- Đi xa nhất (MFE): trung vị **${num(stats.mfeMedianR)}R**, trung bình ${num(stats.mfeAvgR)}R `
+    + `· thụt lùi sâu nhất (MAE) trung vị ${num(stats.maeMedianR)}R`,
+  );
+  lines.push('');
+
+  lines.push('### So sánh luật thoát (cùng bộ nến, cùng entry/SL)');
+  lines.push('| Luật thoát | Đã đóng | Winrate | Tổng R | R/lệnh |');
+  lines.push('|---|---|---|---|---|');
+  for (const rule of EXIT_RULES) {
+    const r = stats.byRule[rule];
+    const mark = rule === params.exitRule ? ' ◀' : '';
+    lines.push(
+      `| ${EXIT_RULE_LABEL[rule]}${mark} | ${r.closed} | ${pct(r.winRatePct)} `
+      + `| ${sign(r.totalR)} | ${r.avgR == null ? '—' : sign(r.avgR)} |`,
+    );
+  }
+  lines.push('');
+  lines.push(`_Số liệu chính phía dưới tính theo luật đang chọn: **${EXIT_RULE_LABEL[params.exitRule]}**._`);
+  lines.push('');
+
   lines.push('### Hiệu năng trên chính bộ nến này');
   lines.push('| Chỉ số | Giá trị |');
   lines.push('|---|---|');
   lines.push(`| Tổng nhịp | ${stats.total} |`);
   lines.push(`| Đã đóng | ${stats.resolved} |`);
-  lines.push(`| Chạm TP | ${stats.hitTp1} |`);
-  lines.push(`| Dính SL | ${stats.hitSl} |`);
-  lines.push(`| Winrate | ${stats.winRatePct == null ? '—' : `${stats.winRatePct}%`} |`);
-  lines.push(`| Tổng R | ${stats.totalR >= 0 ? '+' : ''}${stats.totalR} |`);
-  lines.push(`| R trung bình/lệnh | ${stats.avgR == null ? '—' : `${stats.avgR >= 0 ? '+' : ''}${stats.avgR}`} |`);
+  lines.push(`| Chạm TP1 | ${stats.hitTp1} |`);
+  lines.push(`| Dính SL gốc | ${stats.hitSl} |`);
+  lines.push(`| Winrate | ${pct(stats.winRatePct)} |`);
+  lines.push(`| Tổng R | ${sign(stats.totalR)} |`);
+  lines.push(`| R trung bình/lệnh | ${stats.avgR == null ? '—' : sign(stats.avgR)} |`);
   lines.push('');
 
+  if (stats.byContext.length) {
+    lines.push('### Chia theo bối cảnh (cỡ mẫu nhỏ — đọc kèm cột n)');
+    lines.push('| Nhóm | n | Winrate | R/lệnh | Chạm TP cuối |');
+    lines.push('|---|---|---|---|---|');
+    for (const b of stats.byContext) {
+      lines.push(
+        `| ${b.key} | ${b.n} | ${pct(b.winRatePct)} `
+        + `| ${b.avgR == null ? '—' : sign(b.avgR)} | ${pct(b.tpFinalPct)} |`,
+      );
+    }
+    lines.push('');
+  }
+
   lines.push(`### ${Math.min(limit, stats.total)} nhịp gần nhất`);
-  lines.push('| Xác nhận | Chiều | Entry | SL | TP1 | Nhịp | Kết quả |');
-  lines.push('|---|---|---|---|---|---|---|');
+  lines.push('| Xác nhận | Chiều | Entry | SL | TP1 | Nhịp | MFE | Kết quả |');
+  lines.push('|---|---|---|---|---|---|---|---|');
   for (const x of report.signals.slice(-limit).reverse()) {
     lines.push(
       `| ${shortTime(x.signalTime)} | ${x.direction} | ${x.entry} | ${x.stopLoss} `
-      + `| ${x.takeProfits[0]} | ${x.legAtr}× | ${statusLabel(x)} |`,
+      + `| ${x.takeProfits[0]} | ${x.legAtr}× | ${x.mfeR}R | ${statusLabel(x)} `
+      + `(${sign(x.resultR)}R) |`,
     );
   }
   lines.push('');
   lines.push(
     '_Tín hiệu cơ học (zigzag pivot + ATR), KHÔNG đọc bối cảnh POI/thanh khoản như phân tích AI. '
-    + 'Winrate ở trên đo trên chính đoạn nến đang xét nên là backtest trong mẫu — dùng để so sánh tham số, không phải kỳ vọng tương lai._',
+    + 'Winrate ở trên đo trên chính đoạn nến đang xét nên là backtest TRONG MẪU — dùng để so sánh '
+    + 'tham số/luật thoát, không phải kỳ vọng tương lai._',
   );
 
   return lines.join('\n');

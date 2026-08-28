@@ -932,10 +932,18 @@ const swingTime = t => {
   return m ? `${m[3]} ${m[2]}/${m[1]}` : (t ?? '—');
 };
 
+const swingR = n => `${n >= 0 ? '+' : ''}${n}R`;
+const swingPct = n => n == null ? '—' : n + '%';
+
+// status = ĐƯỜNG ĐI với SL gốc (SL / chạm đủ TP / còn chạy); resultR = kết quả theo
+// LUẬT THOÁT đang chọn. Nói rõ "SL sau TP{n}" vì đó chính là chi phí của việc giữ lệnh.
 const swingStatus = s => {
-  if (s.status === 'SL')      return `<span class="tag down">SL ${s.resultR}R</span>`;
-  if (s.status === 'RUNNING') return `<span class="tag neutral">chạy ${s.resultR >= 0 ? '+' : ''}${s.resultR}R</span>`;
-  return `<span class="tag up">${s.status} +${s.resultR}R</span>`;
+  if (s.status === 'SL') {
+    const label = s.maxTpHit ? `SL sau TP${s.maxTpHit}` : 'SL';
+    return `<span class="tag down">${label} ${swingR(s.resultR)}</span>`;
+  }
+  if (s.status === 'RUNNING') return `<span class="tag neutral">chạy ${swingR(s.resultR)}</span>`;
+  return `<span class="tag up">${s.status} ${swingR(s.resultR)}</span>`;
 };
 
 function renderSwing(data) {
@@ -962,6 +970,39 @@ function renderSwing(data) {
     ${latest.provisional ? '<div class="meta-row" style="margin-top:10px">⚠️ Nhịp đảo chiều chưa đủ lớn — pivot còn có thể bị dời (repaint).</div>' : ''}
   ` : '';
 
+  // "Giữ tới TP xa có đáng không" — trả lời bằng xác suất có điều kiện và bảng so sánh
+  // luật thoát, thay vì để người đọc tự đoán từ winrate gộp.
+  const cond = stats.conditional || { reachedTp1: 0, levels: [], giveBack: 0, giveBackPct: null };
+  const ruleRows = Object.entries(data.exit_rules || {}).map(([key, label]) => {
+    const r = (stats.byRule || {})[key];
+    if (!r) return '';
+    const active = key === params.exitRule;
+    return `<tr${active ? ' style="font-weight:600"' : ''}>
+      <td>${esc(label)}${active ? ' ◀' : ''}</td><td>${r.closed}</td>
+      <td>${swingPct(r.winRatePct)}</td><td>${swingR(r.totalR)}</td>
+      <td>${r.avgR == null ? '—' : swingR(r.avgR)}</td></tr>`;
+  }).join('');
+
+  const holdBlock = !stats.total ? '' : `
+    <div style="margin-top:14px;padding:12px;border:1px solid var(--border);border-radius:8px">
+      <div style="font-weight:600;margin-bottom:8px">Giữ tới TP xa có đáng không?</div>
+      <div style="font-size:12px;color:var(--muted);line-height:1.7">
+        ${cond.reachedTp1
+          ? `${cond.reachedTp1}/${stats.total} lệnh chạm TP1. `
+            + cond.levels.map(l => `Đi tiếp tới <b>TP${l.level}: ${swingPct(l.pctGivenTp1)}</b>`).join(' · ')
+            + `<br>Chạm TP1 rồi vẫn về SL gốc: <b>${cond.giveBack}/${cond.reachedTp1} (${swingPct(cond.giveBackPct)})</b>`
+          : 'Chưa lệnh nào chạm TP1 trong bộ nến này — không đủ dữ liệu.'}
+        <br>MFE trung vị <b>${stats.mfeMedianR == null ? '—' : stats.mfeMedianR + 'R'}</b>
+        · MAE trung vị ${stats.maeMedianR == null ? '—' : stats.maeMedianR + 'R'}
+      </div>
+      <div style="overflow-x:auto;margin-top:10px">
+        <table class="history-table">
+          <thead><tr><th>Luật thoát</th><th>Đã đóng</th><th>Winrate</th><th>Tổng R</th><th>R/lệnh</th></tr></thead>
+          <tbody>${ruleRows}</tbody>
+        </table>
+      </div>
+    </div>`;
+
   document.getElementById('swingPanel').innerHTML = `
     <div class="card col-full">
       <div class="card-header"><div class="dot"></div>🔁 Nhịp nhỏ — ${esc(data.symbol)} · ${esc(data.timeframe)}
@@ -981,15 +1022,16 @@ function renderSwing(data) {
         </div>
       </div>
       ${detail}
+      ${holdBlock}
       <div style="overflow-x:auto;margin-top:12px">
         <table class="history-table">
-          <thead><tr><th>Xác nhận</th><th>Chiều</th><th>Entry</th><th>SL</th><th>TP1</th><th>Nhịp</th><th>Kết quả</th></tr></thead>
+          <thead><tr><th>Xác nhận</th><th>Chiều</th><th>Entry</th><th>SL</th><th>TP1</th><th>Nhịp</th><th>MFE</th><th>Kết quả</th></tr></thead>
           <tbody>${signals.slice(-15).reverse().map(s => `
             <tr>
               <td>${esc(swingTime(s.signalTime))}</td>
               <td class="kpi-value ${s.direction.toLowerCase()}" style="font-size:13px">${s.direction}</td>
               <td>${fmt(s.entry)}</td><td>${fmt(s.stopLoss)}</td><td>${fmt(s.takeProfits[0])}</td>
-              <td>${s.legAtr}×</td><td>${swingStatus(s)}</td>
+              <td>${s.legAtr}×</td><td>${s.mfeR}R</td><td>${swingStatus(s)}</td>
             </tr>`).join('')}
           </tbody>
         </table>
