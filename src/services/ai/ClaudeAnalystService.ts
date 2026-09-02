@@ -416,8 +416,8 @@ Phân tích THUẦN TÚY từ price action theo đúng quy trình bên dưới. 
 
 6. **M5 — Confirmation**: chỉ xét KHI giá đã chạm POI. Cần CHoCH hoặc BOS nội bộ M5 + nến xác nhận (engulfing / rejection / displacement).
 
-   ### 🎯 HAI CHẾ ĐỘ VÀO LỆNH (đọc kỹ trước khi kết luận WATCHLIST)
-   > BỐI CẢNH: phân tích này chạy RỜI RẠC tại một thời điểm, không chạy liên tục mỗi nến. Nếu chỉ được xuất ORDER đúng lúc M5 vừa confirm tại POI thì cửa sổ đó rộng 1–2 nến — gần như luôn trượt, và mọi phân tích đều rơi về WATCHLIST dù setup hoàn toàn hợp lệ. Vì vậy có HAI chế độ, và bạn PHẢI xét chế độ B trước khi kết luận WATCHLIST:
+   ### 🎯 BA CHẾ ĐỘ VÀO LỆNH (đọc kỹ trước khi kết luận WATCHLIST)
+   > BỐI CẢNH: phân tích này chạy RỜI RẠC tại một thời điểm, không chạy liên tục mỗi nến. Nếu chỉ được xuất ORDER đúng lúc M5 vừa confirm tại POI thì cửa sổ đó rộng 1–2 nến — gần như luôn trượt, và mọi phân tích đều rơi về WATCHLIST dù setup hoàn toàn hợp lệ. Vì vậy có BA chế độ, và bạn PHẢI xét chế độ B rồi C trước khi kết luận WATCHLIST:
 
    **A. LIVE CONFIRM** — giá ĐÃ ở trong/vừa phản ứng tại POI VÀ M5 đã có confirmation hợp lệ.
    → Xuất ORDER vào lệnh ngay (entry tại giá hiện tại hoặc mép POI gần nhất). Đây là chế độ mạnh nhất, confidence giữ nguyên.
@@ -427,14 +427,23 @@ Phân tích THUẦN TÚY từ price action theo đúng quy trình bên dưới. 
    1. POI hợp lệ theo đúng định nghĩa (OB/FVG **fresh**, nằm sau một cú sweep + displacement), chưa bị mitigate.
    2. Entry dự kiến (giữa POI) qua **HARD GATE 1** — đo tại chính mức entry đó.
    3. Qua **HARD GATE 3** — RR tính trên SL/TP dự kiến tại POI.
-   4. POI cách giá hiện tại **≤ 1× ATR H1** (ước từ FACTS). Xa hơn ngưỡng này thì giá còn phải đi qua quá nhiều cấu trúc trước khi tới nơi → giữ **WATCHLIST**, đừng đặt lệnh chờ.
+   4. POI cách giá hiện tại **≤ 1× ATR H1** (ước từ FACTS) — riêng khi regime H1 là **STRONG_TREND thuận hướng ADX** (đúng chiều lệnh, xem bảng regime ở HARD GATE 1) thì ngưỡng được **nới lên ≤ 1.5× ATR H1**: trend mạnh khiến giá thường chỉ hồi nông, giữ cứng 1× dễ bỏ lỡ toàn bộ nhịp thuận trend tốt nhất. Ngoài trường hợp đó, giữ nguyên 1×. Xa hơn ngưỡng tương ứng thì giá còn phải đi qua quá nhiều cấu trúc trước khi tới nơi → giữ **WATCHLIST** (hoặc xét chế độ C bên dưới), đừng đặt lệnh chờ. Ghi rõ trong output ngưỡng đã dùng (1× mặc định hay 1.5× đã nới) và vì sao.
    5. Có invalidation bằng **body close** rõ ràng để hủy lệnh chờ TRƯỚC khi khớp.
    6. Nếu lệnh này đi **NGƯỢC dòng H4** và căn cứ chính là kiểu sweep-and-reject: đã có **≥2 nến H1 xác nhận** theo đúng quy tắc "Đảo chiều NGƯỢC dòng H4 dựa trên sweep-and-reject" ở phần định nghĩa — chưa đủ 2 nến thì dừng ở WATCHLIST, không đặt lệnh chờ.
    → **Hạ 1 bậc confidence** so với LIVE CONFIRM (thiếu confirmation thật là khuyết điểm có thật, không được lờ đi). Ghi rõ trong ORDER: "LỆNH CHỜ — kích hoạt khi giá chạm [vùng]; HỦY nếu [body close ...] xảy ra trước khi khớp".
 
-   **HARD GATE 2 giờ đọc là:** phải rơi vào chế độ A **hoặc** B. Không thỏa cả hai (POI chưa hình thành rõ, quá xa, hoặc chưa chốt được hướng) → WATCHLIST.
+   **C. BREAKOUT CONTINUATION** — giá đang chạy một leg thuận dòng mạnh, KHÔNG có POI nào (kể cả chế độ B đã nới) nằm trong ngưỡng khoảng cách cho phép, nhưng bản thân entry vẫn PASS được Hard Gate 1 (không ở phía cực đoan sai chiều). Đây là chế độ **rủi ro cao hơn B** (không có OB/FVG sau sweep+displacement để neo), chỉ dùng khi thỏa **TẤT CẢ**:
+   1. Lệnh **THUẬN dòng H4** VÀ **STRONG_TREND thuận hướng ADX H1** — không áp dụng cho lệnh ngược dòng/ngược ADX dưới bất kỳ hình thức nào.
+   2. Đã có **BOS thật** (body close, có displacement) trên M15 hoặc H1 theo đúng hướng lệnh trong phiên đang phân tích — không dùng một wick/nến đơn lẻ M5 làm căn cứ.
+   3. Entry đặt tại **mép cấu trúc VỪA bị BOS xuyên qua** (swing high/low M15 cũ, nay đổi vai trò hỗ trợ/kháng cự) — tức retest ngay sau breakout, KHÔNG phải giá thị trường tại đỉnh/đáy nhịp hiện tại. Giá đã chạy quá xa khỏi mép này (retest muộn hoặc không hồi) → KHÔNG đuổi, quay về WATCHLIST chờ nhịp sau.
+   4. Vẫn phải qua **HARD GATE 1** (đo tại entry retest) và **HARD GATE 3** (RR TP1 chính ≥ 1:${config.minRr}) như mọi lệnh khác — không có ngoại lệ.
+   5. SL neo ngay sau mép breaker vừa retest + đệm ≥1× ATR M5 (chặt hơn B vì không có OB/FVG sâu).
+   6. Bắt buộc **1 PHẦN (chỉ SCALP)** — không mở phần POSITION dù setup có vẻ mạnh.
+   → **Hạ 2 bậc confidence** so với mức tính được (áp dụng SAU các cộng/trừ khác, trần Medium, thường về Low) — rủi ro chase cao hơn cả LIMIT-CHỜ-POI. Ghi rõ trong ORDER: "BREAKOUT CONTINUATION — retest mép [mức] vừa bị phá, không có POI sâu hơn trong tầm với".
 
-   > KỶ LUẬT: chế độ B là để KHÔNG BỎ LỠ setup đã chín, KHÔNG phải để rải lệnh chờ khắp nơi. Mỗi lần phân tích tối đa MỘT lệnh chờ, đúng một chiều. POI mơ hồ, chồng chéo nhiều vùng, hoặc phải "chọn đại" một mức → đó là WATCHLIST, không phải limit.
+   **HARD GATE 2 giờ đọc là:** phải rơi vào chế độ A, B, **hoặc C**. Không thỏa cả ba (POI chưa hình thành rõ, quá xa mà cũng chưa có BOS thật để retest, hoặc chưa chốt được hướng) → WATCHLIST.
+
+   > KỶ LUẬT: chế độ B/C là để KHÔNG BỎ LỠ setup đã chín hoặc đang chạy thật, KHÔNG phải để rải lệnh khắp nơi. Mỗi lần phân tích tối đa MỘT lệnh (chờ hoặc breakout), đúng một chiều. POI mơ hồ, chồng chéo nhiều vùng, hoặc phải "chọn đại" một mức → đó là WATCHLIST, không phải limit hay breakout.
 
 ## CÁCH ĐẶT SL / TP (bắt buộc)
 
@@ -524,13 +533,17 @@ chỉ ĐIỀU CHỈNH CONFIDENCE. Chỉ 3 rào dưới đây mới quyết đị
   **đo tại GIÁ VÀO LỆNH DỰ KIẾN, không phải giá hiện tại**. Ngưỡng "sâu" THAY ĐỔI THEO REGIME
   ADX H1 (mặc định 60/40; STRONG_TREND thuận chiều → 75/25; RANGE → 55/45 — xem bảng ở bước 3).
   Phạm vào → WATCHLIST hoặc cân nhắc đảo chiều.
-- **HARD GATE 2 — Có trigger thật HOẶC POI đã chín để đặt chờ**: thỏa **một trong hai** chế độ —
-  (A) LIVE CONFIRM: giá ĐÃ chạm POI (M15/H1) VÀ M5 có ít nhất một confirmation cụ thể
-  (CHoCH/BOS nội bộ M5, engulfing, rejection, displacement); hoặc (B) LIMIT-CHỜ-POI: POI fresh
-  hợp lệ, entry dự kiến qua Gate 1, qua Gate 3, cách giá hiện tại ≤ 1× ATR H1, có invalidation
-  body-close rõ ràng → đặt lệnh chờ, hạ 1 bậc confidence. Không thỏa chế độ nào → WATCHLIST.
-  Nếu lệnh NGƯỢC dòng H4 dựa trên sweep-and-reject: cần ≥2 nến H1 xác nhận (xem định nghĩa),
-  chỉ 1 nến → WATCHLIST dù A/B đều thỏa mặt kỹ thuật khác.
+- **HARD GATE 2 — Có trigger thật HOẶC POI đã chín để đặt chờ HOẶC breakout đang retest**: thỏa
+  **một trong ba** chế độ — (A) LIVE CONFIRM: giá ĐÃ chạm POI (M15/H1) VÀ M5 có ít nhất một
+  confirmation cụ thể (CHoCH/BOS nội bộ M5, engulfing, rejection, displacement); (B) LIMIT-CHỜ-POI:
+  POI fresh hợp lệ, entry dự kiến qua Gate 1, qua Gate 3, cách giá hiện tại ≤ 1× ATR H1 (nới
+  ≤1.5× nếu STRONG_TREND thuận hướng ADX), có invalidation body-close rõ ràng → đặt lệnh chờ,
+  hạ 1 bậc confidence; hoặc (C) BREAKOUT CONTINUATION: POI hợp lệ nào cũng xa hơn ngưỡng B,
+  nhưng có BOS thật (M15/H1) thuận dòng H4 + STRONG_TREND thuận ADX, entry retest ngay mép vừa
+  bị phá, qua Gate 1 và Gate 3 tại mức retest đó → hạ 2 bậc confidence, chỉ 1 phần SCALP.
+  Không thỏa chế độ nào → WATCHLIST. Nếu lệnh NGƯỢC dòng H4 dựa trên sweep-and-reject: cần ≥2
+  nến H1 xác nhận (xem định nghĩa), chỉ 1 nến → WATCHLIST dù A/B đều thỏa mặt kỹ thuật khác
+  (chế độ C không áp dụng cho lệnh ngược dòng H4).
 - **HARD GATE 3 — RR tối thiểu trên TP1 CHÍNH**: RR đo trên **TP1 chính** (mục tiêu thanh khoản
   thật, chỉ lùi khi gặp RÀO CẢN CỨNG theo Cổng 3), phải ≥ 1:${config.minRr}. **KHÔNG đo trên
   "TP chốt non"** — mức chốt non được phép RR thấp. TUYỆT ĐỐI không dịch TP1 ra xa để ép RR;
@@ -539,7 +552,7 @@ chỉ ĐIỀU CHỈNH CONFIDENCE. Chỉ 3 rào dưới đây mới quyết đị
 
 ### ▸ TỰ KIỂM TRƯỚC KHI XUẤT ORDER (checklist nhanh)
 1. HARD GATE 1: đọc **DEALING RANGE H1** (leg đang chạy) làm mẫu số → đọc regime ADX H1 từ FACTS → chốt ngưỡng cực đoan (75/25, 60/40 hay 55/45) → **mức entry dự kiến** (không phải giá hiện tại) có phạm không? → nếu phạm, WATCHLIST.
-2. HARD GATE 2: đã chạm POI + có confirmation M5 (chế độ A) chưa? → nếu chưa, **BẮT BUỘC xét tiếp chế độ B (LIMIT-CHỜ-POI)** trước khi kết luận. Cả A lẫn B đều không thỏa → WATCHLIST. Nếu lệnh NGƯỢC dòng H4 và dựa trên sweep-and-reject → còn cần ≥2 nến H1 xác nhận, thiếu thì WATCHLIST dù A/B kỹ thuật đã thỏa.
+2. HARD GATE 2: đã chạm POI + có confirmation M5 (chế độ A) chưa? → nếu chưa, **BẮT BUỘC xét tiếp chế độ B (LIMIT-CHỜ-POI)**, rồi nếu B cũng không thỏa vì POI quá xa thì **xét tiếp chế độ C (BREAKOUT CONTINUATION)** trước khi kết luận WATCHLIST. Cả A, B, C đều không thỏa → WATCHLIST. Nếu lệnh NGƯỢC dòng H4 và dựa trên sweep-and-reject → còn cần ≥2 nến H1 xác nhận, thiếu thì WATCHLIST dù A/B kỹ thuật đã thỏa (C không áp dụng khi ngược dòng H4).
 3. HARD GATE 3: RR **TP1 chính** (mục tiêu thanh khoản thật, chỉ lùi khi gặp RÀO CẢN CỨNG) còn ≥ 1:${config.minRr}? → nếu không, NO TRADE. Không dùng RR của "TP chốt non" để chấm cổng này.
 4. Cả 3 PASS → xuất ORDER. Tổng hợp mọi CẢNH BÁO (A–D, kill zone, thuận/ngược dòng H4, spread mỏng) để chọn confidence và % size — KHÔNG dùng chúng để hủy lệnh.
 
@@ -552,14 +565,15 @@ chỉ ĐIỀU CHỈNH CONFIDENCE. Chỉ 3 rào dưới đây mới quyết đị
 ## TIÊU CHÍ CONFIDENCE (chỉ ảnh hưởng độ tin cậy/size, KHÔNG chặn lệnh)
 Khởi điểm mọi lệnh đã qua 3 HARD GATE = **Medium**. Cộng/trừ theo các yếu tố:
 - **Chế độ LIMIT-CHỜ-POI luôn hạ 1 bậc** so với mức tính được (thiếu confirmation M5 thật). Áp dụng SAU khi cộng/trừ các yếu tố dưới đây → hệ quả: lệnh chờ tối đa chỉ đạt Medium.
+- **Chế độ BREAKOUT CONTINUATION luôn hạ 2 bậc** so với mức tính được (không có OB/FVG sau sweep+displacement để neo, chỉ dựa vào retest mép breaker) → hệ quả: tối đa Medium, phần lớn trường hợp về Low.
 - **Lên High**: chế độ LIVE CONFIRM + THUẬN dòng H4 + cùng chiều DOL + trong kill zone + RR TP1 chính ≥ 1:${highRr} + biên EQ đủ dày (không kích Cảnh báo A) + CHoCH không nghi impulsive (không kích Cảnh báo C) + dữ liệu M5 đủ 30 nến + không có pool kẹp SL.
 - **Giữ Medium**: qua 3 HARD GATE nhưng dính 1–2 cảnh báo (ngoài kill zone / ngược dòng H4 / ngược DOL / EQ mỏng / CHoCH nghi impulsive / M5 < 30 nến / pool kẹp đã chấp nhận rủi ro / RR trong 1:${config.minRr}–1:${highRr}).
 - **Low**: qua 3 HARD GATE nhưng dính ≥ 3 cảnh báo cùng lúc → vẫn được vào ORDER nhưng ghi rõ "confidence thấp, giảm size mạnh". KHÔNG tự hạ Low thành NO TRADE — chỉ NO TRADE khi phạm HARD GATE.
 
 ## ĐỊNH DẠNG OUTPUT
 
-### Trường hợp 1 — CHỈ dùng khi KHÔNG thỏa cả chế độ A (live confirm) LẪN chế độ B (limit-chờ-POI):
-> Trước khi viết phần này, tự hỏi lại: POI có fresh và hợp lệ không? Entry dự kiến có qua Gate 1 không? RR TP1 chính có đạt không? Có cách giá hiện tại ≤ 1× ATR H1 không? ĐỦ CẢ BỐN → đây phải là một **ORDER lệnh chờ** (Trường hợp 3, chế độ LIMIT-CHỜ-POI), KHÔNG phải WATCHLIST. Chỉ viết WATCHLIST khi POI còn xa/mơ hồ, hướng chưa chốt, hoặc RR dự kiến không đạt.
+### Trường hợp 1 — CHỈ dùng khi KHÔNG thỏa chế độ A (live confirm), B (limit-chờ-POI) LẪN C (breakout continuation):
+> Trước khi viết phần này, tự hỏi lại: POI có fresh và hợp lệ không? Entry dự kiến có qua Gate 1 không? RR TP1 chính có đạt không? Có cách giá hiện tại ≤ ngưỡng ATR H1 cho phép không (1× mặc định, 1.5× nếu STRONG_TREND thuận)? ĐỦ CẢ BỐN → đây phải là một **ORDER lệnh chờ** (Trường hợp 3, chế độ LIMIT-CHỜ-POI), KHÔNG phải WATCHLIST. Nếu không đủ vì POI quá xa NHƯNG đã có BOS thật thuận dòng H4 + STRONG_TREND thuận ADX và giá đang retest mép vừa phá → đó là **ORDER chế độ BREAKOUT CONTINUATION**, cũng KHÔNG phải WATCHLIST. Chỉ viết WATCHLIST khi POI còn xa/mơ hồ mà cũng chưa có BOS thật để retest, hướng chưa chốt, hoặc RR dự kiến không đạt.
 
 Viết phần này theo kiểu KỊCH BẢN HÀNH ĐỘNG, dễ đọc: "giá về vùng nào → NẾU thấy nến/hành động này thì làm gì, NẾU thấy dấu hiệu kia thì làm gì". KHÔNG viết kiểu liệt kê "điều kiện còn thiếu" khô khan. Mỗi nhánh NẾU phải mô tả nến/hành động cụ thể (sweep mức nào, rejection/engulfing, CHoCH/BOS, body close qua mức nào) rồi kèm hành động rõ ràng (VÀO LỆNH / BỎ / ĐỨNG NGOÀI).
 
@@ -582,20 +596,21 @@ Viết phần này theo kiểu KỊCH BẢN HÀNH ĐỘNG, dễ đọc: "giá v�
 - 🔄 NẾU [điều kiện đổi hướng — vd: nến H1 body close trên [mức] trần range] → range được vẽ lại; chờ giá retest vùng vừa phá + confirmation M5 để vào theo hướng mới.
 
 - Lưu ý: đây là các mức DỰ KIẾN tại POI (đã biết hướng) — sẽ chốt chính xác khi M5 confirm; chưa đặt lệnh cho đến khi đủ điều kiện. Nếu RR dự kiến < 1:${config.minRr} thì ghi rõ setup sẽ bị loại khi tới POI.
-- Vì sao KHÔNG đặt lệnh chờ (BẮT BUỘC ghi 1 dòng): [điều kiện nào của chế độ B không thỏa — POI xa hơn 1× ATR H1 / POI chưa fresh / entry dự kiến phạm Gate 1 / RR TP1 chính không đạt / hướng chưa chốt].
+- Vì sao KHÔNG đặt lệnh chờ (BẮT BUỘC ghi 1 dòng): [điều kiện nào của chế độ B không thỏa — POI xa hơn ngưỡng ATR H1 cho phép / POI chưa fresh / entry dự kiến phạm Gate 1 / RR TP1 chính không đạt / hướng chưa chốt].
+- Vì sao KHÔNG đủ điều kiện BREAKOUT CONTINUATION (chỉ ghi nếu POI đang xa hơn ngưỡng B): [chưa có BOS thật M15/H1 thuận dòng / không phải STRONG_TREND thuận ADX / giá đã chạy quá xa khỏi mép breaker để retest].
 
 ### Trường hợp 2 — Không có cơ hội nào:
 - Best opportunity: NO TRADE
 - Patience level: No trade
 - Lý do: [1 câu nêu rõ thiếu yếu tố nào / bị cổng nào chặn]
 
-### Trường hợp 3 — Setup HỢP LỆ (qua đủ 3 HARD GATE; chế độ A = M5 đã confirm tại POI, chế độ B = POI đã chín để đặt lệnh chờ):
+### Trường hợp 3 — Setup HỢP LỆ (qua đủ 3 HARD GATE; chế độ A = M5 đã confirm tại POI, chế độ B = POI đã chín để đặt lệnh chờ, chế độ C = breakout continuation retest mép vừa phá):
 #### [BUY ORDER / SELL ORDER]
-- **Chế độ vào lệnh: LIVE CONFIRM / LIMIT-CHỜ-POI** — nếu LIMIT ghi rõ "LỆNH CHỜ, kích hoạt khi giá chạm [vùng]"
-- Nhãn dòng H4: THUẬN dòng / NGƯỢC dòng (giảm size nếu ngược)
-- Cấu trúc lệnh: **1 PHẦN (chỉ SCALP)** / **2 PHẦN (SCALP + POSITION)** — tùy chọn theo độ mạnh setup
-- Entry zone: [giá] (chung cho cả 2 phần nếu chia) — nếu LIMIT: cách giá hiện tại [X] USD (= [Y]× ATR H1, phải ≤ 1×)
-- Điều kiện kích hoạt (đã thỏa — HARD GATE 2): [chế độ A: POI nào + confirmation M5 nào | chế độ B: POI nào + vì sao đã chín để đặt chờ]
+- **Chế độ vào lệnh: LIVE CONFIRM / LIMIT-CHỜ-POI / BREAKOUT CONTINUATION** — nếu LIMIT ghi rõ "LỆNH CHỜ, kích hoạt khi giá chạm [vùng]"; nếu BREAKOUT ghi rõ "retest mép [mức] vừa bị BOS phá"
+- Nhãn dòng H4: THUẬN dòng / NGƯỢC dòng (giảm size nếu ngược; chế độ C chỉ áp dụng khi THUẬN dòng)
+- Cấu trúc lệnh: **1 PHẦN (chỉ SCALP)** / **2 PHẦN (SCALP + POSITION)** — tùy chọn theo độ mạnh setup (chế độ BREAKOUT CONTINUATION luôn bắt buộc 1 PHẦN)
+- Entry zone: [giá] (chung cho cả 2 phần nếu chia) — nếu LIMIT/BREAKOUT: cách giá hiện tại [X] USD (= [Y]× ATR H1, phải ≤ ngưỡng cho phép: 1× mặc định / 1.5× nếu STRONG_TREND thuận ADX)
+- Điều kiện kích hoạt (đã thỏa — HARD GATE 2): [chế độ A: POI nào + confirmation M5 nào | chế độ B: POI nào + vì sao đã chín để đặt chờ | chế độ C: BOS thật ở đâu + mép breaker nào đang retest]
 - Vị trí **trong dealing range** tại entry dự kiến: [premium/discount/EQ, X% leg] (giá hiện tại [Y]% leg) — dealing range dùng: [low–high, size] — vs ngưỡng regime [75/25 | 60/40 | 55/45] — HARD GATE 1; Cảnh báo A nếu EQ mỏng
 - Regime H1: ADX [X] → [STRONG_TREND / WEAK_TREND / RANGE / KHÔNG XÁC ĐỊNH], lệnh thuận/ngược hướng ADX
 - Draw on Liquidity: [lên/xuống] — cùng chiều / ngược (Cảnh báo B nếu ngược)
@@ -621,7 +636,7 @@ Viết phần này theo kiểu KỊCH BẢN HÀNH ĐỘNG, dễ đọc: "giá v�
 ---
 
 ### SUMMARY
-- Chế độ vào lệnh: LIVE CONFIRM / LIMIT-CHỜ-POI / N/A (watchlist–no trade)
+- Chế độ vào lệnh: LIVE CONFIRM / LIMIT-CHỜ-POI / BREAKOUT CONTINUATION / N/A (watchlist–no trade)
 - Context H4: BULLISH / BEARISH / NEUTRAL (lệnh thuận hay ngược dòng)
 - Bias H1: BULLISH / BEARISH / NEUTRAL
 - Dealing range dùng làm mẫu số: [low–high, size, = N× ATR] (hoặc "range mở rộng" + lý do fallback)
@@ -630,8 +645,8 @@ Viết phần này theo kiểu KỊCH BẢN HÀNH ĐỘNG, dễ đọc: "giá v�
 - Draw on Liquidity: lên / xuống — cùng chiều / ngược (Cảnh báo B)
 - Dữ liệu M5: đủ/thiếu 30 nến — Impulsive leg: Có/Không — CHoCH nghi correction? (Cảnh báo C)
 - Liquidity sweep tại POI: Có / Chưa
-- M5 confirmation: Có / Chưa / N/A (chế độ LIMIT) — **HARD GATE 2: PASS/FAIL** (ghi rõ thỏa qua chế độ A hay B)
-- Khoảng cách entry → giá hiện tại: [X] USD = [Y]× ATR H1 (chỉ ghi khi chế độ LIMIT; phải ≤ 1×)
+- M5 confirmation: Có / Chưa / N/A (chế độ LIMIT/BREAKOUT) — **HARD GATE 2: PASS/FAIL** (ghi rõ thỏa qua chế độ A, B hay C)
+- Khoảng cách entry → giá hiện tại: [X] USD = [Y]× ATR H1 (chỉ ghi khi chế độ LIMIT/BREAKOUT; phải ≤ ngưỡng cho phép — 1× mặc định, 1.5× nếu STRONG_TREND thuận ADX)
 - Rào cản nghịch hướng: [vùng] — dày [Y]× ATR H1 — CỨNG / MỀM / không có → TP chốt non [giá] (RR [X:1], không tính cổng)
 - TP1 chính — RR: [X:1] — **HARD GATE 3: PASS/FAIL** (≥1:${config.minRr})
 - Pool kẹp giữa entry–stop (M5/M15, và H1 nếu 2 phần): Không / Có → xử lý (Cảnh báo D)
