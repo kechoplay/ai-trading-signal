@@ -500,6 +500,56 @@ const CRYPTO_BASES = ['BTC','ETH','BNB','SOL','XRP','ADA','DOGE','LTC','AVAX','D
 let symbols = [];
 let activeSymbol = null;
 let tvWidget = null;
+// Interval TradingView đang hiển thị (vd '5', '15', '60', 'D') — nhịp nhỏ dùng đúng khung
+// này thay vì SWING_TIMEFRAME cố định trong .env. Nhớ lại giữa các lần đổi symbol/reload.
+let currentInterval = localStorage.getItem('chartInterval') || '5';
+
+// TradingView resolution ('1','5','15','60','240','D','W'…) → timeframe hệ thống hiểu
+// (M1/M5/M15/M30/H1/H4/D/W, xem TIMEFRAME_MAP trong TwelveDataProvider). Làm tròn về
+// mốc gần nhất khi người dùng chọn interval TradingView không có sẵn trong hệ thống.
+function tvIntervalToTimeframe(interval) {
+  const s = String(interval ?? '5').trim().toUpperCase();
+  if (s === 'D' || s === '1D') return 'D';
+  if (s === 'W' || s === '1W') return 'W';
+  if (s === 'M' || s === '1M' || s === '1MO') return 'D'; // monthly chưa hỗ trợ → fallback D
+  const min = parseInt(s, 10);
+  if (Number.isNaN(min)) return 'M5';
+  if (min <= 2) return 'M1';
+  if (min <= 10) return 'M5';
+  if (min <= 20) return 'M15';
+  if (min <= 45) return 'M30';
+  if (min <= 90) return 'H1';
+  if (min < 1440) return 'H4';
+  return 'D';
+}
+
+/**
+ * Widget embed công khai (tv.js) không expose activeChart()/onIntervalChanged() — chỉ
+ * getSymbolInfo(callback) là API còn hỏi được interval hiện tại của chart, và nó hỏi
+ * "sống" qua postMessage vào iframe nên luôn phản ánh đúng lựa chọn mới nhất của người
+ * dùng (kể cả khi họ vừa đổi timeframe trên chart mà chưa reload trang).
+ */
+function getCurrentTvInterval(timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    if (!tvWidget || typeof tvWidget.getSymbolInfo !== 'function') { resolve(currentInterval); return; }
+    let done = false;
+    const timer = setTimeout(() => { if (!done) { done = true; resolve(currentInterval); } }, timeoutMs);
+    try {
+      tvWidget.getSymbolInfo((info) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        if (info && info.interval) {
+          currentInterval = String(info.interval);
+          localStorage.setItem('chartInterval', currentInterval);
+        }
+        resolve(currentInterval);
+      });
+    } catch {
+      if (!done) { done = true; clearTimeout(timer); resolve(currentInterval); }
+    }
+  });
+}
 
 function isCrypto(symbol) {
   const base = String(symbol).split('/')[0].toUpperCase();
@@ -539,7 +589,7 @@ function loadChart(symbol) {
   tvWidget = new TradingView.widget({
     autosize: true,
     symbol: tvSymbol(symbol),
-    interval: '5', // mở mặc định ở 5m
+    interval: currentInterval, // giữ interval người dùng đang xem (đổi symbol không reset về mặc định)
     timezone: 'Asia/Ho_Chi_Minh',
     theme: 'light',
     style: '1',
@@ -551,6 +601,9 @@ function loadChart(symbol) {
     hide_side_toolbar: false,
     container_id: 'tv_chart',
   });
+  // Widget embed công khai (tv.js) không có activeChart()/onIntervalChanged() — chỉ
+  // getSymbolInfo() là API còn dùng được để đọc interval hiện tại (xem getCurrentTvInterval()).
+  getCurrentTvInterval(); // cập nhật currentInterval ngay khi chart mở xong (fire-and-forget)
   // highlight active
   document.querySelectorAll('.symbol-item').forEach(el => {
     el.classList.toggle('active', el.dataset.symbol === symbol);
@@ -745,7 +798,9 @@ async function runSwing() {
   document.getElementById('sigOverlay').classList.add('show');
 
   try {
-    const res = await apiFetch('/api/swing?symbol=' + encodeURIComponent(activeSymbol));
+    const liveInterval = await getCurrentTvInterval();
+    const tf = tvIntervalToTimeframe(liveInterval);
+    const res = await apiFetch('/api/swing?symbol=' + encodeURIComponent(activeSymbol) + '&timeframe=' + tf);
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Dò nhịp thất bại');
     body.innerHTML = renderSwing(data);
