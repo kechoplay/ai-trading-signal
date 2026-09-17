@@ -507,6 +507,14 @@ let tvWidget = null;
 // Bản nhịp nhỏ mới nhất từng symbol, nhận qua WebSocket từ SwingScheduler (job nền quét
 // mỗi vài phút) — khoá theo symbol để chuyển qua lại không phải chờ gọi lại REST.
 const swingCache = {};
+// Khung đang hiển thị trong panel Nhịp nhỏ — luôn khớp interval hiện tại của chart
+// (xem checkSwingTimeframe()). Job nền chỉ quét CỐ ĐỊNH một khung (SWING_TIMEFRAME) nên
+// khi khác khung này, WS không giúp được — phải tự poll REST (xem manageSwingFallback()).
+let swingTimeframe = null;
+// Khung mà job nền đang phát qua WS — học được từ message đầu tiên nhận được, dùng để
+// biết có nên bật poll REST bù hay không (không hardcode 'M5' vì SWING_TIMEFRAME cấu hình được).
+let wsDefaultTimeframe = null;
+let swingFallbackTimer = null;
 // Interval TradingView đang hiển thị (vd '5', '15', '60', 'D') — nhịp nhỏ dùng đúng khung
 // này thay vì SWING_TIMEFRAME cố định trong .env. Nhớ lại giữa các lần đổi symbol/reload.
 let currentInterval = localStorage.getItem('chartInterval') || '5';
@@ -605,10 +613,12 @@ function loadChart(symbol) {
     el.classList.toggle('active', el.dataset.symbol === symbol);
   });
   document.getElementById('swingSymbol').textContent = symbol;
-  // Đã có dữ liệu từ WS (job nền) → hiện ngay, khỏi chờ. Chưa có (symbol mới thêm,
-  // job nền chưa kịp quét tới) → fallback gọi REST một lần.
-  if (swingCache[symbol]) {
-    document.getElementById('swingBody').innerHTML = renderSwing(swingCache[symbol]);
+  // Đã có dữ liệu từ WS (job nền) ĐÚNG khung đang xem → hiện ngay, khỏi chờ. Chưa có,
+  // hoặc cache đang là khung khác (vd job nền chạy M5 nhưng chart đang xem H1) → gọi
+  // REST lấy đúng khung hiện tại.
+  const cached = swingCache[symbol];
+  if (cached && cached.timeframe === swingTimeframe) {
+    document.getElementById('swingBody').innerHTML = renderSwing(cached);
   } else {
     loadSwingPanel(true);
   }
@@ -783,25 +793,49 @@ const swingResult = s => {
   return `✅ ${s.status} (${swingR(s.resultR)})`;
 };
 
-// Nạp/làm mới panel nhịp nhỏ bên phải chart. showSpinner=true khi đổi symbol/bấm tay
-// (người dùng đang chờ), false khi tự refresh nền (không nháy loading gây khó chịu).
+// Nạp/làm mới panel nhịp nhỏ bên phải chart. showSpinner=true khi đổi symbol/đổi
+// timeframe/bấm tay (người dùng đang chờ), false khi tự refresh nền (không nháy loading).
 async function loadSwingPanel(showSpinner = false) {
   const body = document.getElementById('swingBody');
   if (!activeSymbol) { body.innerHTML = '<div class="empty">Chọn một symbol để xem nhịp nhỏ.</div>'; return; }
   if (showSpinner) body.innerHTML = '<div class="empty">Đang dò nhịp…</div>';
 
+  const liveInterval = await getCurrentTvInterval();
+  const tf = tvIntervalToTimeframe(liveInterval);
+  swingTimeframe = tf; // dùng để lọc push WS khớp đúng khung đang xem
+
   try {
-    const liveInterval = await getCurrentTvInterval();
-    const tf = tvIntervalToTimeframe(liveInterval);
     const res = await apiFetch('/api/swing?symbol=' + encodeURIComponent(activeSymbol) + '&timeframe=' + tf);
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Dò nhịp thất bại');
-    // Symbol có thể đã đổi trong lúc chờ response → bỏ kết quả trễ, tránh đè nhầm panel.
-    if (data.symbol && data.symbol !== activeSymbol) return;
+    // Symbol/timeframe có thể đã đổi trong lúc chờ response → bỏ kết quả trễ, tránh đè nhầm panel.
+    if ((data.symbol && data.symbol !== activeSymbol) || data.timeframe !== swingTimeframe) return;
     body.innerHTML = renderSwing(data);
   } catch (e) {
     body.innerHTML = '<div class="empty">✗ ' + esc(e.message || 'Dò nhịp thất bại') + '</div>';
+  } finally {
+    manageSwingFallback();
   }
+}
+
+// Phát hiện lúc người dùng đổi interval trên chart (TradingView không phát event này ra
+// ngoài được — phải poll getSymbolInfo định kỳ, xem getCurrentTvInterval()) rồi nạp lại
+// panel đúng khung mới.
+async function checkSwingTimeframe() {
+  if (!activeSymbol) return;
+  const liveInterval = await getCurrentTvInterval();
+  const tf = tvIntervalToTimeframe(liveInterval);
+  if (tf !== swingTimeframe) await loadSwingPanel(true);
+}
+
+// Job nền chỉ quét CỐ ĐỊNH khung SWING_TIMEFRAME → WS chỉ giúp được khi khung đang xem
+// TRÙNG khung đó. Khác khung (vd chart đang H1 nhưng job nền chạy M5) thì tự poll REST
+// mỗi 30s để panel không bị đứng hình chờ tới lần đổi timeframe/symbol kế tiếp.
+function manageSwingFallback() {
+  clearInterval(swingFallbackTimer);
+  swingFallbackTimer = null;
+  if (wsDefaultTimeframe && swingTimeframe === wsDefaultTimeframe) return; // WS đã phủ đủ
+  swingFallbackTimer = setInterval(() => loadSwingPanel(false), 30_000);
 }
 
 async function runSwing() {
@@ -836,7 +870,13 @@ function setLiveIndicator(online) {
 
 function applySwingUpdate(item) {
   swingCache[item.symbol] = item;
-  if (item.symbol === activeSymbol) {
+  if (!wsDefaultTimeframe) {
+    wsDefaultTimeframe = item.timeframe; // học khung job nền đang phát từ message đầu tiên
+    manageSwingFallback(); // biết rồi thì tắt fallback ngay nếu hoá ra đã khớp
+  }
+  // Chỉ áp vào panel khi ĐÚNG symbol đang xem VÀ đúng khung — tránh job nền (vd M5) đè
+  // nhầm lên panel khi người dùng đang xem khung khác (vd H1) trên chart.
+  if (item.symbol === activeSymbol && item.timeframe === swingTimeframe) {
     document.getElementById('swingBody').innerHTML = renderSwing(item);
   }
 }
@@ -1175,6 +1215,7 @@ tickClock();
 connectSwingSocket();
 setInterval(loadSchedulerStatus, 60_000);
 setInterval(tickClock, 1_000);
+setInterval(checkSwingTimeframe, 5_000); // phát hiện đổi timeframe trên chart → nạp lại nhịp nhỏ đúng khung
 </script>
 </body>
 </html>

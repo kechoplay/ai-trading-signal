@@ -311,13 +311,31 @@ quét nhịp nhỏ cho **mọi symbol trong bảng `symbols`** (đúng danh sác
 dashboard, đọc lại từ DB ở mỗi tick nên tự theo kịp khi thêm/xóa coin) rồi đẩy kết quả
 qua `SwingSocketHub` (WebSocket, path `/ws/swing`, gắn vào cùng HTTP server với Express
 trong `server.ts`). Dùng `config.swing.timeframe` (`SWING_TIMEFRAME`, mặc định M5) cho
-mọi symbol — không biết khung TradingView mà từng client đang xem, nên panel GUI luôn
-ghi rõ timeframe của số liệu đang hiển thị để không nhầm với khung đang xem trên chart.
+mọi symbol — không biết khung TradingView mà từng client đang xem.
 Vẫn KHÔNG dùng AI (không tốn quota) và KHÔNG ghi `trading_signals` — hub chỉ giữ bản mới
 nhất từng symbol trong RAM (không DB) để client vừa kết nối có dữ liệu ngay, không phải
 chờ tick kế tiếp. Client mất kết nối tự thử lại sau 5s (`chart.html`, `connectSwingSocket()`).
 Nghỉ `SYMBOL_GAP_MS` (400ms) giữa các symbol trong cùng tick để tránh dồn request vào
 TwelveData/OANDA khi danh sách theo dõi dài — danh sách càng dài, một tick càng lâu.
+
+**Panel tự bám khung timeframe của chart (thêm 17/09/2026, `chart.html`):** WS chỉ phát
+CỐ ĐỊNH một khung (`SWING_TIMEFRAME`) nên khi người dùng đổi interval trên chart sang
+khung khác, panel không thể chỉ dựa vào WS. Cơ chế:
+- `checkSwingTimeframe()` poll `getCurrentTvInterval()` mỗi 5s (TradingView embed công
+  khai không phát event đổi interval ra ngoài được) — đổi khung → gọi `loadSwingPanel(true)`
+  nạp lại đúng khung mới qua REST (`GET /api/swing?...&timeframe=`).
+- `applySwingUpdate()` chỉ ghi đè panel khi push WS **khớp cả symbol lẫn timeframe** đang
+  xem (`item.timeframe === swingTimeframe`) — tránh job nền (vd M5) đè nhầm lên panel khi
+  đang xem khung khác (vd H1). `wsDefaultTimeframe` học khung job nền đang phát từ message
+  WS đầu tiên nhận được.
+- `manageSwingFallback()`: khung đang xem KHÁC khung WS đang phát → WS vô dụng cho
+  trường hợp này → tự poll REST mỗi 30s bù vào (gọi lại sau mỗi `loadSwingPanel`/
+  `applySwingUpdate` để bật/tắt đúng lúc). Khung đang xem TRÙNG khung WS → tắt poll, để
+  WS lo (đây là trường hợp phổ biến nhất vì mặc định chart mở M5, trùng `SWING_TIMEFRAME`
+  mặc định).
+- Cache theo symbol (`swingCache`) giờ chỉ dùng để hiện tức thì khi chuyển symbol nếu
+  `cache.timeframe === swingTimeframe` — khác khung thì bỏ qua cache, gọi REST lại
+  (`loadChart()`), tránh hiện nhầm số liệu sai khung ngay sau khi chuyển symbol.
 
 ---
 
