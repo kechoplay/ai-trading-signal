@@ -64,10 +64,7 @@ D:/ai-trading-signal/
         │   └── OandaProvider.ts       ← provider thay thế
         ├── swing/
         │   ├── SwingSignalService.ts  ← engine zigzag pivot (nhịp nhỏ, KHÔNG dùng AI)
-        │   ├── SwingRunner.ts         ← fetch nến + format báo cáo + Telegram (tùy chọn)
-        │   └── SwingScheduler.ts      ← job nền quét nhịp nhỏ mỗi N phút cho mọi symbol theo dõi
-        ├── realtime/
-        │   └── SwingSocketHub.ts      ← WebSocket server (/ws/swing) đẩy kết quả SwingScheduler cho GUI
+        │   └── SwingRunner.ts         ← fetch nến + format báo cáo + Telegram (tùy chọn)
         └── telegram/
             └── TelegramNotifier.ts   ← format + gửi tín hiệu lên Telegram
 ```
@@ -305,37 +302,18 @@ Ba đường gọi thủ công: `GET /api/swing`, nút **🔄** trong panel Nh�
 ghi DB. Tham số chỉnh trong `.env` (`SWING_*`) — `SWING_MIN_LEG_ATR` là núm chính;
 `?rule=` (và `--rule=` ở CLI) đổi luật thoát cho riêng một lần gọi.
 
-**Job nền + realtime qua WebSocket (thêm 17/09/2026):** `SwingScheduler` (bật mặc định,
-`SWING_SCHEDULER_ENABLED`, chu kỳ `SWING_SCHEDULER_INTERVAL_MIN` phút, mặc định 5) tự
-quét nhịp nhỏ cho **mọi symbol trong bảng `symbols`** (đúng danh sách hiển thị trên
-dashboard, đọc lại từ DB ở mỗi tick nên tự theo kịp khi thêm/xóa coin) rồi đẩy kết quả
-qua `SwingSocketHub` (WebSocket, path `/ws/swing`, gắn vào cùng HTTP server với Express
-trong `server.ts`). Dùng `config.swing.timeframe` (`SWING_TIMEFRAME`, mặc định M5) cho
-mọi symbol — không biết khung TradingView mà từng client đang xem.
-Vẫn KHÔNG dùng AI (không tốn quota) và KHÔNG ghi `trading_signals` — hub chỉ giữ bản mới
-nhất từng symbol trong RAM (không DB) để client vừa kết nối có dữ liệu ngay, không phải
-chờ tick kế tiếp. Client mất kết nối tự thử lại sau 5s (`chart.html`, `connectSwingSocket()`).
-Nghỉ `SYMBOL_GAP_MS` (400ms) giữa các symbol trong cùng tick để tránh dồn request vào
-TwelveData/OANDA khi danh sách theo dõi dài — danh sách càng dài, một tick càng lâu.
-
-**Panel tự bám khung timeframe của chart (thêm 17/09/2026, `chart.html`):** WS chỉ phát
-CỐ ĐỊNH một khung (`SWING_TIMEFRAME`) nên khi người dùng đổi interval trên chart sang
-khung khác, panel không thể chỉ dựa vào WS. Cơ chế:
-- `checkSwingTimeframe()` poll `getCurrentTvInterval()` mỗi 5s (TradingView embed công
-  khai không phát event đổi interval ra ngoài được) — đổi khung → gọi `loadSwingPanel(true)`
-  nạp lại đúng khung mới qua REST (`GET /api/swing?...&timeframe=`).
-- `applySwingUpdate()` chỉ ghi đè panel khi push WS **khớp cả symbol lẫn timeframe** đang
-  xem (`item.timeframe === swingTimeframe`) — tránh job nền (vd M5) đè nhầm lên panel khi
-  đang xem khung khác (vd H1). `wsDefaultTimeframe` học khung job nền đang phát từ message
-  WS đầu tiên nhận được.
-- `manageSwingFallback()`: khung đang xem KHÁC khung WS đang phát → WS vô dụng cho
-  trường hợp này → tự poll REST mỗi 30s bù vào (gọi lại sau mỗi `loadSwingPanel`/
-  `applySwingUpdate` để bật/tắt đúng lúc). Khung đang xem TRÙNG khung WS → tắt poll, để
-  WS lo (đây là trường hợp phổ biến nhất vì mặc định chart mở M5, trùng `SWING_TIMEFRAME`
-  mặc định).
-- Cache theo symbol (`swingCache`) giờ chỉ dùng để hiện tức thì khi chuyển symbol nếu
-  `cache.timeframe === swingTimeframe` — khác khung thì bỏ qua cache, gọi REST lại
-  (`loadChart()`), tránh hiện nhầm số liệu sai khung ngay sau khi chuyển symbol.
+**Chỉ chạy khi bấm nút — không job nền, không WebSocket (đổi 17/09/2026):** bản trước có
+`SwingScheduler` quét nền mỗi vài phút cho mọi symbol rồi đẩy realtime qua
+`SwingSocketHub` (WebSocket `/ws/swing`), cộng thêm poll REST 30s bù cho trường hợp khung
+đang xem khác khung job nền quét. Đã **bỏ toàn bộ** (kèm `SWING_SCHEDULER_*` trong config
+và dependency `ws`): mỗi lần quét là một loạt request tới TwelveData/OANDA cho từng symbol
+trong danh sách theo dõi — chạy nền liên tục đốt quota provider cho dữ liệu gần như không
+ai đang nhìn. Giờ panel Nhịp nhỏ ở `/chart` chỉ dò khi người dùng bấm **🔄**
+(`runSwing()` → `loadSwingPanel()`), lấy khung timeframe từ interval hiện tại của chart
+ngay lúc bấm (`getCurrentTvInterval()`). Đổi symbol hoặc đổi interval **không** tự dò lại
+— panel hiện lời nhắc bấm 🔄; không còn cache theo symbol, mỗi lần bấm là tính lại từ nến
+mới. `swingTimeframe` chỉ còn một việc: bỏ response về trễ khi người dùng đã đổi
+symbol/khung trong lúc chờ.
 
 ---
 
@@ -388,19 +366,6 @@ tổng R + `conditional` P(TPn|TP1) + `byRule` so sánh 3 luật thoát + `byCon
 tích AI).
 
 Không đụng single-flight của `runAnalysis` — không gọi AI, không ghi DB nên không tranh chấp gì.
-
-### WS /ws/swing
-
-WebSocket đẩy kết quả nhịp nhỏ realtime từ `SwingScheduler` cho mọi symbol trong danh
-sách theo dõi, thay vì client tự poll `GET /api/swing`. Xác thực bằng `API_SERVER_KEY`
-qua query string `?key=...` (không dùng header `x-api-key` như REST vì WebSocket API của
-trình duyệt không cho set header tùy ý) — chặn ngay ở bước upgrade trong
-`SwingSocketHub`, không đi qua middleware `requireApiKey` của Express. Client kết nối
-xong nhận ngay `{ type: "snapshot", items:
-[...] }` (cache RAM hiện có trong `SwingSocketHub`), sau đó mỗi lần `SwingScheduler` quét
-xong một symbol thì nhận `{ type: "swing", symbol, timeframe, actionable, latest, stats,
-signals, params, currentPrice, generatedAt }`. Dashboard (`chart.html`) dùng cho panel
-Nhịp nhỏ bên phải chart — xem `connectSwingSocket()`.
 
 ### GET /api/scheduler
 

@@ -12,8 +12,6 @@ import { config } from './config/trading';
 import { AnalysisBusyError, runAnalysis } from './services/AnalysisRunner';
 import { runSwingAnalysis } from './services/swing/SwingRunner';
 import { EXIT_RULES, EXIT_RULE_LABEL, ExitRuleName } from './services/swing/SwingSignalService';
-import { SwingScheduler } from './services/swing/SwingScheduler';
-import { SwingSocketHub } from './services/realtime/SwingSocketHub';
 import { TokenUsage } from './services/ai/transport/LlmTransport';
 import { lastRateLimitSnapshot, lastRunUsage } from './services/ai/UsageTracker';
 import { AnalysisScheduler } from './services/AnalysisScheduler';
@@ -598,7 +596,7 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 });
 
 const { port } = config.server;
-const httpServer = app.listen(port, async () => {
+app.listen(port, async () => {
   logger.info(`Dashboard running at http://localhost:${port}`);
   logger.info(`MCP endpoint: http://localhost:${port}/mcp`);
 
@@ -612,11 +610,4 @@ const httpServer = app.listen(port, async () => {
     logger.error('Đọc setting scheduler_enabled thất bại — dùng SCHEDULER_ENABLED từ .env', { error: err.message });
     scheduler.start();
   }
-
-  swingScheduler.start();
 });
-
-// Job nền dò nhịp nhỏ (không dùng AI) theo chu kỳ cho mọi symbol theo dõi, đẩy kết quả
-// realtime qua WebSocket path /ws/swing — GUI (chart.html) kết nối vào đây thay vì poll.
-const swingHub = new SwingSocketHub(httpServer, config.server.apiKey);
-const swingScheduler = SwingScheduler.fromConfig(swingHub);

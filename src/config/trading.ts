@@ -81,15 +81,6 @@ export const config = {
     staleBars: parseInt(process.env.SWING_STALE_BARS ?? '6', 10),
   },
 
-  // Job nền dò nhịp nhỏ theo chu kỳ cho MỌI symbol trong danh sách theo dõi (bảng
-  // `symbols`, đúng danh sách hiển thị trên dashboard) rồi đẩy kết quả qua WebSocket
-  // (SwingSocketHub, path /ws/swing) cho GUI cập nhật realtime thay vì client tự poll.
-  // Không dùng AI nên không tốn quota — xem SwingScheduler.ts.
-  swingScheduler: {
-    enabled: (process.env.SWING_SCHEDULER_ENABLED ?? 'true').toLowerCase() !== 'false',
-    intervalMin: parseInt(process.env.SWING_SCHEDULER_INTERVAL_MIN ?? '5', 10),
-  },
-
   marketHours: {
     open: parseInt(process.env.MARKET_HOURS_OPEN ?? '6', 10),
     close: parseInt(process.env.MARKET_HOURS_CLOSE ?? '22', 10),
