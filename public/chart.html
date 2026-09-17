@@ -247,7 +247,9 @@
       background: #f3f4f6;
       padding: 3px 9px;
       border-radius: 6px;
+      transition: background .2s, color .2s;
     }
+    .live-clock.offline { background: #fee2e2; color: var(--sell-accent); }
     .swing-body {
       overflow-y: auto;
       flex: 1;
@@ -502,6 +504,9 @@ const CRYPTO_BASES = ['BTC','ETH','BNB','SOL','XRP','ADA','DOGE','LTC','AVAX','D
 let symbols = [];
 let activeSymbol = null;
 let tvWidget = null;
+// Bản nhịp nhỏ mới nhất từng symbol, nhận qua WebSocket từ SwingScheduler (job nền quét
+// mỗi vài phút) — khoá theo symbol để chuyển qua lại không phải chờ gọi lại REST.
+const swingCache = {};
 // Interval TradingView đang hiển thị (vd '5', '15', '60', 'D') — nhịp nhỏ dùng đúng khung
 // này thay vì SWING_TIMEFRAME cố định trong .env. Nhớ lại giữa các lần đổi symbol/reload.
 let currentInterval = localStorage.getItem('chartInterval') || '5';
@@ -600,7 +605,13 @@ function loadChart(symbol) {
     el.classList.toggle('active', el.dataset.symbol === symbol);
   });
   document.getElementById('swingSymbol').textContent = symbol;
-  loadSwingPanel(true); // symbol mới → dò nhịp lại ngay
+  // Đã có dữ liệu từ WS (job nền) → hiện ngay, khỏi chờ. Chưa có (symbol mới thêm,
+  // job nền chưa kịp quét tới) → fallback gọi REST một lần.
+  if (swingCache[symbol]) {
+    document.getElementById('swingBody').innerHTML = renderSwing(swingCache[symbol]);
+  } else {
+    loadSwingPanel(true);
+  }
 }
 
 function renderList() {
@@ -811,6 +822,50 @@ function tickClock() {
   const el = document.getElementById('liveClock');
   if (!el) return;
   el.textContent = new Date().toLocaleTimeString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour12: false });
+}
+
+// ── WebSocket: nhận nhịp nhỏ realtime từ job nền (SwingScheduler, server đẩy mỗi
+// SWING_SCHEDULER_INTERVAL_MIN phút cho mọi symbol theo dõi) thay vì client tự poll. ──
+let swingSocket = null;
+let swingReconnectTimer = null;
+
+function setLiveIndicator(online) {
+  const el = document.getElementById('liveClock');
+  if (el) el.classList.toggle('offline', !online);
+}
+
+function applySwingUpdate(item) {
+  swingCache[item.symbol] = item;
+  if (item.symbol === activeSymbol) {
+    document.getElementById('swingBody').innerHTML = renderSwing(item);
+  }
+}
+
+function connectSwingSocket() {
+  clearTimeout(swingReconnectTimer);
+  const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+  const key = getApiKey();
+  const url = proto + location.host + '/ws/swing' + (key ? '?key=' + encodeURIComponent(key) : '');
+  swingSocket = new WebSocket(url);
+
+  swingSocket.onopen = () => setLiveIndicator(true);
+
+  swingSocket.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch { return; }
+    if (msg.type === 'snapshot') {
+      (msg.items || []).forEach(applySwingUpdate);
+    } else if (msg.type === 'swing') {
+      applySwingUpdate(msg);
+    }
+  };
+
+  // Server restart / mất mạng → thử lại sau vài giây, không cần người dùng reload trang.
+  swingSocket.onclose = () => {
+    setLiveIndicator(false);
+    swingReconnectTimer = setTimeout(connectSwingSocket, 5_000);
+  };
+  swingSocket.onerror = () => swingSocket.close();
 }
 
 function renderSwing(data) {
@@ -1117,9 +1172,9 @@ async function toggleScheduler() {
 loadSymbols();
 loadSchedulerStatus();
 tickClock();
+connectSwingSocket();
 setInterval(loadSchedulerStatus, 60_000);
 setInterval(tickClock, 1_000);
-setInterval(() => loadSwingPanel(false), 30_000); // nhịp nhỏ không tốn quota, tự làm mới nền
 </script>
 </body>
 </html>

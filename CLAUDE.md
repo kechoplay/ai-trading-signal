@@ -64,7 +64,10 @@ D:/ai-trading-signal/
         │   └── OandaProvider.ts       ← provider thay thế
         ├── swing/
         │   ├── SwingSignalService.ts  ← engine zigzag pivot (nhịp nhỏ, KHÔNG dùng AI)
-        │   └── SwingRunner.ts         ← fetch nến + format báo cáo + Telegram (tùy chọn)
+        │   ├── SwingRunner.ts         ← fetch nến + format báo cáo + Telegram (tùy chọn)
+        │   └── SwingScheduler.ts      ← job nền quét nhịp nhỏ mỗi N phút cho mọi symbol theo dõi
+        ├── realtime/
+        │   └── SwingSocketHub.ts      ← WebSocket server (/ws/swing) đẩy kết quả SwingScheduler cho GUI
         └── telegram/
             └── TelegramNotifier.ts   ← format + gửi tín hiệu lên Telegram
 ```
@@ -297,10 +300,24 @@ Kết quả **KHÔNG ghi `trading_signals`**: đây là số liệu tính lại 
 lưu vào đó sẽ trộn với tín hiệu AI trên dashboard và làm hỏng carry-forward
 (`SignalOrchestrator.loadPendingSetup` đọc bản ghi gần nhất theo instrument).
 
-Ba đường gọi: `GET /api/swing`, nút **🔁 Nhịp nhỏ** trên dashboard, `npm run swing`.
-KHÔNG có scheduler nào chạy lớp này — mỗi lần gọi là fetch nến mới rồi tính lại từ đầu,
-không giữ state, không ghi DB. Tham số chỉnh trong `.env` (`SWING_*`) — `SWING_MIN_LEG_ATR`
-là núm chính; `?rule=` (và `--rule=` ở CLI) đổi luật thoát cho riêng một lần gọi.
+Ba đường gọi thủ công: `GET /api/swing`, nút **🔄** trong panel Nhịp nhỏ ở `/chart`,
+`npm run swing`. Mỗi lần gọi là fetch nến mới rồi tính lại từ đầu, không giữ state, không
+ghi DB. Tham số chỉnh trong `.env` (`SWING_*`) — `SWING_MIN_LEG_ATR` là núm chính;
+`?rule=` (và `--rule=` ở CLI) đổi luật thoát cho riêng một lần gọi.
+
+**Job nền + realtime qua WebSocket (thêm 17/09/2026):** `SwingScheduler` (bật mặc định,
+`SWING_SCHEDULER_ENABLED`, chu kỳ `SWING_SCHEDULER_INTERVAL_MIN` phút, mặc định 5) tự
+quét nhịp nhỏ cho **mọi symbol trong bảng `symbols`** (đúng danh sách hiển thị trên
+dashboard, đọc lại từ DB ở mỗi tick nên tự theo kịp khi thêm/xóa coin) rồi đẩy kết quả
+qua `SwingSocketHub` (WebSocket, path `/ws/swing`, gắn vào cùng HTTP server với Express
+trong `server.ts`). Dùng `config.swing.timeframe` (`SWING_TIMEFRAME`, mặc định M5) cho
+mọi symbol — không biết khung TradingView mà từng client đang xem, nên panel GUI luôn
+ghi rõ timeframe của số liệu đang hiển thị để không nhầm với khung đang xem trên chart.
+Vẫn KHÔNG dùng AI (không tốn quota) và KHÔNG ghi `trading_signals` — hub chỉ giữ bản mới
+nhất từng symbol trong RAM (không DB) để client vừa kết nối có dữ liệu ngay, không phải
+chờ tick kế tiếp. Client mất kết nối tự thử lại sau 5s (`chart.html`, `connectSwingSocket()`).
+Nghỉ `SYMBOL_GAP_MS` (400ms) giữa các symbol trong cùng tick để tránh dồn request vào
+TwelveData/OANDA khi danh sách theo dõi dài — danh sách càng dài, một tick càng lâu.
 
 ---
 
@@ -353,6 +370,19 @@ tổng R + `conditional` P(TPn|TP1) + `byRule` so sánh 3 luật thoát + `byCon
 tích AI).
 
 Không đụng single-flight của `runAnalysis` — không gọi AI, không ghi DB nên không tranh chấp gì.
+
+### WS /ws/swing
+
+WebSocket đẩy kết quả nhịp nhỏ realtime từ `SwingScheduler` cho mọi symbol trong danh
+sách theo dõi, thay vì client tự poll `GET /api/swing`. Xác thực bằng `API_SERVER_KEY`
+qua query string `?key=...` (không dùng header `x-api-key` như REST vì WebSocket API của
+trình duyệt không cho set header tùy ý) — chặn ngay ở bước upgrade trong
+`SwingSocketHub`, không đi qua middleware `requireApiKey` của Express. Client kết nối
+xong nhận ngay `{ type: "snapshot", items:
+[...] }` (cache RAM hiện có trong `SwingSocketHub`), sau đó mỗi lần `SwingScheduler` quét
+xong một symbol thì nhận `{ type: "swing", symbol, timeframe, actionable, latest, stats,
+signals, params, currentPrice, generatedAt }`. Dashboard (`chart.html`) dùng cho panel
+Nhịp nhỏ bên phải chart — xem `connectSwingSocket()`.
 
 ### GET /api/scheduler
 
