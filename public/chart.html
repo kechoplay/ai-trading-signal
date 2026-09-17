@@ -46,8 +46,6 @@
 
     .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
-    /* Nút mở danh sách symbol — chỉ hiện trên mobile */
-    .menu-btn { display: none; }
     .nav-btn {
       background: var(--card);
       border: 1px solid var(--border);
@@ -101,16 +99,122 @@
     .toast.error { background: #b91c1c; }
     .toast.success { background: #15803d; }
 
-    /* ── Layout: chart left, symbols right ── */
+    /* ── Thanh symbol ngang, cuộn được, nằm trên chart ── */
+    .symbols-bar-wrap {
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      position: relative;
+    }
+    .symbols-bar-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      padding: 10px 16px 8px;
+    }
+    .symbols-bar-title {
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: .3px;
+      text-transform: uppercase;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+    .symbols-bar-controls { display: flex; align-items: center; gap: 8px; }
+    .symbols-bar-controls input {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 12px;
+      outline: none;
+      color: var(--text);
+      width: 160px;
+    }
+    .symbols-bar-controls input:focus { border-color: #6366f1; }
+
+    .symbols-bar {
+      list-style: none;
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding: 0 16px 12px;
+    }
+    .symbols-bar::-webkit-scrollbar { height: 6px; }
+    .symbols-bar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    .symbol-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+      padding: 7px 8px 7px 12px;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      cursor: pointer;
+      transition: background .12s, border-color .12s;
+      white-space: nowrap;
+    }
+    .symbol-pill:hover { background: #f9fafb; }
+    .symbol-pill.active { background: #eef2ff; border-color: #6366f1; }
+    .symbol-star { font-size: 12px; flex-shrink: 0; }
+    .symbol-code { font-size: 13px; font-weight: 700; }
+    .symbol-tag {
+      font-size: 9px;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 10px;
+      flex-shrink: 0;
+      text-transform: uppercase;
+      letter-spacing: .3px;
+    }
+    .symbol-tag.crypto { background: #fef3c7; color: #b45309; }
+    .symbol-tag.fx { background: #dbeafe; color: #1d4ed8; }
+
+    .symbol-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+    .symbol-del {
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1;
+      width: 22px; height: 22px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background .12s, color .12s;
+    }
+    .symbol-del:hover { background: #fee2e2; color: var(--sell-accent); }
+
+    .symbol-signals {
+      border: none;
+      background: transparent;
+      font-size: 13px;
+      line-height: 1;
+      width: 22px; height: 22px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background .12s;
+    }
+    .symbol-signals:hover { background: #eef2ff; }
+
+    /* ── Layout: chart trái, nhịp nhỏ phải ── */
     .layout {
       flex: 1;
       display: grid;
-      grid-template-columns: 1fr 320px;
+      grid-template-columns: 1fr 340px;
       gap: 16px;
       padding: 16px;
       min-height: 0;
     }
-    .chart-card, .symbols-card {
+    .chart-card, .swing-card {
       background: var(--card);
       border: 1px solid var(--border);
       border-radius: var(--radius);
@@ -124,157 +228,49 @@
     .chart-card { padding: 0; }
     #tv_chart { flex: 1; min-height: 0; }
 
-    .symbols-card { min-height: 0; }
-
-    /* Lớp phủ tối khi mở drawer trên mobile */
-    .drawer-overlay {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,.45);
-      z-index: 40;
-      opacity: 0;
-      transition: opacity .25s;
-    }
-    .drawer-overlay.show { opacity: 1; }
-    .drawer-close { display: none; }
-
-    /* ── Mobile: chart chiếm toàn màn, symbol list thành drawer trượt ── */
-    @media (max-width: 820px) {
-      .page-header { padding: 10px 14px; gap: 8px; }
-      .page-title { font-size: 16px; }
-      .page-title span { display: block; margin-left: 0; margin-top: 2px; }
-      .nav-btn { padding: 7px 11px; font-size: 12px; }
-
-      .menu-btn { display: inline-flex; align-items: center; gap: 5px; }
-
-      .layout {
-        grid-template-columns: 1fr;
-        gap: 0;
-        padding: 10px;
-      }
-
-      .symbols-card {
-        position: fixed;
-        top: 0; right: 0;
-        height: 100vh; height: 100dvh;
-        width: min(86vw, 360px);
-        z-index: 50;
-        border-radius: 0;
-        transform: translateX(100%);
-        transition: transform .28s ease;
-        box-shadow: -8px 0 24px rgba(0,0,0,.18);
-      }
-      .symbols-card.open { transform: translateX(0); }
-      .drawer-overlay.show { display: block; }
-
-      .drawer-close {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 28px; height: 28px;
-        border: none;
-        background: transparent;
-        font-size: 20px;
-        line-height: 1;
-        color: var(--muted);
-        cursor: pointer;
-      }
-    }
-    .symbols-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 14px 16px 12px;
-      border-bottom: 1px solid var(--border);
-      font-size: 13px;
-      font-weight: 600;
-      letter-spacing: .3px;
-      text-transform: uppercase;
-      color: var(--muted);
-      flex-shrink: 0;
-    }
-    .symbols-search {
-      padding: 10px 12px;
-      border-bottom: 1px solid var(--border);
-      flex-shrink: 0;
-    }
-    .symbols-search input {
-      width: 100%;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 8px 12px;
-      font-size: 13px;
-      outline: none;
-      color: var(--text);
-    }
-    .symbols-search input:focus { border-color: #6366f1; }
-
-    .symbols-list {
-      list-style: none;
-      overflow-y: auto;
-      flex: 1;
-      min-height: 0;
-    }
-    .symbol-item {
+    .swing-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 8px;
       padding: 12px 16px;
       border-bottom: 1px solid var(--border);
-      cursor: pointer;
-      transition: background .12s;
-    }
-    .symbol-item:hover { background: #f9fafb; }
-    .symbol-item.active { background: #eef2ff; box-shadow: inset 3px 0 0 #6366f1; }
-    .symbol-meta { min-width: 0; }
-    .symbol-code { font-size: 14px; font-weight: 700; }
-    .symbol-name { font-size: 12px; color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .symbol-star { font-size: 13px; flex-shrink: 0; }
-    .symbol-tag {
-      font-size: 10px;
+      font-size: 13px;
       font-weight: 700;
-      padding: 2px 7px;
-      border-radius: 10px;
       flex-shrink: 0;
-      text-transform: uppercase;
-      letter-spacing: .3px;
     }
-    .symbol-tag.crypto { background: #fef3c7; color: #b45309; }
-    .symbol-tag.fx { background: #dbeafe; color: #1d4ed8; }
-
-    .symbol-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-    .symbol-del {
-      border: none;
-      background: transparent;
-      color: var(--muted);
-      font-size: 18px;
-      line-height: 1;
-      width: 26px; height: 26px;
+    .live-clock {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+      background: #f3f4f6;
+      padding: 3px 9px;
       border-radius: 6px;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      transition: background .12s, color .12s;
     }
-    .symbol-del:hover { background: #fee2e2; color: var(--sell-accent); }
+    .swing-body {
+      overflow-y: auto;
+      flex: 1;
+      min-height: 0;
+      padding: 12px 14px;
+    }
 
-    .symbol-signals {
-      border: none;
-      background: transparent;
-      font-size: 14px;
-      line-height: 1;
-      width: 26px; height: 26px;
-      border-radius: 6px;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      transition: background .12s;
+    /* ── Mobile: xếp chồng, nhịp nhỏ xuống dưới chart ── */
+    @media (max-width: 820px) {
+      .page-header { padding: 10px 14px; gap: 8px; }
+      .page-title { font-size: 16px; }
+      .page-title span { display: block; margin-left: 0; margin-top: 2px; }
+      .nav-btn { padding: 7px 11px; font-size: 12px; }
+
+      .symbols-bar-controls input { width: 120px; }
+
+      .layout {
+        grid-template-columns: 1fr;
+        grid-template-rows: minmax(260px, 1fr) minmax(220px, 40vh);
+        gap: 10px;
+        padding: 10px;
+      }
     }
-    .symbol-signals:hover { background: #eef2ff; }
 
     .empty { text-align: center; padding: 40px 20px; color: var(--muted); font-size: 13px; }
 
@@ -436,18 +432,14 @@
     <span id="currentSymbol"></span>
   </div>
   <div class="header-actions">
-    <button class="nav-btn menu-btn" onclick="openDrawer()">☰ Symbol</button>
     <button id="schedulerToggleBtn" class="nav-btn" onclick="toggleScheduler()" disabled>⏱ …</button>
     <button id="analyzeBtn" class="nav-btn analyze-btn" onclick="runAnalyze()">⚡ Phân tích</button>
-    <button id="swingBtn" class="nav-btn" onclick="runSwing()">🔁 Nhịp nhỏ</button>
     <a href="/" class="nav-btn">🏠 Tín hiệu</a>
     <a href="/docs" target="_blank" class="nav-btn">📖 Docs</a>
   </div>
 </div>
 
 <div id="toast" class="toast"></div>
-
-<div id="drawerOverlay" class="drawer-overlay" onclick="closeDrawer()"></div>
 
 <div id="sigOverlay" class="sig-overlay" onclick="if(event.target===this) closeSignals()">
   <div class="sig-modal">
@@ -461,33 +453,43 @@
   </div>
 </div>
 
+<div class="symbols-bar-wrap">
+  <div class="symbols-bar-top">
+    <span class="symbols-bar-title">Danh sách Symbol <span id="symbolCount" style="font-weight:400"></span></span>
+    <div class="symbols-bar-controls">
+      <input id="searchInput" type="text" placeholder="Lọc symbol..." oninput="renderList()" />
+      <button class="add-btn" id="addToggle" onclick="toggleAddPanel()">+ Thêm coin</button>
+    </div>
+  </div>
+
+  <div class="add-panel" id="addPanel">
+    <div class="add-input-row">
+      <input id="tvSearchInput" type="text" placeholder="Gõ tên coin từ TradingView (vd: sol, link, doge)…" autocomplete="off" oninput="onTvSearchInput()" />
+    </div>
+    <ul class="add-results" id="addResults"></ul>
+  </div>
+
+  <ul class="symbols-bar" id="symbolsList">
+    <li class="empty">Đang tải…</li>
+  </ul>
+</div>
+
 <div class="layout">
   <div class="chart-card">
     <div id="tv_chart"></div>
   </div>
 
-  <div class="symbols-card" id="symbolsCard">
-    <div class="symbols-header">
-      <span>Danh sách Symbol <span id="symbolCount" style="font-weight:400"></span></span>
+  <div class="swing-card">
+    <div class="swing-header">
+      <span>🔁 Nhịp nhỏ <span id="swingSymbol" style="font-weight:400;color:var(--muted)"></span></span>
       <div style="display:flex;align-items:center;gap:8px">
-        <button class="add-btn" id="addToggle" onclick="toggleAddPanel()">+ Thêm coin</button>
-        <button class="drawer-close" onclick="closeDrawer()" aria-label="Đóng">×</button>
+        <span id="liveClock" class="live-clock">--:--:--</span>
+        <button class="nav-btn" id="swingBtn" onclick="runSwing()" title="Dò lại nhịp nhỏ" style="padding:5px 9px;font-size:12px">🔄</button>
       </div>
     </div>
-
-    <div class="add-panel" id="addPanel">
-      <div class="add-input-row">
-        <input id="tvSearchInput" type="text" placeholder="Gõ tên coin từ TradingView (vd: sol, link, doge)…" autocomplete="off" oninput="onTvSearchInput()" />
-      </div>
-      <ul class="add-results" id="addResults"></ul>
+    <div class="swing-body" id="swingBody">
+      <div class="empty">Chọn một symbol để xem nhịp nhỏ.</div>
     </div>
-
-    <div class="symbols-search">
-      <input id="searchInput" type="text" placeholder="Lọc danh sách hiện có..." oninput="renderList()" />
-    </div>
-    <ul class="symbols-list" id="symbolsList">
-      <li class="empty">Đang tải…</li>
-    </ul>
   </div>
 </div>
 
@@ -570,20 +572,9 @@ function tvSymbol(symbol) {
   return `OANDA:${base}${quote}`;
 }
 
-// ── Drawer danh sách symbol (mobile) ──
-function openDrawer() {
-  document.getElementById('symbolsCard').classList.add('open');
-  document.getElementById('drawerOverlay').classList.add('show');
-}
-function closeDrawer() {
-  document.getElementById('symbolsCard').classList.remove('open');
-  document.getElementById('drawerOverlay').classList.remove('show');
-}
-
 function loadChart(symbol) {
   activeSymbol = symbol;
   localStorage.setItem('chartSymbol', symbol); // nhớ symbol đang xem
-  closeDrawer(); // chọn xong thì đóng drawer để xem chart toàn màn
   document.getElementById('currentSymbol').textContent = symbol;
   document.getElementById('tv_chart').innerHTML = '';
   tvWidget = new TradingView.widget({
@@ -605,9 +596,11 @@ function loadChart(symbol) {
   // getSymbolInfo() là API còn dùng được để đọc interval hiện tại (xem getCurrentTvInterval()).
   getCurrentTvInterval(); // cập nhật currentInterval ngay khi chart mở xong (fire-and-forget)
   // highlight active
-  document.querySelectorAll('.symbol-item').forEach(el => {
+  document.querySelectorAll('.symbol-pill').forEach(el => {
     el.classList.toggle('active', el.dataset.symbol === symbol);
   });
+  document.getElementById('swingSymbol').textContent = symbol;
+  loadSwingPanel(true); // symbol mới → dò nhịp lại ngay
 }
 
 function renderList() {
@@ -631,18 +624,15 @@ function renderList() {
     const star = s.favorite ? '<span class="symbol-star">⭐</span>' : '';
     const active = s.symbol === activeSymbol ? ' active' : '';
     return `
-    <li class="symbol-item${active}" data-symbol="${esc(s.symbol)}" onclick="loadChart('${esc(s.symbol)}')">
-      <div class="symbol-meta">
-        <div class="symbol-code">${star}${esc(s.symbol)}</div>
-        <div class="symbol-name">${esc(s.name)}</div>
-      </div>
-      <div class="symbol-actions">
-        <span class="symbol-tag ${tagCls}">${tagLabel}</span>
+    <li class="symbol-pill${active}" data-symbol="${esc(s.symbol)}" title="${esc(s.name)}" onclick="loadChart('${esc(s.symbol)}')">
+      ${star}<span class="symbol-code">${esc(s.symbol)}</span>
+      <span class="symbol-tag ${tagCls}">${tagLabel}</span>
+      <span class="symbol-actions">
         <button class="symbol-signals" title="Xem tín hiệu từ Claude"
           onclick="event.stopPropagation(); showSignals('${esc(s.symbol)}')">📋</button>
         <button class="symbol-del" title="Xóa khỏi danh sách"
           onclick="event.stopPropagation(); deleteSymbol('${esc(s.symbol)}')">×</button>
-      </div>
+      </span>
     </li>`;
   }).join('');
 }
@@ -782,20 +772,12 @@ const swingResult = s => {
   return `✅ ${s.status} (${swingR(s.resultR)})`;
 };
 
-async function runSwing() {
-  const btn = document.getElementById('swingBtn');
-  if (btn.disabled) return;
-  if (!activeSymbol) { showToast('Chưa chọn symbol nào', 'error'); return; }
-
-  const original = btn.innerHTML;
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span>Đang dò...';
-
-  const body = document.getElementById('sigBody');
-  document.getElementById('sigTitle').textContent = '🔁 Nhịp nhỏ';
-  document.getElementById('sigSymbol').textContent = activeSymbol;
-  body.innerHTML = '<div class="empty">Đang dò nhịp…</div>';
-  document.getElementById('sigOverlay').classList.add('show');
+// Nạp/làm mới panel nhịp nhỏ bên phải chart. showSpinner=true khi đổi symbol/bấm tay
+// (người dùng đang chờ), false khi tự refresh nền (không nháy loading gây khó chịu).
+async function loadSwingPanel(showSpinner = false) {
+  const body = document.getElementById('swingBody');
+  if (!activeSymbol) { body.innerHTML = '<div class="empty">Chọn một symbol để xem nhịp nhỏ.</div>'; return; }
+  if (showSpinner) body.innerHTML = '<div class="empty">Đang dò nhịp…</div>';
 
   try {
     const liveInterval = await getCurrentTvInterval();
@@ -803,14 +785,32 @@ async function runSwing() {
     const res = await apiFetch('/api/swing?symbol=' + encodeURIComponent(activeSymbol) + '&timeframe=' + tf);
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Dò nhịp thất bại');
+    // Symbol có thể đã đổi trong lúc chờ response → bỏ kết quả trễ, tránh đè nhầm panel.
+    if (data.symbol && data.symbol !== activeSymbol) return;
     body.innerHTML = renderSwing(data);
   } catch (e) {
     body.innerHTML = '<div class="empty">✗ ' + esc(e.message || 'Dò nhịp thất bại') + '</div>';
-    showToast('✗ ' + (e.message || 'Dò nhịp thất bại'), 'error');
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = original;
   }
+}
+
+async function runSwing() {
+  const btn = document.getElementById('swingBtn');
+  if (btn.disabled) return;
+  if (!activeSymbol) { showToast('Chưa chọn symbol nào', 'error'); return; }
+
+  const original = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '⏳';
+  await loadSwingPanel(true);
+  btn.disabled = false;
+  btn.innerHTML = original;
+}
+
+// Đồng hồ thời gian thực (giờ VN) trong header panel nhịp nhỏ.
+function tickClock() {
+  const el = document.getElementById('liveClock');
+  if (!el) return;
+  el.textContent = new Date().toLocaleTimeString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour12: false });
 }
 
 function renderSwing(data) {
@@ -1116,7 +1116,10 @@ async function toggleScheduler() {
 
 loadSymbols();
 loadSchedulerStatus();
+tickClock();
 setInterval(loadSchedulerStatus, 60_000);
+setInterval(tickClock, 1_000);
+setInterval(() => loadSwingPanel(false), 30_000); // nhịp nhỏ không tốn quota, tự làm mới nền
 </script>
 </body>
 </html>
