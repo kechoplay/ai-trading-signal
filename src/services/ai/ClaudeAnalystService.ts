@@ -71,7 +71,7 @@ export class ClaudeAnalystService {
   async analyze(
     instrument: string,
     candlesByTimeframe: Record<string, Candle[]>,
-    _currentPrice: number,
+    currentPrice: number,
     extras?: CryptoExtras,
     pending?: PendingSetup | null,
   ): Promise<{
@@ -85,6 +85,18 @@ export class ClaudeAnalystService {
     // Tiền xử lý: code tính sẵn swing/fib/ATR/FVG/OB/liquidity/kill-zone cho mọi khung.
     // Model chỉ còn DIỄN GIẢI thay vì tự "bấm máy" → thinking ngắn lại, nhanh & chính xác hơn.
     const facts = preprocess(candlesByTimeframe);
+
+    // "Giá hiện tại" trong prompt = giá API (cùng số hiển thị Telegram/lưu DB), không phải
+    // close nến mới nhất — tránh việc phân tích và thẻ tín hiệu dựa trên hai giá khác nhau.
+    // Giá API không hợp lệ (0/NaN) → giữ close nến làm fallback.
+    const candleClose = facts.meta.currentPrice;
+    if (Number.isFinite(currentPrice) && currentPrice > 0) {
+      facts.meta.currentPrice = Math.round(currentPrice * 100) / 100;
+    } else {
+      logger.warn('[Claude] Giá API không hợp lệ — dùng close nến mới nhất', { instrument, currentPrice, candleClose });
+    }
+    logger.info('[Claude] Current price', { instrument, apiPrice: currentPrice, candleClose });
+
     let userPrompt = this.buildUserPrompt(
       candlesByTimeframe, facts, this.tfOrderFor(instrument), this.rawCandlesFor(instrument),
       this.rawCandlesByTfFor(instrument),
