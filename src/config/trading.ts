@@ -62,6 +62,48 @@ export const config = {
     orderWindowMin: parseInt(process.env.CARRY_FORWARD_ORDER_WINDOW_MIN ?? '240', 10),
   },
 
+  // Ngưỡng của IctPreprocessor cho sweep / displacement (xem IctPreprocessor.ts).
+  ict: {
+    // Nến phá cấu trúc (hoặc nến liền trước, cùng chiều) có thân ≥ N× ATR → displacement.
+    // Không đạt mà cũng không để lại FVG → BOS/CHoCH bị gắn nhãn "không displacement".
+    displacementBodyAtr: parseFloat(process.env.ICT_DISPLACEMENT_BODY_ATR ?? '1.0'),
+    // Sau khi body close vượt mức thanh khoản, còn bao nhiêu nến để đóng cửa quay lại
+    // bên trong thì vẫn tính là SWEEP (quét rồi từ chối); quá số này → BROKEN (phá thật).
+    sweepRejectBars: parseInt(process.env.ICT_SWEEP_REJECT_BARS ?? '2', 10),
+    // Chỉ liệt kê sự kiện sweep xảy ra trong N nến (đã đóng) gần nhất của mỗi khung.
+    sweepRecentBars: parseInt(process.env.ICT_SWEEP_RECENT_BARS ?? '24', 10),
+    // Số sự kiện BOS/CHoCH gần nhất gửi vào prompt cho mỗi khung.
+    structureEvents: parseInt(process.env.ICT_STRUCTURE_EVENTS ?? '3', 10),
+  },
+
+  // SETUP WATCHER — kích hoạt phân tích AI theo SỰ KIỆN thay vì chỉ theo đồng hồ.
+  // Job nền cơ học (KHÔNG gọi AI) mỗi intervalMin phút dò chuỗi trên khung `timeframe`:
+  //   quét thanh khoản → BOS/CHoCH có displacement → giá hồi về FVG/OB do displacement tạo ra
+  // Chỉ khi chuỗi tới bước RETEST mới gọi runAnalysis (trigger 'event'). Dùng chung khung
+  // giờ/ngày/symbol với `scheduler`. Mỗi lần kích hoạt tốn quota như một lượt phân tích →
+  // chặn bằng cooldownMin + maxPerDay.
+  setupWatcher: {
+    enabled: (process.env.SETUP_WATCHER_ENABLED ?? 'true').toLowerCase() !== 'false',
+    intervalMin: parseInt(process.env.SETUP_WATCHER_INTERVAL_MIN ?? '5', 10),
+    // Lùi vài giây sau mốc để provider kịp chốt nến vừa đóng.
+    offsetSec: parseInt(process.env.SETUP_WATCHER_OFFSET_SEC ?? '10', 10),
+    timeframe: process.env.SETUP_WATCHER_TIMEFRAME ?? 'M15',
+    candles: parseInt(process.env.SETUP_WATCHER_CANDLES ?? '200', 10),
+    biasTimeframe: process.env.SETUP_WATCHER_BIAS_TIMEFRAME ?? 'H1',
+    biasCandles: parseInt(process.env.SETUP_WATCHER_BIAS_CANDLES ?? '120', 10),
+    // Bias khung lớn đổi chậm → cache để không tốn request mỗi tick.
+    biasCacheMin: parseInt(process.env.SETUP_WATCHER_BIAS_CACHE_MIN ?? '15', 10),
+    // true = hướng setup phải TRÙNG bias khung lớn (NEUTRAL cũng không kích hoạt).
+    requireBias: (process.env.SETUP_WATCHER_REQUIRE_BIAS ?? 'true').toLowerCase() !== 'false',
+    // Sweep phải nằm trong N nến gần nhất; BOS/CHoCH phải xảy ra ≤ M nến sau sweep.
+    maxSweepAgeBars: parseInt(process.env.SETUP_WATCHER_MAX_SWEEP_AGE_BARS ?? '24', 10),
+    maxBarsSweepToBreak: parseInt(process.env.SETUP_WATCHER_MAX_BARS_SWEEP_TO_BREAK ?? '12', 10),
+    // Giá cách mép gần của vùng retest ≤ N× ATR (khung watcher) là coi như đang retest.
+    retestProximityAtr: parseFloat(process.env.SETUP_WATCHER_RETEST_PROXIMITY_ATR ?? '0.3'),
+    cooldownMin: parseInt(process.env.SETUP_WATCHER_COOLDOWN_MIN ?? '30', 10),
+    maxPerDay: parseInt(process.env.SETUP_WATCHER_MAX_PER_DAY ?? '8', 10),
+  },
+
   // SWING SCALP — dò điểm BUY/SELL theo từng nhịp nhỏ bằng zigzag pivot (KHÔNG dùng AI,
   // không tiêu quota). Xem src/services/swing/SwingSignalService.ts.
   // minLegAtr là núm chỉnh chính: cao → ít tín hiệu, chỉ nhịp lớn; thấp → bắt nhịp nhỏ

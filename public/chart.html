@@ -424,6 +424,40 @@
     }
     .add-result-item .ar-add:disabled { background: #cbd5e1; cursor: default; }
     .add-hint { padding: 8px 14px; font-size: 12px; color: var(--muted); }
+
+    /* ── Theo dõi SetupWatcher (chuỗi sweep → CHoCH → retest) ── */
+    .watch-btn.st-retest { background: #dcfce7; border-color: #22c55e; color: #15803d; font-weight: 600; }
+    .watch-btn.st-confirmed { background: #fef3c7; border-color: #f59e0b; color: #b45309; }
+    .watch-btn.st-off { opacity: .6; }
+    .w-alert { border-radius: 8px; padding: 8px 12px; font-size: 12px; margin-bottom: 12px; line-height: 1.5; }
+    .w-alert.err { background: #fee2e2; color: #b91c1c; }
+    .w-alert.info { background: #eef2ff; color: #3730a3; }
+    .w-sym { border: 1px solid var(--border); border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
+    .w-sym-head {
+      display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px;
+      padding: 10px 14px; background: #f9fafb; font-size: 12px; color: var(--muted);
+    }
+    .w-sym-head b { color: var(--text); font-size: 14px; }
+    .w-sym-head .w-upd { margin-left: auto; }
+    .w-dir { padding: 12px 14px; border-top: 1px solid var(--border); font-size: 13px; }
+    .w-dir-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-bottom: 8px; }
+    .w-dir-name { font-weight: 700; min-width: 42px; }
+    .w-dir-name.buy { color: #15803d; }
+    .w-dir-name.sell { color: #b91c1c; }
+    .w-steps { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+    .w-step {
+      font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 12px;
+      background: #f3f4f6; color: #9ca3af; white-space: nowrap;
+    }
+    .w-step.done { background: #dcfce7; color: #15803d; }
+    .w-step.now { background: #fef3c7; color: #b45309; }
+    .w-arrow { color: #d1d5db; font-size: 11px; }
+    .w-tag { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 10px; text-transform: uppercase; letter-spacing: .3px; }
+    .w-tag.bias-ok { background: #dcfce7; color: #15803d; }
+    .w-tag.bias-no { background: #fee2e2; color: #b91c1c; }
+    .w-note { color: var(--text); margin-bottom: 6px; }
+    .w-facts { list-style: none; font-size: 12px; color: var(--muted); line-height: 1.7; }
+    .w-facts b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
   </style>
 </head>
 <body>
@@ -435,6 +469,7 @@
   </div>
   <div class="header-actions">
     <button id="schedulerToggleBtn" class="nav-btn" onclick="toggleScheduler()" disabled>⏱ …</button>
+    <button id="watcherBtn" class="nav-btn watch-btn" onclick="openWatcher()" title="Theo dõi chuỗi sweep → CHoCH → retest">🎯 Watcher</button>
     <button id="analyzeBtn" class="nav-btn analyze-btn" onclick="runAnalyze()">⚡ Phân tích</button>
     <a href="/" class="nav-btn">🏠 Tín hiệu</a>
     <a href="/docs" target="_blank" class="nav-btn">📖 Docs</a>
@@ -450,6 +485,21 @@
       <button class="sig-modal-close" onclick="closeSignals()" aria-label="Đóng">×</button>
     </div>
     <div class="sig-modal-body" id="sigBody">
+      <div class="empty">Đang tải…</div>
+    </div>
+  </div>
+</div>
+
+<div id="wOverlay" class="sig-overlay" onclick="if(event.target===this) closeWatcher()">
+  <div class="sig-modal">
+    <div class="sig-modal-header">
+      <div class="sig-modal-title">🎯 Theo dõi Setup Watcher <span>sweep → BOS/CHoCH → retest</span></div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <button class="nav-btn" onclick="loadWatcher(true)" title="Tải lại" style="padding:5px 9px;font-size:12px">🔄</button>
+        <button class="sig-modal-close" onclick="closeWatcher()" aria-label="Đóng">×</button>
+      </div>
+    </div>
+    <div class="sig-modal-body" id="wBody">
       <div class="empty">Đang tải…</div>
     </div>
   </div>
@@ -1209,11 +1259,175 @@ async function toggleScheduler() {
   }
 }
 
+// ── Theo dõi SetupWatcher: chuỗi sweep → BOS/CHoCH → retest của từng symbol ──
+// Đọc GET /api/setup-watcher. Nút trên header tóm tắt bước xa nhất đang có; modal hiện
+// chi tiết từng hướng BUY/SELL. Watcher dò cơ học mỗi vài phút, KHÔNG gọi AI — chỉ khi
+// một hướng tới RETEST (và trùng bias) mới kích hoạt phân tích Claude.
+
+const W_STEPS = [
+  { stage: 'SWEPT', label: '① Quét thanh khoản' },
+  { stage: 'CONFIRMED', label: '② BOS/CHoCH + displacement' },
+  { stage: 'RETEST', label: '③ Hồi về FVG/OB' },
+];
+const W_RANK = { NONE: 0, SWEPT: 1, CONFIRMED: 2, RETEST: 3 };
+let watcherTimer = null;
+
+const vnTime = iso => iso
+  ? new Date(iso).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour12: false })
+  : '—';
+
+function wStepper(stage) {
+  const rank = W_RANK[stage] ?? 0;
+  return '<div class="w-steps">' + W_STEPS.map((s, i) => {
+    const r = i + 1;
+    // Bước đã qua = xanh; bước vừa đạt (bước xa nhất) = vàng, riêng RETEST là đích → xanh.
+    const cls = r < rank || (r === rank && stage === 'RETEST') ? 'done' : r === rank ? 'now' : '';
+    return (i ? '<span class="w-arrow">→</span>' : '') + `<span class="w-step ${cls}">${s.label}</span>`;
+  }).join('') + '</div>';
+}
+
+function wDirBlock(s) {
+  const facts = [];
+  if (s.sweep) {
+    facts.push(`Quét ${s.sweep.side === 'SELLSIDE' ? 'đáy' : 'đỉnh'} ${s.sweep.levelType === 'EQUAL' ? 'equal level' : 'swing'} `
+      + `<b>${swingNum(s.sweep.level)}</b> · râu tới <b>${swingNum(s.sweep.extreme)}</b> · ${esc(swingTime(s.sweep.time))}`);
+  }
+  if (s.structure) {
+    const st = s.structure;
+    facts.push(`${esc(st.kind)} ${esc(st.direction)} phá <b>${swingNum(st.level)}</b> · thân <b>${st.bodyAtr}×</b> ATR`
+      + `${st.displacement ? '' : ' (yếu)'} · ${esc(swingTime(st.time))}`);
+  }
+  if (s.zone) {
+    const z = s.zone;
+    const zs = z.invalidated ? 'hỏng' : z.mitigated ? 'đã chạm' : 'fresh';
+    facts.push(`Vùng retest ${esc(z.source)} <b>${swingNum(z.bottom)} – ${swingNum(z.top)}</b> · ${zs}`);
+  }
+  const buy = s.direction === 'BUY';
+  const biasTag = s.biasOk
+    ? '<span class="w-tag bias-ok">trùng bias</span>'
+    : '<span class="w-tag bias-no">ngược / chưa rõ bias</span>';
+  return `<div class="w-dir">
+    <div class="w-dir-top">
+      <span class="w-dir-name ${buy ? 'buy' : 'sell'}">${buy ? '🟢 BUY' : '🔴 SELL'}</span>
+      ${wStepper(s.stage)}
+      ${s.stage !== 'NONE' ? biasTag : ''}
+    </div>
+    <div class="w-note">${esc(s.note || '—')}</div>
+    ${facts.length ? '<ul class="w-facts">' + facts.map(f => `<li>${f}</li>`).join('') + '</ul>' : ''}
+  </div>`;
+}
+
+function renderWatcherBtn(st) {
+  const btn = document.getElementById('watcherBtn');
+  btn.classList.remove('st-retest', 'st-confirmed', 'st-off');
+  if (!st) { btn.textContent = '🎯 Watcher: lỗi'; btn.title = 'Không đọc được trạng thái watcher'; return; }
+  if (!st.enabled) { btn.textContent = '🎯 Watcher: TẮT'; btn.classList.add('st-off'); btn.title = 'SETUP_WATCHER_ENABLED=false'; return; }
+
+  // Bước xa nhất trong mọi symbol/hướng → màu nút.
+  let best = 0;
+  for (const snap of Object.values(st.symbols || {})) {
+    for (const s of snap.setups || []) best = Math.max(best, W_RANK[s.stage] ?? 0);
+  }
+  if (best >= 3) btn.classList.add('st-retest');
+  else if (best >= 2) btn.classList.add('st-confirmed');
+  const label = best >= 3 ? 'RETEST' : best >= 2 ? 'chờ retest' : best >= 1 ? 'đã quét' : 'chờ';
+  btn.textContent = `🎯 Watcher: ${label} · ${st.triggers_today}/${st.max_per_day}`;
+  btn.title = `Dò mỗi ${st.interval_min}p trên ${st.timeframe}, bias ${st.bias_timeframe}. `
+    + `Đã kích hoạt AI ${st.triggers_today}/${st.max_per_day} lần hôm nay. Bấm để xem chi tiết.`;
+}
+
+function renderWatcher(st) {
+  const body = document.getElementById('wBody');
+  const parts = [];
+
+  parts.push(`<div class="sig-summary">
+    <span>${st.enabled ? '🟢 <b>BẬT</b>' : '⚪ <b>TẮT</b>'}</span>
+    <span class="sep"></span>
+    <span>Khung <b>${esc(st.timeframe)}</b> · bias <b>${esc(st.bias_timeframe)}</b>${st.require_bias ? '' : ' (không bắt buộc)'}</span>
+    <span class="sep"></span>
+    <span>Kích hoạt AI hôm nay <b>${st.triggers_today}/${st.max_per_day}</b></span>
+    <span>Cooldown <b>${st.cooldown_min}p</b></span>
+    <span class="sep"></span>
+    <span>Tick gần nhất <b>${esc(vnTime(st.last_tick_at))}</b></span>
+    <span>Tick kế <b>${esc(vnTime(st.next_run_at))}</b></span>
+  </div>`);
+
+  if (!st.in_window_now) {
+    parts.push(`<div class="w-alert info">⏸ Ngoài khung giờ dò (${esc(st.window)}, ngày ${esc((st.weekdays || []).join(','))} — 0=CN). Số liệu bên dưới là của lần dò cuối.</div>`);
+  }
+  if (st.running) parts.push('<div class="w-alert info">⏳ Đang dò / đang chờ một lượt phân tích AI chạy xong…</div>');
+  if (st.last_trigger) {
+    const t = st.last_trigger;
+    parts.push(`<div class="w-alert info">⚡ Kích hoạt gần nhất: <b>${esc(t.symbol)}</b> lúc ${esc(vnTime(t.at))}`
+      + ` → ${t.action ? 'kết quả <b>' + esc(t.action) + '</b>' : '<b>lỗi</b> (xem log)'}</div>`);
+  }
+  if (st.last_error) parts.push(`<div class="w-alert err">✗ Lỗi gần nhất: ${esc(st.last_error)}</div>`);
+
+  const snaps = Object.entries(st.symbols || {});
+  if (!snaps.length) {
+    parts.push('<div class="empty">Chưa có lần dò nào — watcher vừa khởi động hoặc đang ngoài khung giờ.</div>');
+  }
+  for (const [symbol, snap] of snaps) {
+    const setups = (snap.setups || []).slice().sort((a, b) => a.direction.localeCompare(b.direction)); // BUY trước SELL
+    parts.push(`<div class="w-sym">
+      <div class="w-sym-head">
+        <b>${esc(symbol)}</b>
+        <span>Giá <b style="font-size:13px">${swingNum(snap.price)}</b></span>
+        <span>Bias ${esc(st.bias_timeframe)}: <b style="font-size:13px">${esc(snap.bias || '—')}</b></span>
+        <span class="w-upd">cập nhật ${esc(vnTime(snap.at))}</span>
+      </div>
+      ${setups.map(wDirBlock).join('')}
+    </div>`);
+  }
+
+  body.innerHTML = parts.join('');
+}
+
+async function fetchWatcher() {
+  const res = await fetch('/api/setup-watcher', { headers: getApiKey() ? { 'x-api-key': getApiKey() } : {} });
+  if (!res.ok) throw new Error(res.status === 401 ? 'Cần API key (401)' : 'HTTP ' + res.status);
+  return res.json();
+}
+
+async function loadWatcherStatus() {
+  try { renderWatcherBtn(await fetchWatcher()); } catch { renderWatcherBtn(null); }
+}
+
+async function loadWatcher(showSpinner) {
+  const body = document.getElementById('wBody');
+  if (showSpinner) body.innerHTML = '<div class="empty">Đang tải…</div>';
+  try {
+    // Modal dùng apiFetch để được hỏi API key khi 401 (nút header thì không hỏi).
+    const res = await apiFetch('/api/setup-watcher');
+    const st = await res.json();
+    if (!res.ok) throw new Error(st.error || 'HTTP ' + res.status);
+    renderWatcher(st);
+    renderWatcherBtn(st);
+  } catch (e) {
+    body.innerHTML = '<div class="empty">✗ ' + esc(e.message || 'Tải trạng thái watcher thất bại') + '</div>';
+  }
+}
+
+function openWatcher() {
+  document.getElementById('wOverlay').classList.add('show');
+  loadWatcher(true);
+  clearInterval(watcherTimer);
+  watcherTimer = setInterval(() => loadWatcher(false), 30_000); // modal mở → làm mới nhanh hơn
+}
+
+function closeWatcher() {
+  document.getElementById('wOverlay').classList.remove('show');
+  clearInterval(watcherTimer);
+  watcherTimer = null;
+}
+
 loadSymbols();
 loadSchedulerStatus();
+loadWatcherStatus();
 tickClock();
 connectSwingSocket();
 setInterval(loadSchedulerStatus, 60_000);
+setInterval(loadWatcherStatus, 60_000);
 setInterval(tickClock, 1_000);
 setInterval(checkSwingTimeframe, 5_000); // phát hiện đổi timeframe trên chart → nạp lại nhịp nhỏ đúng khung
 </script>

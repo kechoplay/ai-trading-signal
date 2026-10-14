@@ -9,22 +9,39 @@
  *
  * Mảng nến phải sắp xếp CŨ -> MỚI (nến mới nhất ở cuối).
  *
- * TwelveData được gọi với param timezone=MARKET_HOURS_TIMEZONE (Asia/Ho_Chi_Minh)
- * nên timestamp ĐÃ LÀ giờ VN → UTC_OFFSET = 0. Kill zone vốn cũng tính theo giờ VN.
- * Nếu sau này data trả về UTC, đổi UTC_OFFSET = 7.
+ * NẾN ĐANG CHẠY: nếu nến cuối chưa đóng (xem candleTime.isCandleForming), mọi phép tính
+ * dựa trên body close / pivot (swing, ATR, ADX, FVG, OB, BOS/CHoCH, sweep) chỉ dùng các
+ * nến ĐÃ ĐÓNG. Riêng range/leg/giá hiện tại dùng cả nến đang chạy vì đó là giá sống.
+ *
+ * Kill zone tính theo thời điểm phân tích (không theo timestamp nến) và theo giờ địa
+ * phương London/New York thật — tự xử lý DST, không còn cố định khung giờ mùa hè.
  * -----------------------------------------------------------------------------
  */
 
 import { Candle } from '../../market/Candle';
-
-const UTC_OFFSET = 0; // data đã là giờ VN (TwelveData timezone=Asia/Ho_Chi_Minh). Đổi về 7 nếu data là UTC.
+import { TF_SECONDS, isCandleForming, zonedParts } from '../../market/candleTime';
+import { config } from '../../../config/trading';
 
 // ─── Kiểu dữ liệu output ────────────────────────────────────────────────────
+
+/**
+ * Trạng thái một mức thanh khoản (swing / equal high-low) sau khi hình thành:
+ * - UNSWEPT  : chưa nến nào vượt qua — pool còn nguyên (nam châm DOL).
+ * - SWEPT    : wick vượt qua rồi body close QUAY LẠI bên trong (ngay nến đó hoặc trong
+ *              `ict.sweepRejectBars` nến sau) — quét thanh khoản thật, dấu hiệu đảo chiều sớm.
+ * - BROKEN   : body close bên ngoài và KHÔNG quay lại — phá thật, KHÔNG phải sweep.
+ * - BREAKING : đã body close bên ngoài nhưng chưa đủ số nến để kết luận SWEPT hay BROKEN.
+ * Trước đây chỉ có cờ `swept` = "có wick vượt qua" → một cú phá thật cũng bị ghi là
+ * swept và prompt đọc nhầm thành tín hiệu đảo chiều.
+ */
+export type LevelStatus = 'UNSWEPT' | 'SWEPT' | 'BROKEN' | 'BREAKING';
 
 export interface Swing {
   index: number;
   time: string;
   price: number;
+  /** Chỉ gắn cho các swing được liệt kê trong facts. */
+  status?: LevelStatus;
 }
 
 export type Bias = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
@@ -92,8 +109,7 @@ export interface LiquidityLevel {
   times: [string, string];
   /** Index nến của swing SAU trong cặp — thời điểm mức được coi là đã hình thành. */
   index: number;
-  /** true = giá đã quét qua mức này sau khi nó hình thành; false = pool còn nguyên (nam châm DOL). */
-  swept: boolean;
+  status: LevelStatus;
 }
 
 export interface Liquidity {
@@ -101,11 +117,50 @@ export interface Liquidity {
   equalLows: LiquidityLevel[];
 }
 
-/** Sự kiện cấu trúc gần nhất: body-close phá swing gần nhất theo hướng nào. */
+/** Vùng để chờ giá hồi về sau một cú phá cấu trúc — FVG/OB do chính displacement tạo ra. */
+export interface RetestZone {
+  source: 'FVG' | 'OB';
+  type: 'BULLISH' | 'BEARISH';
+  top: number;
+  bottom: number;
+  /** Index nến tạo vùng (FVG: nến giữa; OB: nến OB) — trong mảng nến ĐÃ ĐÓNG. */
+  index: number;
+  /** Giá đã hồi chạm vùng sau khi hình thành chưa. */
+  mitigated: boolean;
+  /** Đã có nến body close xuyên qua mép xa của vùng → vùng hỏng, không còn là POI. */
+  invalidated: boolean;
+}
+
+/** Sự kiện cấu trúc: body-close phá swing gần nhất theo hướng nào. */
 export interface StructureEvent {
   kind: 'BOS' | 'CHoCH';
   direction: 'BULLISH' | 'BEARISH';
   level: number;
+  time: string;
+  /** Index nến phá — trong mảng nến ĐÃ ĐÓNG. */
+  index: number;
+  /**
+   * Có nến displacement đi kèm không: nến phá (hoặc nến liền trước, cùng chiều) có thân
+   * ≥ `ict.displacementBodyAtr` × ATR, HOẶC cú phá để lại FVG cùng chiều. false → theo
+   * định nghĩa trong prompt, đây KHÔNG phải CHoCH/BOS hợp lệ (chỉ là body close nhích qua).
+   */
+  displacement: boolean;
+  /** Thân lớn nhất trong (nến phá, nến liền trước) quy ra bội số ATR. */
+  bodyAtr: number;
+  /** FVG/OB do cú phá này tạo ra — vùng chờ retest (null nếu không có). */
+  retestZone: RetestZone | null;
+}
+
+/** Cú quét thanh khoản (đã được xác nhận bằng body close quay lại bên trong). */
+export interface SweepEvent {
+  /** BUYSIDE = quét đỉnh (stop của phe bán) ; SELLSIDE = quét đáy (stop của phe mua). */
+  side: 'BUYSIDE' | 'SELLSIDE';
+  levelType: 'SWING' | 'EQUAL';
+  level: number;
+  /** Đỉnh/đáy râu của cú quét — mức invalidation tự nhiên của setup đảo chiều. */
+  extreme: number;
+  /** Index nến xác nhận (nến đóng cửa quay lại bên trong) — trong mảng nến ĐÃ ĐÓNG. */
+  index: number;
   time: string;
 }
 
@@ -128,10 +183,22 @@ export interface KillZone {
   vnTime: string;
   inKillZone: boolean;
   zone: 'LONDON' | 'NEW_YORK' | 'NONE';
+  /** London đang giờ mùa hè (BST) hay giờ chuẩn (GMT) tại thời điểm tính. */
+  londonDst: boolean;
+  /** New York đang giờ mùa hè (EDT) hay giờ chuẩn (EST). */
+  newYorkDst: boolean;
+  /** Khung kill zone quy ra giờ VN tương ứng với DST hiện tại, vd "14:00–17:00". */
+  londonVn: string;
+  newYorkVn: string;
 }
 
 export interface TimeframeAnalysis {
+  /** Tổng số nến nhận vào (kể cả nến đang chạy nếu có). */
   candleCount: number;
+  /** Số nến ĐÃ ĐÓNG dùng cho mọi phép tính dựa trên body close. */
+  closedCount: number;
+  /** Nến cuối còn đang chạy (chưa đóng) — null nếu nến cuối đã đóng. */
+  formingCandle: Candle | null;
   lastPrice: number;
   bias: Bias;
   atr: number;
@@ -143,7 +210,12 @@ export interface TimeframeAnalysis {
   fvgs: Fvg[];
   orderBlocks: OrderBlock[];
   liquidity: Liquidity;
+  /** Sự kiện mới nhất (= phần tử cuối của structureEvents) — giữ cho tương thích. */
   recentStructure: StructureEvent | null;
+  /** `ict.structureEvents` sự kiện BOS/CHoCH gần nhất, cũ → mới. */
+  structureEvents: StructureEvent[];
+  /** Cú quét thanh khoản (đã từ chối) gần nhất trong `ict.sweepRecentBars` nến, cũ → mới. */
+  sweeps: SweepEvent[];
   /** null = khung không đủ nến để ADX hội tụ (xem MIN_ADX_CANDLES). */
   adx: AdxReading | null;
 }
@@ -159,27 +231,10 @@ export interface IctFacts {
 
 // ─── Tiện ích cơ bản ────────────────────────────────────────────────────────
 
-/**
- * Parse chuỗi "YYYY-MM-DD HH:mm:ss" thành Date bằng cách ép gắn Z (đọc nguyên
- * giờ-phút trong chuỗi qua getUTC*). Dùng cho so sánh tương đối & lấy wall-clock
- * giờ VN (vì data đã là giờ VN, xem UTC_OFFSET=0). KHÔNG dùng cho instant tuyệt đối.
- */
-function toDate(t: string): Date {
-  if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(t)) return new Date(t); // đã có timezone
-  const iso = t.trim().replace(' ', 'T');
-  return new Date(`${iso}Z`);
-}
-
-// Lấy giờ + phút theo giờ VN từ timestamp
-function vnHourMinute(t: string): { hour: number; minute: number; totalMin: number } {
-  const d = toDate(t);
-  const utcMinutes = d.getUTCHours() * 60 + d.getUTCMinutes();
-  const vnMinutes = (utcMinutes + UTC_OFFSET * 60 + 1440) % 1440;
-  return { hour: Math.floor(vnMinutes / 60), minute: vnMinutes % 60, totalMin: vnMinutes };
-}
-
 // Làm tròn giá gold về 2 chữ số (đủ cho XAU/USD)
 const r2 = (x: number): number => Math.round(x * 100) / 100;
+
+const body = (c: Candle): number => Math.abs(c.close - c.open);
 
 // ─── 1) SWING HIGHS / LOWS (fractal, mặc định 2 nến mỗi bên) ─────────────────
 
@@ -218,12 +273,11 @@ function structureBias(swings: { highs: Swing[]; lows: Swing[] }): Bias {
 
 // ─── 3) RANGE + FIB (premium / discount / equilibrium) ───────────────────────
 
-function rangeAndFib(candles: Candle[], lookbackBars = 80): RangeFib {
+function rangeAndFib(candles: Candle[], lookbackBars: number, last: number): RangeFib {
   const recent = candles.slice(-lookbackBars);
   const hi = Math.max(...recent.map((c) => c.high));
   const lo = Math.min(...recent.map((c) => c.low));
   const eq = (hi + lo) / 2;
-  const last = candles[candles.length - 1].close;
 
   return {
     rangeHigh: r2(hi),
@@ -255,6 +309,7 @@ function findActiveLeg(
   candles: Candle[],
   swings: { highs: Swing[]; lows: Swing[] },
   atrValue: number,
+  last: number,
 ): ActiveLeg | null {
   const lastHigh = swings.highs[swings.highs.length - 1];
   const lastLow = swings.lows[swings.lows.length - 1];
@@ -288,8 +343,6 @@ function findActiveLeg(
   const high = Math.max(from, to);
   const size = high - low;
   if (size <= 0) return null;
-
-  const last = candles[candles.length - 1].close;
 
   return {
     direction: upLeg ? 'UP' : 'DOWN',
@@ -464,7 +517,61 @@ function adx(candles: Candle[], period = 14): AdxReading | null {
   };
 }
 
-// ─── 7) LIQUIDITY: equal highs / equal lows (dung sai theo ATR) ──────────────
+// ─── 7) TRẠNG THÁI MỨC THANH KHOẢN: unswept / swept / broken / breaking ──────
+
+interface LevelCheck {
+  status: LevelStatus;
+  /** Index nến xác nhận sự kiện CUỐI: nến đóng cửa quay lại (SWEPT) / nến phá (BROKEN). */
+  eventIndex: number | null;
+  /** Râu xa nhất của cú quét cuối (chỉ có khi SWEPT) — mức invalidation của setup đảo chiều. */
+  extreme: number | null;
+}
+
+/**
+ * Lần theo một mức thanh khoản từ `fromIndex`. Mỗi lần wick vượt qua mức thì phân loại:
+ *  - body close quay lại bên trong ngay nến đó hoặc trong `rejectBars` nến sau → SWEPT
+ *  - đóng cửa bên ngoài suốt cửa sổ đó → BROKEN (phá thật), dừng — mức đã mất tác dụng
+ *  - đóng cửa bên ngoài nhưng chưa đủ nến để kết luận → BREAKING
+ * Trạng thái trả về là của sự kiện CUỐI: từng bị quét rồi sau đó bị phá thật = BROKEN.
+ */
+function checkLevel(
+  candles: Candle[],
+  level: number,
+  side: 'HIGH' | 'LOW',
+  fromIndex: number,
+  rejectBars: number,
+): LevelCheck {
+  const beyondWick = (c: Candle): boolean => (side === 'HIGH' ? c.high > level : c.low < level);
+  const beyondClose = (c: Candle): boolean => (side === 'HIGH' ? c.close > level : c.close < level);
+  let result: LevelCheck = { status: 'UNSWEPT', eventIndex: null, extreme: null };
+
+  let j = Math.max(0, fromIndex);
+  while (j < candles.length) {
+    if (!beyondWick(candles[j])) { j++; continue; }
+
+    let back = -1;
+    const lastK = Math.min(j + rejectBars, candles.length - 1);
+    for (let k = j; k <= lastK; k++) {
+      if (!beyondClose(candles[k])) { back = k; break; }
+    }
+
+    if (back >= 0) {
+      const span = candles.slice(j, back + 1);
+      const extreme = side === 'HIGH'
+        ? Math.max(...span.map((c) => c.high))
+        : Math.min(...span.map((c) => c.low));
+      result = { status: 'SWEPT', eventIndex: back, extreme: r2(extreme) };
+      j = back + 1;
+      continue;
+    }
+
+    const enoughBars = candles.length - 1 - j >= rejectBars;
+    return { status: enoughBars ? 'BROKEN' : 'BREAKING', eventIndex: j, extreme: null };
+  }
+  return result;
+}
+
+// ─── 7a) LIQUIDITY: equal highs / equal lows (dung sai theo ATR) ─────────────
 
 function findLiquidity(
   swings: { highs: Swing[]; lows: Swing[] },
@@ -472,6 +579,7 @@ function findLiquidity(
   candles: Candle[],
 ): Liquidity {
   const tol = atrValue * 0.15; // dung sai để coi là "bằng nhau"
+  const rejectBars = config.ict.sweepRejectBars;
   const equalHighs: LiquidityLevel[] = [];
   const equalLows: LiquidityLevel[] = [];
 
@@ -479,49 +587,160 @@ function findLiquidity(
   for (let i = 1; i < hs.length; i++) {
     if (Math.abs(hs[i].price - hs[i - 1].price) <= tol) {
       const price = r2((hs[i].price + hs[i - 1].price) / 2);
-      // Swept: sau khi mức hình thành (swing sau), có nến nào wick vượt LÊN trên mức.
-      const swept = candles.slice(hs[i].index + 1).some((c) => c.high > price);
-      equalHighs.push({ price, times: [hs[i - 1].time, hs[i].time], index: hs[i].index, swept });
+      const { status } = checkLevel(candles, price, 'HIGH', hs[i].index + 1, rejectBars);
+      equalHighs.push({ price, times: [hs[i - 1].time, hs[i].time], index: hs[i].index, status });
     }
   }
   const ls = swings.lows;
   for (let i = 1; i < ls.length; i++) {
     if (Math.abs(ls[i].price - ls[i - 1].price) <= tol) {
       const price = r2((ls[i].price + ls[i - 1].price) / 2);
-      // Swept: sau khi mức hình thành, có nến nào wick vượt XUỐNG dưới mức.
-      const swept = candles.slice(ls[i].index + 1).some((c) => c.low < price);
-      equalLows.push({ price, times: [ls[i - 1].time, ls[i].time], index: ls[i].index, swept });
+      const { status } = checkLevel(candles, price, 'LOW', ls[i].index + 1, rejectBars);
+      equalLows.push({ price, times: [ls[i - 1].time, ls[i].time], index: ls[i].index, status });
     }
   }
   return { equalHighs, equalLows };
 }
 
-// ─── 8) KILL ZONE cho nến mới nhất ───────────────────────────────────────────
-//   London 14:00–17:00 VN, New York 19:30–22:00 VN
+// ─── 7b) SWEEP EVENTS: cú quét đỉnh/đáy đã bị từ chối gần nhất ───────────────
+//   Đây là bước "chờ giá quét thanh khoản" của quy trình: một wick vượt đỉnh/đáy
+//   (swing đơn lẻ hoặc equal level) rồi body close quay lại. Chỉ giữ sự kiện mà mức đó
+//   VẪN ở trạng thái SWEPT (chưa bị phá thật về sau).
 
-function killZone(time: string): KillZone {
-  const { totalMin, hour, minute } = vnHourMinute(time);
-  const london = totalMin >= 14 * 60 && totalMin <= 17 * 60;
-  const ny = totalMin >= 19 * 60 + 30 && totalMin <= 22 * 60;
+function findSweeps(
+  candles: Candle[],
+  swings: { highs: Swing[]; lows: Swing[] },
+  liquidity: Liquidity,
+): SweepEvent[] {
+  const { sweepRejectBars, sweepRecentBars } = config.ict;
+  const minIndex = candles.length - sweepRecentBars;
+  const raw: SweepEvent[] = [];
+
+  const consider = (level: number, from: number, side: 'HIGH' | 'LOW', levelType: 'SWING' | 'EQUAL'): void => {
+    const chk = checkLevel(candles, level, side, from, sweepRejectBars);
+    if (chk.status !== 'SWEPT' || chk.eventIndex == null || chk.extreme == null) return;
+    if (chk.eventIndex < minIndex) return;
+    raw.push({
+      side: side === 'HIGH' ? 'BUYSIDE' : 'SELLSIDE',
+      levelType,
+      level,
+      extreme: chk.extreme,
+      index: chk.eventIndex,
+      time: candles[chk.eventIndex].time,
+    });
+  };
+
+  for (const s of swings.highs) consider(s.price, s.index + 1, 'HIGH', 'SWING');
+  for (const s of swings.lows) consider(s.price, s.index + 1, 'LOW', 'SWING');
+  for (const l of liquidity.equalHighs) consider(l.price, l.index + 1, 'HIGH', 'EQUAL');
+  for (const l of liquidity.equalLows) consider(l.price, l.index + 1, 'LOW', 'EQUAL');
+
+  // Một nến quét nhiều mức cùng phía → giữ mức XA nhất (pool lớn nhất bị lấy).
+  const byCandle = new Map<string, SweepEvent>();
+  for (const e of raw) {
+    const key = `${e.side}@${e.index}`;
+    const prev = byCandle.get(key);
+    const farther = !prev || (e.side === 'BUYSIDE' ? e.level > prev.level : e.level < prev.level);
+    if (farther) byCandle.set(key, e);
+  }
+  return [...byCandle.values()].sort((a, b) => a.index - b.index).slice(-3);
+}
+
+// ─── 8) KILL ZONE theo thời điểm phân tích, có xử lý DST ─────────────────────
+//   London KZ = 08:00–11:00 giờ London; New York KZ = 08:30–11:00 giờ New York.
+//   Quy ra giờ VN: mùa hè 14:00–17:00 / 19:30–22:00, mùa đông 15:00–18:00 / 20:30–23:00.
+//   Bản cũ cố định khung mùa hè nên từ cuối tháng 10 (London về GMT) facts gắn nhãn sai.
+
+const LONDON_KZ: [number, number] = [8 * 60, 11 * 60];
+const NEW_YORK_KZ: [number, number] = [8 * 60 + 30, 11 * 60];
+
+function killZone(now: Date): KillZone {
+  const minutesOf = (tz: string): number => {
+    const p = zonedParts(now, tz);
+    return p.hour * 60 + p.minute;
+  };
+  const utcMin = now.getUTCHours() * 60 + now.getUTCMinutes();
+  // Độ lệch so với UTC (phút), chuẩn hoá về [-720, 720).
+  const offsetOf = (localMin: number): number => ((((localMin - utcMin + 720) % 1440) + 1440) % 1440) - 720;
+  const fmt = (m: number): string => {
+    const x = ((m % 1440) + 1440) % 1440;
+    return `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`;
+  };
+
+  const vnMin = minutesOf(config.marketHours.timezone);
+  const ldnMin = minutesOf('Europe/London');
+  const nyMin = minutesOf('America/New_York');
+  const vnOff = offsetOf(vnMin);
+  const ldnOff = offsetOf(ldnMin);
+  const nyOff = offsetOf(nyMin);
+
+  const inRange = (m: number, [a, b]: [number, number]): boolean => m >= a && m <= b;
+  const toVn = ([a, b]: [number, number], off: number): string => `${fmt(a - off + vnOff)}–${fmt(b - off + vnOff)}`;
+
   let zone: KillZone['zone'] = 'NONE';
-  if (london) zone = 'LONDON';
-  else if (ny) zone = 'NEW_YORK';
+  if (inRange(ldnMin, LONDON_KZ)) zone = 'LONDON';
+  else if (inRange(nyMin, NEW_YORK_KZ)) zone = 'NEW_YORK';
+
   return {
-    vnTime: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`,
+    vnTime: fmt(vnMin),
     inKillZone: zone !== 'NONE',
     zone,
+    londonDst: ldnOff === 60,
+    newYorkDst: nyOff === -240,
+    londonVn: toVn(LONDON_KZ, ldnOff),
+    newYorkVn: toVn(NEW_YORK_KZ, nyOff),
   };
 }
 
-// ─── 9) RECENT STRUCTURE: BOS / CHoCH gần nhất (body close phá swing) ─────────
+// ─── 9) STRUCTURE: BOS / CHoCH (body close phá swing) + displacement + vùng retest ─
 //   Quét nến từ cũ → mới, luôn tham chiếu swing high/low GẦN NHẤT đã hình thành.
 //   Body close vượt swing high → break tăng; vượt swing low → break giảm.
-//   Đổi hướng so với break trước = CHoCH, cùng hướng = BOS. Trả sự kiện MỚI NHẤT.
+//   Đổi hướng so với break trước = CHoCH, cùng hướng = BOS.
+//   Mỗi sự kiện được chấm displacement + gắn FVG/OB do chính cú phá tạo ra (vùng retest).
 
-function findRecentStructure(
+function describeBreak(
+  candles: Candle[],
+  i: number,
+  direction: 'BULLISH' | 'BEARISH',
+  atrValue: number,
+  fvgs: Fvg[],
+  obs: OrderBlock[],
+): Pick<StructureEvent, 'displacement' | 'bodyAtr' | 'retestZone'> {
+  const bullish = direction === 'BULLISH';
+  const sameDir = (c: Candle): boolean => (bullish ? c.close > c.open : c.close < c.open);
+
+  // Nến phá hoặc nến liền trước (cú đẩy hay bắt đầu sớm hơn nến phá một cây).
+  let maxBody = 0;
+  for (const k of [i, i - 1]) {
+    if (k >= 0 && sameDir(candles[k])) maxBody = Math.max(maxBody, body(candles[k]));
+  }
+  const bodyAtr = atrValue > 0 ? Number((maxBody / atrValue).toFixed(2)) : 0;
+
+  // FVG cùng chiều sinh ra quanh cú phá (nến giữa của FVG nằm trong [i-2, i+1]).
+  const fvg = fvgs.filter((f) => f.type === direction && f.index >= i - 2 && f.index <= i + 1).pop();
+  // OB = nến ngược cuối cùng trước cú đẩy, nằm ngay trước/tại nến phá.
+  const ob = obs.filter((o) => o.type === direction && o.index >= i - 3 && o.index <= i).pop();
+
+  const displacement = (atrValue > 0 && maxBody >= atrValue * config.ict.displacementBodyAtr) || Boolean(fvg);
+
+  const zoneOf = (source: 'FVG' | 'OB', z: Fvg | OrderBlock): RetestZone => {
+    // Vùng hỏng khi có nến body close xuyên qua mép XA sau cú phá.
+    const startAt = Math.max(i + 1, z.index + 2);
+    const invalidated = candles.slice(startAt).some((c) => (bullish ? c.close < z.bottom : c.close > z.top));
+    return { source, type: direction, top: z.top, bottom: z.bottom, index: z.index, mitigated: z.mitigated, invalidated };
+  };
+  const retestZone = fvg ? zoneOf('FVG', fvg) : ob ? zoneOf('OB', ob) : null;
+
+  return { displacement, bodyAtr, retestZone };
+}
+
+function findStructureEvents(
   candles: Candle[],
   swings: { highs: Swing[]; lows: Swing[] },
-): StructureEvent | null {
+  atrValue: number,
+  fvgs: Fvg[],
+  obs: OrderBlock[],
+): StructureEvent[] {
   const highs = swings.highs;
   const lows = swings.lows;
   let hi = 0;
@@ -531,7 +750,7 @@ function findRecentStructure(
   let brokenHigh = false;
   let brokenLow = false;
   let trend: 'BULLISH' | 'BEARISH' | null = null;
-  let last: StructureEvent | null = null;
+  const events: StructureEvent[] = [];
 
   for (let i = 0; i < candles.length; i++) {
     // Swing chỉ được tham chiếu khi đã hình thành trước nến hiện tại.
@@ -541,43 +760,70 @@ function findRecentStructure(
     const close = candles[i].close;
     if (refHigh && !brokenHigh && close > refHigh.price) {
       const kind = trend === 'BEARISH' ? 'CHoCH' : 'BOS';
-      last = { kind, direction: 'BULLISH', level: refHigh.price, time: candles[i].time };
+      events.push({
+        kind, direction: 'BULLISH', level: refHigh.price, time: candles[i].time, index: i,
+        ...describeBreak(candles, i, 'BULLISH', atrValue, fvgs, obs),
+      });
       trend = 'BULLISH';
       brokenHigh = true;
     }
     if (refLow && !brokenLow && close < refLow.price) {
       const kind = trend === 'BULLISH' ? 'CHoCH' : 'BOS';
-      last = { kind, direction: 'BEARISH', level: refLow.price, time: candles[i].time };
+      events.push({
+        kind, direction: 'BEARISH', level: refLow.price, time: candles[i].time, index: i,
+        ...describeBreak(candles, i, 'BEARISH', atrValue, fvgs, obs),
+      });
       trend = 'BEARISH';
       brokenLow = true;
     }
   }
 
-  return last;
+  return events.slice(-Math.max(1, config.ict.structureEvents));
 }
 
 // ─── HÀM TỔNG: phân tích 1 khung ─────────────────────────────────────────────
 
 export function analyzeTimeframe(
   candles: Candle[],
-  { fibLookback = 80, swingLookback = 2 }: { fibLookback?: number; swingLookback?: number } = {},
+  { fibLookback = 80, swingLookback = 2, formingLast = false }:
+    { fibLookback?: number; swingLookback?: number; formingLast?: boolean } = {},
 ): TimeframeAnalysis {
-  const swings = findSwings(candles, swingLookback);
-  const atrValue = atr(candles);
+  // Nến đang chạy bị loại khỏi mọi phép tính dựa trên body close/pivot. Chỉ bỏ khi vẫn
+  // còn đủ nến đã đóng để tính (giữ hành vi cũ với mảng quá ngắn).
+  const dropLast = formingLast && candles.length > 5;
+  const closed = dropLast ? candles.slice(0, -1) : candles;
+  // Giá sống = close của nến cuối (kể cả đang chạy) — dùng cho range/leg/giá hiện tại.
+  const last = candles[candles.length - 1].close;
+
+  const swings = findSwings(closed, swingLookback);
+  const atrValue = atr(closed);
+  const fvgs = findFVGs(closed);
+  const orderBlocks = findOrderBlocks(closed, atrValue);
+  const liquidity = findLiquidity(swings, atrValue, closed);
+  const structureEvents = findStructureEvents(closed, swings, atrValue, fvgs, orderBlocks);
+  const rejectBars = config.ict.sweepRejectBars;
+  const withStatus = (list: Swing[], side: 'HIGH' | 'LOW'): Swing[] =>
+    list.map((s) => ({ ...s, status: checkLevel(closed, s.price, side, s.index + 1, rejectBars).status }));
+
   return {
     candleCount: candles.length,
-    lastPrice: r2(candles[candles.length - 1].close),
+    closedCount: closed.length,
+    formingCandle: dropLast ? candles[candles.length - 1] : null,
+    lastPrice: r2(last),
     bias: structureBias(swings),
     atr: atrValue,
-    range: rangeAndFib(candles, fibLookback),
-    activeLeg: findActiveLeg(candles, swings, atrValue),
-    swingHighs: swings.highs.slice(-5),
-    swingLows: swings.lows.slice(-5),
-    fvgs: findFVGs(candles).slice(-6),
-    orderBlocks: findOrderBlocks(candles, atrValue).slice(-6),
-    liquidity: findLiquidity(swings, atrValue, candles),
-    recentStructure: findRecentStructure(candles, swings),
-    adx: adx(candles),
+    range: rangeAndFib(candles, fibLookback, last),
+    // swings tính trên `closed` là tiền tố của `candles` → index vẫn hợp lệ.
+    activeLeg: findActiveLeg(candles, swings, atrValue, last),
+    swingHighs: withStatus(swings.highs.slice(-5), 'HIGH'),
+    swingLows: withStatus(swings.lows.slice(-5), 'LOW'),
+    fvgs: fvgs.slice(-6),
+    orderBlocks: orderBlocks.slice(-6),
+    liquidity,
+    recentStructure: structureEvents[structureEvents.length - 1] ?? null,
+    structureEvents,
+    sweeps: findSweeps(closed, swings, liquidity),
+    adx: adx(closed),
   };
 }
 
@@ -590,29 +836,43 @@ const FIB_LOOKBACK_BY_TF: Record<string, number> = {
   M5: 96,
 };
 
+export interface PreprocessOptions {
+  /** Thời điểm phân tích — quyết định nến nào đang chạy + kill zone. Mặc định: bây giờ. */
+  now?: Date;
+  /** Giá hiện tại từ provider; không có → close của nến mới nhất (khung nhỏ nhất). */
+  currentPrice?: number;
+}
+
 /**
  * Tính sẵn các "facts" ICT/SMC cho mọi khung được cung cấp.
  * Bỏ qua khung không đủ nến (cần ≥ 5 nến để có ý nghĩa).
+ * Key của `candlesByTimeframe` phải là mã khung (M5/M15/H1/H4/D…) để nhận ra nến đang chạy.
  */
-export function preprocess(candlesByTimeframe: Record<string, Candle[]>): IctFacts {
+export function preprocess(candlesByTimeframe: Record<string, Candle[]>, opts: PreprocessOptions = {}): IctFacts {
+  const now = opts.now ?? new Date();
+  const tz = config.marketHours.timezone;
   const timeframes: Record<string, TimeframeAnalysis> = {};
-  let latestCandle: Candle | null = null;
+  // Giá dự phòng: close nến cuối của khung có độ dài nến NGẮN nhất (cập nhật nhất).
+  let fallbackPrice = 0;
+  let shortestTf = Infinity;
 
   for (const [tf, candles] of Object.entries(candlesByTimeframe)) {
     if (!candles || candles.length < 5) continue;
-    timeframes[tf] = analyzeTimeframe(candles, { fibLookback: FIB_LOOKBACK_BY_TF[tf] ?? 80 });
+    const formingLast = isCandleForming(candles[candles.length - 1], tf, tz, now);
+    timeframes[tf] = analyzeTimeframe(candles, { fibLookback: FIB_LOOKBACK_BY_TF[tf] ?? 80, formingLast });
 
-    const last = candles[candles.length - 1];
-    if (!latestCandle || toDate(last.time) >= toDate(latestCandle.time)) {
-      latestCandle = last;
+    const seconds = TF_SECONDS[tf] ?? Infinity;
+    if (seconds < shortestTf || fallbackPrice === 0) {
+      shortestTf = Math.min(shortestTf, seconds);
+      fallbackPrice = candles[candles.length - 1].close;
     }
   }
 
   return {
     meta: {
-      generatedAt: new Date().toISOString(),
-      killZone: latestCandle ? killZone(latestCandle.time) : { vnTime: '--:--', inKillZone: false, zone: 'NONE' },
-      currentPrice: latestCandle ? r2(latestCandle.close) : 0,
+      generatedAt: now.toISOString(),
+      killZone: killZone(now),
+      currentPrice: r2(opts.currentPrice && opts.currentPrice > 0 ? opts.currentPrice : fallbackPrice),
     },
     timeframes,
   };

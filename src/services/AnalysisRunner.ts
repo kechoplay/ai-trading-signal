@@ -20,8 +20,13 @@ export interface AnalysisRunOptions {
   symbol?: string;
   timeframes?: string[];
   analysisType?: string;
-  /** Nguồn kích hoạt — chỉ để log phân biệt 'api' (bấm tay) với 'scheduler'. */
-  trigger: 'api' | 'scheduler' | 'mcp';
+  /**
+   * Nguồn kích hoạt — để log phân biệt 'api' (bấm tay), 'scheduler' (đồng hồ) và
+   * 'event' (SetupWatcher phát hiện chuỗi sweep → BOS/CHoCH → retest).
+   */
+  trigger: 'api' | 'scheduler' | 'mcp' | 'event';
+  /** Lý do kích hoạt gửi kèm vào prompt (chỉ dùng cho trigger 'event'). */
+  triggerNote?: string | null;
 }
 
 /** Ném ra khi đã có một phân tích đang chạy (xem single-flight bên dưới). */
@@ -49,7 +54,7 @@ export function currentRun(): { symbol: string; startedAt: number; trigger: stri
  * (loadPendingSetup đọc từ DB) và dashboard đều mất dữ liệu.
  */
 export async function runAnalysis(opts: AnalysisRunOptions): Promise<AnalysisRunResult> {
-  const { symbol, timeframes, analysisType = 'intraday', trigger } = opts;
+  const { symbol, timeframes, analysisType = 'intraday', trigger, triggerNote } = opts;
   const requested = symbol ?? config.instrument;
 
   if (inFlight) {
@@ -62,7 +67,7 @@ export async function runAnalysis(opts: AnalysisRunOptions): Promise<AnalysisRun
     logger.info('Analysis started', { symbol: requested, timeframes: timeframes ?? 'default', analysisType, trigger });
 
     const { result, rawText, instrument: sym, currentPrice, usage, rateLimit } =
-      await SignalOrchestrator.fromConfig().run(symbol, timeframes, analysisType);
+      await SignalOrchestrator.fromConfig().run(symbol, timeframes, analysisType, triggerNote);
     const durationMs = Date.now() - startedAt;
 
     const notifier  = TelegramNotifier.fromConfig();

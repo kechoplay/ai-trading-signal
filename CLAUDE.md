@@ -6,7 +6,7 @@
 
 ## Tổng quan
 
-**AI Trading Signal** là hệ thống phân tích kỹ thuật và phát tín hiệu giao dịch cho **XAU/USD (vàng)** và các cặp **crypto (BTC/USD, ETH/USD…)** sử dụng Claude AI (Anthropic). Hệ thống lấy dữ liệu nến từ API thị trường, gửi qua Claude để phân tích đa khung thời gian, lưu kết quả vào SQLite và gửi thông báo qua Telegram. Phân tích được trigger theo hai đường: **scheduler nội bộ** (mặc định mỗi 15 phút, 8h–22h, T2–T6 giờ VN) và **thủ công** qua REST API / dashboard. Không dùng cron của OS — scheduler chạy trong process server.
+**AI Trading Signal** là hệ thống phân tích kỹ thuật và phát tín hiệu giao dịch cho **XAU/USD (vàng)** và các cặp **crypto (BTC/USD, ETH/USD…)** sử dụng Claude AI (Anthropic). Hệ thống lấy dữ liệu nến từ API thị trường, gửi qua Claude để phân tích đa khung thời gian, lưu kết quả vào SQLite và gửi thông báo qua Telegram. Phân tích được trigger theo ba đường: **scheduler nội bộ** theo đồng hồ (`SCHEDULER_INTERVAL_MIN`, 8h–22h, T2–T6 giờ VN), **SetupWatcher** theo sự kiện (chuỗi sweep → CHoCH có displacement → retest, dò cơ học mỗi 5 phút) và **thủ công** qua REST API / dashboard. Không dùng cron của OS — scheduler chạy trong process server.
 
 - **Ngôn ngữ phân tích AI**: Tiếng Việt
 - **Khung thời gian phân tích**: Vàng dùng H4 (context), H1 (bias), M15 (POI), M5 (entry). Crypto dùng bộ khung riêng từ M15: D (context), H4 (bias), H1 (POI), M15 (entry) — cấu hình qua `TRADING_CRYPTO_TIMEFRAMES`, áp dụng khi instrument là crypto và request không truyền timeframes.
@@ -61,7 +61,11 @@ D:/ai-trading-signal/
         │   ├── MarketDataProvider.ts  ← interface
         │   ├── MarketDataProviderFactory.ts  ← chọn provider theo config
         │   ├── TwelveDataProvider.ts  ← provider mặc định
-        │   └── OandaProvider.ts       ← provider thay thế
+        │   ├── OandaProvider.ts       ← provider thay thế
+        │   └── candleTime.ts          ← nhận diện nến ĐANG CHẠY (chưa đóng) + giờ theo múi IANA
+        ├── setup/
+        │   ├── SetupDetector.ts       ← dò chuỗi sweep → BOS/CHoCH có displacement → retest (hàm thuần)
+        │   └── SetupWatcher.ts        ← job nền mỗi 5p, chỉ gọi AI khi chuỗi tới bước RETEST
         ├── swing/
         │   ├── SwingSignalService.ts  ← engine zigzag pivot (nhịp nhỏ, KHÔNG dùng AI)
         │   ├── SwingRunner.ts         ← fetch nến + format báo cáo + Telegram (tùy chọn)
@@ -92,8 +96,9 @@ D:/ai-trading-signal/
 ## Luồng dữ liệu
 
 ```
-[AnalysisScheduler]  (mỗi 15p, 8h–22h, T2–T6)   [POST /api/analyze]  (bấm tay)
-       └──────────────────┬─────────────────────────────┘
+[AnalysisScheduler]  (mỗi SCHEDULER_INTERVAL_MIN, 8h–22h, T2–T6)   [POST /api/analyze]  (bấm tay)
+       │   [SetupWatcher] (mỗi 5p, cơ học — chỉ khi chuỗi sweep→CHoCH→retest tới RETEST; trigger 'event')
+       └──────────────────┬──────────────┴──────────────┘
                           ↓
 [runAnalysis()]  ← AnalysisRunner: đường DUY NHẤT có lưu DB
        │  single-flight: đang chạy thì lượt/request thứ 2 bị chặn (scheduler bỏ lượt,
@@ -257,6 +262,66 @@ npm run db:migrate     # chạy migration
 
 **Streaming:** dùng `messages.stream()` (thinking adaptive, max_tokens 64000), `maxRetries: 4`, SDK timeout 10 phút; undici dispatcher đặt timeout = 0 (vô hạn) để stream dài không bị ngắt.
 
+**FACTS — nến đang chạy, sweep, displacement, kill zone** (thêm 14/10/2026, `IctPreprocessor` +
+`candleTime.ts`). Đọc trước khi động vào preprocessor:
+- **Nến đang chạy bị loại khỏi mọi phép tính body close.** Provider trả cả cây nến chưa đóng ở
+  cuối mảng; scheduler chạy ở :00/:30 nên lúc :30 nến H1 mới chạy nửa giờ và "close" của nó chỉ
+  là giá hiện tại → `findRecentStructure` cũ báo BOS/CHoCH ma, luật "≥2 nến H1 xác nhận" đếm nhầm.
+  Nay `preprocess()` dùng `isCandleForming()` (giờ mở + độ dài khung > now) cho từng khung; swing/
+  ATR/ADX/FVG/OB/BOS/CHoCH/sweep chỉ tính trên nến ĐÃ ĐÓNG, còn range/leg/giá hiện tại vẫn dùng
+  nến đang chạy (giá sống). Nến thô gửi model chỉ gồm nến đã đóng; nến đang chạy là một dòng
+  riêng "Nến ĐANG CHẠY". Timestamp TwelveData không có hậu tố múi giờ → hiểu là giờ treo tường
+  của `MARKET_HOURS_TIMEZONE` (đúng với param `timezone` gửi lên).
+- **Trạng thái mức thanh khoản 4 nhãn** thay cờ `swept` cũ (cũ = "có wick vượt qua" → một cú
+  phá thật cũng thành `swept` và prompt đọc thành "đã quét → đảo chiều", tức đọc NGƯỢC hướng):
+  `UNSWEPT` / `SWEPT` (wick vượt rồi body close quay lại trong ≤ `ICT_SWEEP_REJECT_BARS` nến) /
+  `BROKEN` (phá thật) / `BREAKING` (chưa đủ nến để kết luận). Áp cho equal highs/lows và 5 swing
+  gần nhất. `sweeps[]` = cú quét đã từ chối trong `ICT_SWEEP_RECENT_BARS` nến gần nhất.
+- **BOS/CHoCH kèm displacement + vùng retest.** `structureEvents[]` (3 sự kiện gần nhất) — mỗi
+  sự kiện có `displacement` (nến phá hoặc nến liền trước cùng chiều có thân ≥
+  `ICT_DISPLACEMENT_BODY_ATR`× ATR, hoặc cú phá để lại FVG) và `retestZone` (FVG/OB do chính cú
+  phá tạo ra, kèm cờ `invalidated` khi đã bị body close xuyên mép xa). Prompt in sự kiện không
+  displacement thành "YẾU" — khớp định nghĩa CHoCH hợp lệ. `recentStructure` giữ để tương thích.
+- **Kill zone tính theo thời điểm phân tích + giờ London/New York thật** (`Intl`, tự xử lý DST).
+  Bản cũ cố định 14–17h / 19:30–22h VN (giờ mùa hè) nên từ cuối tháng 10 gắn nhãn sai. Prompt
+  vàng giờ bảo model dùng nhãn trong FACTS thay vì tự suy DST từ timestamp.
+- Những thay đổi này KHÔNG đổi 3 HARD GATE / chế độ A-B-C — chỉ làm dữ liệu đúng hơn. Kỳ vọng
+  ít CHoCH hơn (các cú phá không displacement không còn được coi là CHoCH).
+
+---
+
+## Setup Watcher — kích hoạt phân tích theo sự kiện
+
+**File:** `src/services/setup/SetupWatcher.ts` (job) + `SetupDetector.ts` (hàm thuần)
+
+Lý do tồn tại: quy trình ICT "chờ quét thanh khoản → chờ CHoCH có displacement → chờ hồi về
+FVG/OB → vào lệnh" là quy trình CHỜ THEO SỰ KIỆN, cửa sổ chỉ vài nến M5/M15. `AnalysisScheduler`
+lấy mẫu theo đồng hồ (15–30 phút) nên gần như không bao giờ rơi đúng lúc retest — đó là lý do
+prompt phải bù bằng chế độ B (limit tại POI, khớp ngay trong cú quét, trước khi có CHoCH).
+
+Cơ chế: mỗi `SETUP_WATCHER_INTERVAL_MIN` (5) phút, canh theo đồng hồ + `OFFSET_SEC`, trong cùng
+khung giờ/ngày/symbol với `SCHEDULER_*`. Fetch nến `SETUP_WATCHER_TIMEFRAME` (M15) + bias khung
+`SETUP_WATCHER_BIAS_TIMEFRAME` (H1, cache 15 phút), chạy `analyzeTimeframe` (nến đã đóng), rồi
+`detectSetup()` cho từng hướng: `NONE → SWEPT → CONFIRMED → RETEST`. Chỉ khi `RETEST` (+ trùng bias
+nếu `REQUIRE_BIAS`) mới gọi `runAnalysis({ trigger: 'event', triggerNote })` — `triggerNote` mô tả
+chuỗi, được nối vào user prompt dưới dạng "gợi ý cần kiểm chứng độc lập" (chống anchoring).
+
+Chặn quota: mỗi chuỗi (key = hướng + thời điểm sweep + thời điểm cú phá) chỉ kích hoạt 1 lần;
+`COOLDOWN_MIN` giữa hai lần cùng symbol; `MAX_PER_DAY` lần/ngày. Đang có lượt chạy (single-flight)
+→ không đánh dấu, thử lại tick sau. State chỉ ở RAM (restart có thể kích hoạt lại 1 lần).
+Watcher KHÔNG thay scheduler đồng hồ — hai đường chạy song song; nếu watcher đang chạy một lượt
+AI đúng lúc scheduler tới mốc thì scheduler bỏ lượt (AnalysisBusyError, như bấm tay).
+Request dữ liệu: ~1 request/symbol mỗi 5 phút + 1 request bias mỗi 15 phút — tính vào hạn mức
+TwelveData cùng SwingScheduler.
+
+**Giao diện theo dõi** (`chart.html`): nút **🎯 Watcher** trên header cạnh nút Scheduler — đọc
+`GET /api/setup-watcher` mỗi 60s, hiện bước xa nhất đang có (`chờ` / `đã quét` / `chờ retest` vàng /
+`RETEST` xanh) + số lần kích hoạt AI hôm nay. Bấm mở modal: dải tóm tắt (khung, cooldown, tick
+gần nhất/kế tiếp), cảnh báo ngoài khung giờ (`in_window_now`), lần kích hoạt gần nhất + lỗi gần
+nhất, rồi từng symbol × BUY/SELL với thanh 3 bước ① Quét → ② BOS/CHoCH + displacement → ③ Hồi
+về FVG/OB, nhãn trùng/ngược bias, `note` và các mức sweep/cú phá/vùng retest. Modal mở thì tự làm
+mới mỗi 30s. Watcher chỉ cập nhật snapshot trong khung giờ — ngoài giờ modal hiện số liệu lần dò cuối.
+
 ---
 
 ## Nhịp nhỏ (Swing scalp) — Chi tiết quan trọng
@@ -401,6 +466,12 @@ xong nhận ngay `{ type: "snapshot", items:
 xong một symbol thì nhận `{ type: "swing", symbol, timeframe, actionable, latest, stats,
 signals, params, currentPrice, generatedAt }`. Dashboard (`chart.html`) dùng cho panel
 Nhịp nhỏ bên phải chart — xem `connectSwingSocket()`.
+
+### GET /api/setup-watcher
+
+Trạng thái SetupWatcher: cấu hình, `triggers_today`, `next_run_at`, `last_trigger`, `last_error`
+và `symbols[symbol].setups[]` — mỗi hướng BUY/SELL đang ở bước nào (`stage`), sweep/cú phá/vùng
+retest dò được và `note` giải thích vì sao dừng ở bước đó. Yêu cầu API key.
 
 ### GET /api/scheduler
 

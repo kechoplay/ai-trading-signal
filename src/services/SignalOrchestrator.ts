@@ -28,7 +28,7 @@ export class SignalOrchestrator {
     );
   }
 
-  async run(instrument?: string, timeframes?: string[], analysisType?: string): Promise<{
+  async run(instrument?: string, timeframes?: string[], analysisType?: string, triggerNote?: string | null): Promise<{
     result: AnalysisResult;
     rawText: string;
     instrument: string;
@@ -63,7 +63,7 @@ export class SignalOrchestrator {
     const pending = await this.loadPendingSetup(instrument, analysisType);
 
     const { result, rawText, usage, rateLimit } =
-      await this.claude.analyze(instrument, candlesByTf, currentPrice, extras, pending);
+      await this.claude.analyze(instrument, candlesByTf, currentPrice, extras, pending, triggerNote);
 
     await this.notify(result, rawText, instrument, currentPrice);
 

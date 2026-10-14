@@ -17,12 +17,15 @@ import { SwingSocketHub } from './services/realtime/SwingSocketHub';
 import { TokenUsage } from './services/ai/transport/LlmTransport';
 import { lastRateLimitSnapshot, lastRunUsage } from './services/ai/UsageTracker';
 import { AnalysisScheduler } from './services/AnalysisScheduler';
+import { SetupWatcher } from './services/setup/SetupWatcher';
 import { createMcpServer } from './mcp-server';
 import { McpOAuthProvider, createAuthCode } from './services/auth/McpOAuthProvider';
 
 const app = express();
 // Khởi tạo sớm để route /api/scheduler tham chiếu được; chỉ .start() sau khi listen.
 const scheduler = AnalysisScheduler.fromConfig();
+// Kích hoạt phân tích theo sự kiện (sweep → BOS/CHoCH → retest) — xem SetupWatcher.ts.
+const setupWatcher = SetupWatcher.fromConfig();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
@@ -154,6 +157,12 @@ app.get('/api/swing', requireApiKey, async (req, res) => {
     logger.error('GET /api/swing failed', { error: err?.message ?? String(err) });
     res.status(500).json({ error: err?.message ?? 'Swing analysis failed' });
   }
+});
+
+// Trạng thái SetupWatcher: chuỗi sweep → BOS/CHoCH → retest của từng symbol đang ở bước nào,
+// lần kích hoạt gần nhất, số lần kích hoạt trong ngày.
+app.get('/api/setup-watcher', requireApiKey, (_req, res) => {
+  res.json(setupWatcher.status());
 });
 
 app.get('/api/scheduler', requireApiKey, (_req, res) => {
@@ -614,6 +623,7 @@ const httpServer = app.listen(port, async () => {
   }
 
   swingScheduler.start();
+  setupWatcher.start();
 });
 
 // Job nền dò nhịp nhỏ (không dùng AI) theo chu kỳ cho mọi symbol theo dõi, đẩy kết quả

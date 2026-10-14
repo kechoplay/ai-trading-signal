@@ -2,7 +2,9 @@ import { Candle } from '../market/Candle';
 import { AnalysisResult, ConditionalSetup } from './dto/AnalysisResult';
 import { config } from '../../config/trading';
 import { logger } from '../../logger';
-import { preprocess, IctFacts, TimeframeAnalysis } from './ict/IctPreprocessor';
+import {
+  preprocess, IctFacts, LevelStatus, StructureEvent, SweepEvent, TimeframeAnalysis,
+} from './ict/IctPreprocessor';
 import { FuturesSentiment } from '../market/BinanceFuturesService';
 import { LlmTransport, Effort, RateLimitSnapshot, TokenUsage } from './transport/LlmTransport';
 import { AnthropicApiTransport } from './transport/AnthropicApiTransport';
@@ -71,9 +73,10 @@ export class ClaudeAnalystService {
   async analyze(
     instrument: string,
     candlesByTimeframe: Record<string, Candle[]>,
-    _currentPrice: number,
+    currentPrice: number,
     extras?: CryptoExtras,
     pending?: PendingSetup | null,
+    triggerNote?: string | null,
   ): Promise<{
     result: AnalysisResult;
     rawText: string;
@@ -84,7 +87,8 @@ export class ClaudeAnalystService {
 
     // Tiền xử lý: code tính sẵn swing/fib/ATR/FVG/OB/liquidity/kill-zone cho mọi khung.
     // Model chỉ còn DIỄN GIẢI thay vì tự "bấm máy" → thinking ngắn lại, nhanh & chính xác hơn.
-    const facts = preprocess(candlesByTimeframe);
+    // Nến cuối chưa đóng được preprocess loại khỏi mọi phép tính body close (xem candleTime).
+    const facts = preprocess(candlesByTimeframe, { currentPrice });
     let userPrompt = this.buildUserPrompt(
       candlesByTimeframe, facts, this.tfOrderFor(instrument), this.rawCandlesFor(instrument),
       this.rawCandlesByTfFor(instrument),
@@ -98,6 +102,9 @@ export class ClaudeAnalystService {
 
     // Carry-forward: setup WATCHLIST lần trước → yêu cầu AI kiểm chứng độc lập.
     if (pending) userPrompt += `\n\n${buildPendingSetupBlock(pending)}`;
+
+    // Lượt do SetupWatcher kích hoạt (chuỗi sweep → BOS/CHoCH → retest phát hiện cơ học).
+    if (triggerNote) userPrompt += `\n\n${buildTriggerNoteBlock(triggerNote)}`;
 
     logger.info('[Claude] User prompt', { prompt: userPrompt });
 
@@ -305,8 +312,16 @@ Bạn là trader scalp chuyên nghiệp XAU/USD với 15 năm kinh nghiệm, chu
 Hai điều cần nhớ ngay từ đầu, vì chúng quyết định phần lớn việc bạn ra ORDER hay WATCHLIST: (1) bạn được phép đặt **LỆNH CHỜ tại POI** khi POI đã chín, không bắt buộc phải có confirmation M5 thời gian thực — xem mục "HAI CHẾ ĐỘ VÀO LỆNH"; (2) mọi luật về **vị trí range đo tại mức entry dự kiến**, KHÔNG đo tại giá hiện tại.
 
 Tôi cung cấp dữ liệu cho các khung: H4 (context), H1 (bias), M15 (POI), M5 (entry/confirmation).
-QUAN TRỌNG — code đã TÍNH SẴN các "ICT/SMC FACTS" cho mọi khung: bias, ATR, **ADX/DMI (regime)**, range/fib (premium/discount/equilibrium), swing highs/lows, FVG, order block, equal highs/lows (liquidity), kill zone. Hãy DÙNG TRỰC TIẾP các con số này, KHÔNG tính lại từ đầu — nhiệm vụ của bạn là DIỄN GIẢI và ra quyết định, không phải bấm máy.
-Chỉ khung M5 (entry) kèm thêm nến OHLC thô để bạn đọc confirmation. Các khung còn lại chỉ có facts đã tính sẵn — coi đó là đủ context.
+QUAN TRỌNG — code đã TÍNH SẴN các "ICT/SMC FACTS" cho mọi khung: bias, ATR, **ADX/DMI (regime)**, range/fib (premium/discount/equilibrium), swing highs/lows, FVG, order block, equal highs/lows (liquidity), **chuỗi BOS/CHoCH kèm cờ displacement + vùng retest (FVG/OB do cú phá tạo ra)**, **sự kiện liquidity sweep**, kill zone (đã xử lý DST). Hãy DÙNG TRỰC TIẾP các con số này, KHÔNG tính lại từ đầu — nhiệm vụ của bạn là DIỄN GIẢI và ra quyết định, không phải bấm máy.
+Khung H1, M15, M5 kèm nến OHLC thô (đã đóng) để bạn đọc hình dạng nến/confirmation; H4 chỉ có facts.
+**NẾN ĐANG CHẠY**: FACTS và bảng nến thô chỉ gồm nến ĐÃ ĐÓNG. Nến chưa đóng của mỗi khung (nếu có) được ghi riêng ở dòng "Nến ĐANG CHẠY" — chỉ dùng để biết giá/wick hiện tại; TUYỆT ĐỐI không coi "close" tạm của nó là body close (không dùng cho BOS/CHoCH, sweep-reject, hay đếm "≥2 nến H1 xác nhận").
+
+**ĐỌC NHÃN TRẠNG THÁI MỨC THANH KHOẢN trong FACTS** (swing highs/lows + equal highs/lows):
+- \`[unswept]\` — pool còn nguyên → nam châm thanh khoản (DOL).
+- \`[swept]\` — wick vượt qua rồi body close QUAY LẠI bên trong → liquidity sweep thật (dấu hiệu đảo chiều sớm).
+- \`[broken]\` — body close bên ngoài và KHÔNG quay lại → **phá thật, KHÔNG phải sweep**; đây là tín hiệu TIẾP DIỄN theo hướng phá, tuyệt đối không đọc thành "đã quét xong → đảo chiều".
+- \`[breaking]\` — vừa đóng cửa bên ngoài, chưa đủ nến để biết là sweep hay phá thật → chưa được dùng làm căn cứ cho cả hai hướng.
+**ĐỌC CHUỖI BOS/CHoCH trong FACTS**: mỗi sự kiện ghi "có displacement" hoặc "YẾU — KHÔNG displacement". Sự kiện YẾU KHÔNG thỏa định nghĩa BOS/CHoCH hợp lệ bên dưới — chỉ là body close nhích qua mức. "Vùng retest" đi kèm là FVG/OB do chính cú phá đó tạo ra — đây là vùng chờ hồi về (bước retest) chuẩn nhất; nhãn "hỏng" = đã bị body close xuyên mép xa, không còn là POI.
 Phân tích THUẦN TÚY từ price action theo đúng quy trình bên dưới. Bỏ qua mọi bình luận ngoài cấu trúc output.
 
 ## QUY ƯỚC
@@ -319,15 +334,16 @@ Phân tích THUẦN TÚY từ price action theo đúng quy trình bên dưới. 
     London kill zone VN **14:00–17:00** | New York kill zone VN **19:30–22:00**
   - Khi London đang giờ chuẩn (GMT, khoảng cuối tháng 10 → cuối tháng 3):
     London kill zone VN **15:00–18:00** | New York kill zone VN **20:30–23:00**
-  - Xác định giai đoạn dựa trên ngày tháng thực tế của timestamp trong data. Nếu
-    timestamp không kèm ngày rõ ràng để xác định DST → ghi rõ "không xác định được
-    kill zone chính xác do thiếu ngày", KHÔNG tự mặc định một khung giờ.
+  - Code đã tính sẵn kill zone theo giờ London/New York THẬT (tự xử lý DST) và ghi ở
+    đầu FACTS ("Kill zone ... London BST/GMT ... New York EDT/EST ...") → DÙNG TRỰC TIẾP
+    nhãn đó, KHÔNG tự suy DST từ timestamp nến. Bảng trên chỉ để tham chiếu.
 
 ## ĐỊNH NGHĨA KỸ THUẬT BẮT BUỘC (dùng đúng các định nghĩa này, không tự nới)
-- **BOS hợp lệ**: giá đóng cửa (body close, KHÔNG tính wick) vượt qua swing high/low gần nhất theo hướng xu hướng.
-- **CHoCH hợp lệ**: body close phá swing point ngược hướng cấu trúc cũ + PHẢI có ít nhất 1 nến displacement xác nhận (nến thân lớn, momentum rõ). MỘT cây nến wick quét đỉnh/đáy rồi đóng ngược KHÔNG phải CHoCH — đó chỉ là liquidity sweep / dấu hiệu sớm, ghi nhận nhưng KHÔNG dùng để xác định bias.
-- **Liquidity sweep**: giá quét qua một đỉnh/đáy rõ ràng (equal highs/lows, swing cũ) rồi đảo lại. Phải xác định sweep đã XẢY RA trước khi kỳ vọng đảo chiều — không vào lệnh TRƯỚC khi vùng thanh khoản đối diện bị quét.
-- **Đảo chiều NGƯỢC dòng H4 dựa trên sweep-and-reject**: nếu lý do chính để vào lệnh NGƯỢC dòng H4 là kiểu "giá quét qua đỉnh/đáy rồi có MỘT nến/khung đóng cửa ngược lại" (không có displacement rõ theo đúng định nghĩa CHoCH ở trên) → đây chỉ là dấu hiệu SỚM, một nến rất dễ bị chính leg cũ nuốt lại ngay sau đó (whipsaw), nhất là khi ADX H1 vẫn đang nghiêng theo hướng H4 cũ. Bắt buộc có **ít nhất 2 nến H1 liên tiếp đóng cửa đúng phía đảo chiều** (không chỉ 1 nến) trước khi được xuất ORDER theo hướng ngược dòng H4 — cả chế độ A (LIVE CONFIRM) lẫn B (LIMIT-CHỜ-POI). Chỉ có 1 nến H1 xác nhận → giữ **WATCHLIST** dù các cổng khác đều PASS, ghi rõ trong output "chỉ 1 nến H1 xác nhận sweep-reject, chờ nến H1 thứ 2 trước khi đảo ngược dòng H4". Quy tắc này KHÔNG áp dụng khi lệnh THUẬN dòng H4 (không cần siết thêm).
+- **BOS hợp lệ**: giá đóng cửa (body close, KHÔNG tính wick) vượt qua swing high/low gần nhất theo hướng xu hướng. Dùng làm căn cứ vào lệnh (BOS/MSS) thì cũng phải có displacement như CHoCH — FACTS ghi sẵn cờ này.
+- **CHoCH hợp lệ**: body close phá swing point ngược hướng cấu trúc cũ + PHẢI có ít nhất 1 nến displacement xác nhận (nến thân lớn, momentum rõ). MỘT cây nến wick quét đỉnh/đáy rồi đóng ngược KHÔNG phải CHoCH — đó chỉ là liquidity sweep / dấu hiệu sớm, ghi nhận nhưng KHÔNG dùng để xác định bias. Sự kiện FACTS ghi "YẾU — KHÔNG displacement" → KHÔNG phải CHoCH hợp lệ.
+- **Liquidity sweep**: giá quét qua một đỉnh/đáy rõ ràng (equal highs/lows, swing cũ) rồi body close quay lại — FACTS liệt kê ở dòng "Liquidity sweep gần nhất" và nhãn \`[swept]\`. Mức \`[broken]\` KHÔNG phải sweep. Phải xác định sweep đã XẢY RA trước khi kỳ vọng đảo chiều — không vào lệnh TRƯỚC khi vùng thanh khoản đối diện bị quét.
+- **Chuỗi chuẩn (thứ tự ưu tiên khi đọc setup)**: sweep thanh khoản → BOS/CHoCH CÓ displacement theo hướng ngược cú quét → giá hồi về vùng retest (FVG/OB do displacement đó tạo ra) → entry, SL sau râu cú quét. Khi FACTS cho thấy đủ chuỗi này trên M15 (hoặc M5 trong POI M15/H1), đó là căn cứ mạnh nhất cho chế độ A; ghi rõ trong output từng mắt xích đã thỏa / còn thiếu.
+- **Đảo chiều NGƯỢC dòng H4 dựa trên sweep-and-reject**: nếu lý do chính để vào lệnh NGƯỢC dòng H4 là kiểu "giá quét qua đỉnh/đáy rồi có MỘT nến/khung đóng cửa ngược lại" (không có displacement rõ theo đúng định nghĩa CHoCH ở trên) → đây chỉ là dấu hiệu SỚM, một nến rất dễ bị chính leg cũ nuốt lại ngay sau đó (whipsaw), nhất là khi ADX H1 vẫn đang nghiêng theo hướng H4 cũ. Bắt buộc có **ít nhất 2 nến H1 ĐÃ ĐÓNG liên tiếp đóng cửa đúng phía đảo chiều** (không chỉ 1 nến; nến H1 đang chạy KHÔNG được đếm) trước khi được xuất ORDER theo hướng ngược dòng H4 — cả chế độ A (LIVE CONFIRM) lẫn B (LIMIT-CHỜ-POI). Chỉ có 1 nến H1 xác nhận → giữ **WATCHLIST** dù các cổng khác đều PASS, ghi rõ trong output "chỉ 1 nến H1 xác nhận sweep-reject, chờ nến H1 thứ 2 trước khi đảo ngược dòng H4". Quy tắc này KHÔNG áp dụng khi lệnh THUẬN dòng H4 (không cần siết thêm).
 - **POI hợp lệ**: OB hoặc FVG nằm trong vùng premium/discount đúng với bias, VÀ nằm sau một cú sweep + displacement.
 - **Inversion FVG**: một FVG bị giá trade-through bằng body close rồi được tôn trọng TỪ PHÍA NGƯỢC LẠI → nó đã ĐẢO VAI. Bearish FVG bị xuyên và giữ từ trên = tín hiệu LONG; bullish FVG bị xuyên và giữ từ dưới = tín hiệu SHORT. KHÔNG được tiếp tục coi một FVG đã bị invert là POI theo hướng cũ.
 - **Impulsive leg**: một chuỗi ≥ 5 nến M5 liên tiếp cùng hướng (cho phép tối đa 1 nến ngược màu nhỏ xen giữa, thân < 30% trung bình các nến impulsive), tổng biên độ di chuyển ≥ 3× ATR M5, tính từ điểm bắt đầu chuỗi đến điểm cao/thấp nhất đạt được. Nếu M5 hiện đang (hoặc vừa kết thúc trong vòng ≤ 3 nến) một impulsive leg → mọi pullback ngược hướng leg đó nên coi là **correction** (thận trọng hơn), phản ánh vào Cảnh báo C.
@@ -406,13 +422,13 @@ Phân tích THUẦN TÚY từ price action theo đúng quy trình bên dưới. 
    ### ℹ️ CẢNH BÁO B — DRAW ON LIQUIDITY (soft, chỉ hạ confidence)
    - Xác định pool thanh khoản CHƯA bị quét gần nhất ở MỖI phía (equal highs/lows, swing cũ) từ FACTS. Ghi rõ DOL đang nghiêng LÊN hay XUỐNG.
    - Nếu hướng lệnh đi **NGƯỢC** DOL gần nhất chưa quét → **hạ 1 bậc confidence** và ghi rõ rủi ro "đang đi ngược nam châm thanh khoản". KHÔNG còn tự động NO TRADE dù ngược dòng H4 — vẫn được vào lệnh nếu câu chuyện price action hợp lý và qua các HARD GATE.
-   - Lưu ý: sellside vừa bị quét trong discount (hoặc buyside vừa bị quét trong premium) thường là dấu hiệu GOM HÀNG / ĐẢO CHIỀU — ưu tiên đọc theo hướng đảo chiều thay vì tiếp diễn ngay sau cú quét.
+   - Lưu ý: sellside vừa bị quét trong discount (hoặc buyside vừa bị quét trong premium) thường là dấu hiệu GOM HÀNG / ĐẢO CHIỀU — ưu tiên đọc theo hướng đảo chiều thay vì tiếp diễn ngay sau cú quét. CHỈ áp dụng cho mức có nhãn \`[swept]\`; mức \`[broken]\` là phá thật → đọc theo hướng TIẾP DIỄN, \`[breaking]\` → chưa kết luận.
 
    ### ℹ️ CẢNH BÁO C — CHoCH TRONG IMPULSIVE LEG (soft, chỉ hạ confidence)
    - Nếu CHoCH M5 dùng làm confirmation đang nằm NGƯỢC hướng một impulsive leg vừa/đang chạy (định nghĩa ở trên), HOẶC dữ liệu M5 < 30 nến không đủ để loại trừ → coi đây là confirmation "yếu": **hạ 1 bậc confidence** và ghi chú "CHoCH nghi là correction trong impulsive leg / dữ liệu M5 mỏng".
    - Vẫn ĐƯỢC xuất ORDER (thường Medium/Low) nếu có thêm 1 dấu hiệu đồng thuận bất kỳ (nến displacement thứ 2, hoặc M15 cùng hướng, hoặc rejection rõ tại POI). Chỉ khi confirmation quá mỏng manh (một wick đơn lẻ, không displacement nào) → mới nên để WATCHLIST.
 
-5. **M15 — POI**: tìm OB/FVG nằm trong vùng premium/discount phù hợp bias, đã có sweep + displacement. Ghi rõ vùng giá POI. Nếu POI trên ĐÚNG khung được chọn chưa được giá chạm tới đáy/đỉnh thật của nó → ghi rõ là CHƯA chạm, KHÔNG được mượn FVG khung khác để "cứu" entry.
+5. **M15 — POI**: tìm OB/FVG nằm trong vùng premium/discount phù hợp bias, đã có sweep + displacement. Ưu tiên "vùng retest" mà FACTS gắn với một BOS/CHoCH CÓ displacement xảy ra SAU một sweep \`[swept]\` ngược hướng (đúng chuỗi chuẩn); vùng ghi "hỏng" thì loại. Ghi rõ vùng giá POI. Nếu POI trên ĐÚNG khung được chọn chưa được giá chạm tới đáy/đỉnh thật của nó → ghi rõ là CHƯA chạm, KHÔNG được mượn FVG khung khác để "cứu" entry.
 
 6. **M5 — Confirmation**: chỉ xét KHI giá đã chạm POI. Cần CHoCH hoặc BOS nội bộ M5 + nến xác nhận (engulfing / rejection / displacement).
 
@@ -698,6 +714,7 @@ Bạn là trader futures/perpetual chuyên nghiệp thị trường crypto với
 Tôi cung cấp dữ liệu ${instrument} (hợp đồng perpetual) trên các khung: ${tfContext} (context), ${tfBias} (bias), ${tfPoi} (POI), ${tfEntry} (entry/confirmation).
 QUAN TRỌNG — code đã TÍNH SẴN "ICT/SMC FACTS" cho mọi khung: bias, ATR, **ADX/DMI (regime)**, range/fib (premium/discount/equilibrium), swing highs/lows, FVG, order block, equal highs/lows (liquidity). DÙNG TRỰC TIẾP các con số này, KHÔNG tính lại — nhiệm vụ của bạn là DIỄN GIẢI và ra quyết định, không phải bấm máy.
 Chỉ khung ${tfEntry} (entry) kèm thêm nến OHLC thô để đọc confirmation; các khung còn lại chỉ có facts đã tính sẵn — coi đó là đủ context.
+FACTS và nến thô chỉ gồm nến ĐÃ ĐÓNG; nến chưa đóng ghi riêng ở dòng "Nến ĐANG CHẠY" — không dùng "close" tạm của nó làm body close. Nhãn mức thanh khoản: \`[unswept]\` pool còn nguyên; \`[swept]\` wick vượt rồi body close quay lại (sweep thật); \`[broken]\` phá thật, KHÔNG phải sweep (đọc theo hướng tiếp diễn); \`[breaking]\` chưa kết luận. Sự kiện BOS/CHoCH ghi "YẾU — KHÔNG displacement" thì không phải CHoCH hợp lệ.
 Nếu có, tôi cung cấp thêm (ở cuối phần dữ liệu): funding rate + open interest (block FUTURES SENTIMENT), và BTC context — bias các khung của BTC (block BTC CONTEXT) khi instrument là altcoin. Nếu không thấy block tương ứng nghĩa là dữ liệu đó không có → đừng bịa.
 Phân tích THUẦN TÚY từ price action + sentiment futures. Bỏ qua mọi bình luận ngoài cấu trúc output.
 
@@ -879,10 +896,18 @@ RR TP1 < 1:${config.minRr} sau mọi điều chỉnh → **tự động NO TRADE
 
     const lines: string[] = [];
     lines.push('=== ICT/SMC FACTS (code đã tính sẵn — DÙNG TRỰC TIẾP, KHÔNG tính lại) ===');
+    const kz = facts.meta.killZone;
     lines.push(`Giá hiện tại: ${facts.meta.currentPrice}`);
     lines.push(
-      `Kill zone (nến mới nhất): ${facts.meta.killZone.vnTime} VN — ` +
-      `${facts.meta.killZone.inKillZone ? facts.meta.killZone.zone : 'NGOÀI kill zone'}`,
+      `Kill zone (thời điểm phân tích ${kz.vnTime} VN — code ĐÃ xử lý DST): ` +
+      `${kz.inKillZone ? kz.zone : 'NGOÀI kill zone'}` +
+      ` | London ${kz.londonDst ? 'BST' : 'GMT'} ${kz.londonVn} VN` +
+      ` | New York ${kz.newYorkDst ? 'EDT' : 'EST'} ${kz.newYorkVn} VN`,
+    );
+    lines.push(
+      'Quy ước nến: mọi FACTS bên dưới chỉ tính trên nến ĐÃ ĐÓNG. Nến đang chạy (nếu có) ghi riêng ở dòng ' +
+      '"Nến ĐANG CHẠY" — chỉ dùng để biết giá/wick hiện tại, KHÔNG dùng làm body close cho BOS/CHoCH/sweep, ' +
+      'KHÔNG đếm vào luật "≥2 nến H1 xác nhận".',
     );
     lines.push('');
 
@@ -900,14 +925,24 @@ RR TP1 < 1:${config.minRr} sau mọi điều chỉnh → **tự động NO TRADE
       if (tfFacts) lines.push(formatTimeframeFacts(tfFacts));
 
       // Gửi nến thô nếu khung này được cấu hình số > 0 (để model đọc HÌNH DẠNG nến).
+      // Chỉ liệt kê nến ĐÃ ĐÓNG; nến đang chạy tách ra một dòng riêng để model không
+      // đọc nhầm "close" tạm thời của nó thành body close.
+      const forming = tfFacts?.formingCandle ?? null;
       if (rawCount > 0) {
-        const slice = candles.slice(-rawCount);
+        const closedCandles = forming ? candles.slice(0, -1) : candles;
+        const slice = closedCandles.slice(-rawCount);
         const purpose = tf === entryTf ? 'đọc confirmation/entry' : 'đọc hình dạng nến';
-        lines.push(`Nến thô (${slice.length} nến cuối — ${purpose}):`);
+        lines.push(`Nến thô ĐÃ ĐÓNG (${slice.length} nến cuối — ${purpose}):`);
         lines.push('timestamp,open,high,low,close');
         lines.push(...slice.map((c) =>
           `${toUnixTimestamp(c.time)},${c.open},${c.high},${c.low},${c.close}`,
         ));
+      }
+      if (forming) {
+        lines.push(
+          `Nến ĐANG CHẠY (chưa đóng, mở lúc ${forming.time}): open ${forming.open} high ${forming.high} ` +
+          `low ${forming.low} giá hiện tại ${forming.close} — KHÔNG dùng làm body close`,
+        );
       }
       lines.push('');
     }
@@ -921,16 +956,35 @@ RR TP1 < 1:${config.minRr} sau mọi điều chỉnh → **tự động NO TRADE
 function formatTimeframeFacts(a: TimeframeAnalysis): string {
   const r = a.range;
   const l = a.liquidity;
-  const fmtSwings = (s: { price: number; time: string }[]) =>
-    s.length ? s.map((x) => `${x.price}@${x.time}`).join(', ') : '—';
+  // Trạng thái mức thanh khoản: unswept = pool còn nguyên (nam châm DOL); swept = quét rồi
+  // body close quay lại (từ chối); broken = phá thật (KHÔNG phải sweep); breaking = vừa đóng
+  // cửa bên ngoài, chưa đủ nến để kết luận.
+  const fmtStatus = (s: LevelStatus | undefined) => (s ? s.toLowerCase() : 'unswept');
+  const fmtSwings = (s: { price: number; time: string; status?: LevelStatus }[]) =>
+    s.length ? s.map((x) => `${x.price}@${x.time} [${fmtStatus(x.status)}]`).join(', ') : '—';
   // Zone (FVG/OB) kèm cờ mitigate: [fresh] = còn nguyên (POI tươi), [mitigated] = đã bị ăn.
   const fmtZones = (z: { type: string; top: number; bottom: number; mitigated: boolean }[]) =>
     z.length ? z.map((x) => `${x.type} ${x.bottom}–${x.top} [${x.mitigated ? 'mitigated' : 'fresh'}]`).join(' | ') : '—';
-  // Liquidity kèm trạng thái quét: [unswept] = pool còn nguyên (nam châm DOL), [swept] = đã quét.
-  const fmtLiq = (lv: { price: number; swept: boolean }[]) =>
-    lv.length ? lv.map((x) => `${x.price} [${x.swept ? 'swept' : 'unswept'}]`).join(', ') : '—';
-  const fmtStruct = (s: TimeframeAnalysis['recentStructure']) =>
-    s ? `${s.kind} ${s.direction} @ ${s.level} (${s.time})` : '—';
+  const fmtLiq = (lv: { price: number; status: LevelStatus }[]) =>
+    lv.length ? lv.map((x) => `${x.price} [${fmtStatus(x.status)}]`).join(', ') : '—';
+  // BOS/CHoCH kèm displacement + vùng retest do chính cú phá tạo ra. Không displacement →
+  // ghi rõ "YẾU" để khớp định nghĩa CHoCH hợp lệ trong system prompt.
+  const fmtEvent = (s: StructureEvent) => {
+    const disp = s.displacement
+      ? `có displacement (thân ${s.bodyAtr}× ATR)`
+      : `YẾU — KHÔNG displacement (thân ${s.bodyAtr}× ATR, không FVG)`;
+    const z = s.retestZone;
+    const zone = z
+      ? ` → vùng retest ${z.source} ${z.bottom}–${z.top} [${z.invalidated ? 'hỏng — đã bị body close xuyên' : z.mitigated ? 'đã chạm lại' : 'fresh, chưa hồi về'}]`
+      : ' → không có FVG/OB để retest';
+    return `${s.kind} ${s.direction} phá ${s.level} (${s.time}) — ${disp}${zone}`;
+  };
+  const fmtSweeps = (list: SweepEvent[]) =>
+    list.length
+      ? list.map((e) =>
+        `${e.side === 'BUYSIDE' ? 'quét ĐỈNH (buyside)' : 'quét ĐÁY (sellside)'} ${e.levelType === 'EQUAL' ? 'equal level' : 'swing'} ${e.level}`
+        + ` — râu tới ${e.extreme}, đóng cửa quay lại lúc ${e.time}`).join(' | ')
+      : '— (chưa có cú quét nào bị từ chối gần đây)';
 
   // range_size = rangeHigh − rangeLow (mẫu số cho % khoảng cách tới EQ ở Cổng 1.5 & 6).
   const rangeSize = Number((r.rangeHigh - r.rangeLow).toFixed(2));
@@ -953,10 +1007,16 @@ function formatTimeframeFacts(a: TimeframeAnalysis): string {
       + (leg.sizeAtr < 1 ? ' | ⚠️ leg < 1× ATR = nhiễu, dùng range mở rộng thay thế' : '')
     : '▶ DEALING RANGE (leg đang chạy): — (chưa đủ swing đối nghịch → dùng range mở rộng thay thế)';
 
+  const structLines = a.structureEvents.length
+    ? a.structureEvents.map((e, i) => `  ${i + 1}. ${fmtEvent(e)}`)
+    : ['  —'];
+
   return [
     `Bias: ${a.bias} | ATR: ${a.atr} | Giá: ${a.lastPrice}`,
     adxLine,
-    `Cấu trúc gần nhất (BOS/CHoCH): ${fmtStruct(a.recentStructure)}`,
+    `Cấu trúc BOS/CHoCH (cũ → mới, body close nến đã đóng):`,
+    ...structLines,
+    `Liquidity sweep gần nhất (wick vượt rồi body close quay lại): ${fmtSweeps(a.sweeps)}`,
     `Range mở rộng (${a.candleCount} nến gần nhất — chỉ để tham chiếu bối cảnh): ${r.rangeLow}–${r.rangeHigh} | Size: ${rangeSize} | EQ(50%): ${r.equilibrium} | Vùng: ${r.zone}`,
     `Fib (range mở rộng): 0.236=${r.fib['0.236']} 0.382=${r.fib['0.382']} 0.618=${r.fib['0.618']} 0.786=${r.fib['0.786']}`,
     legLine,
@@ -1015,6 +1075,20 @@ function buildCryptoExtras(extras: CryptoExtras): string {
  */
 function buildPendingSetupBlock(p: PendingSetup): string {
   return p.kind === 'order' ? buildPreviousOrderBlock(p) : buildPreviousWatchlistBlock(p);
+}
+
+/**
+ * Block cho lượt do SetupWatcher kích hoạt. Bộ lọc cơ học chỉ thấy MỘT chuỗi sweep →
+ * BOS/CHoCH → retest trên một khung — framing "gợi ý cần kiểm chứng" để model không
+ * coi việc được kích hoạt là bằng chứng setup tốt (anchoring).
+ */
+function buildTriggerNoteBlock(note: string): string {
+  return [
+    '=== LÝ DO LƯỢT PHÂN TÍCH NÀY ĐƯỢC KÍCH HOẠT (bộ lọc cơ học, KHÔNG phải AI) ===',
+    note,
+    '',
+    '⚠️ Đây chỉ là chuỗi sự kiện code dò được trên nến đã đóng — KHÔNG phải kết luận. Kiểm chứng ĐỘC LẬP bằng FACTS và nến thô theo đúng quy trình + 3 HARD GATE. Nếu thấy chuỗi này không hợp lệ (sweep yếu, displacement không thật, vùng retest đã hỏng, ngược bias, RR không đạt…) thì cứ ra WATCHLIST/NO TRADE như bình thường. Thêm 1 dòng vào SUMMARY: "Chuỗi kích hoạt: [XÁC NHẬN / BÁC BỎ] — [lý do ngắn]".',
+  ].join('\n');
 }
 
 function buildPreviousWatchlistBlock(p: PendingSetup): string {
