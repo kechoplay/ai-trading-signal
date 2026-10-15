@@ -16,6 +16,8 @@ import { TokenUsage } from './services/ai/transport/LlmTransport';
 import { lastRateLimitSnapshot, lastRunUsage } from './services/ai/UsageTracker';
 import { AnalysisScheduler } from './services/AnalysisScheduler';
 import { SetupWatcher } from './services/setup/SetupWatcher';
+import { DailyPlanScheduler } from './services/DailyPlanScheduler';
+import { DAILY_PLAN } from './services/SignalOrchestrator';
 import { createMcpServer } from './mcp-server';
 import { McpOAuthProvider, createAuthCode } from './services/auth/McpOAuthProvider';
 
@@ -24,6 +26,8 @@ const app = express();
 const scheduler = AnalysisScheduler.fromConfig();
 // Kích hoạt phân tích theo sự kiện (sweep → BOS/CHoCH → retest) — xem SetupWatcher.ts.
 const setupWatcher = SetupWatcher.fromConfig();
+// Kế hoạch ngày vàng theo mốc giờ (mặc định 7h/11h/15h/19h T2–T6) — xem DailyPlanScheduler.ts.
+const dailyPlanScheduler = DailyPlanScheduler.fromConfig();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
@@ -179,6 +183,31 @@ app.get('/api/setup-watcher/history', requireApiKey, async (req, res) => {
 
 app.get('/api/scheduler', requireApiKey, (_req, res) => {
   res.json(scheduler.status());
+});
+
+// Kế hoạch ngày vàng (DailyPlanScheduler): mốc giờ, lần chạy kế tiếp, lỗi gần nhất.
+app.get('/api/daily-plan', requireApiKey, (_req, res) => {
+  res.json(dailyPlanScheduler.status());
+});
+
+// Lập kế hoạch ngày ngay (không chờ mốc giờ). Body: { symbol? } — mặc định symbol đầu
+// tiên của DAILY_PLAN_SYMBOLS. 409 khi đang có phân tích khác chạy (single-flight).
+app.post('/api/daily-plan/run', requireApiKey, async (req, res) => {
+  const symbol: string = req.body?.symbol?.trim() || config.dailyPlan.symbols[0] || config.instrument;
+  try {
+    logger.info('POST /api/daily-plan/run triggered', { symbol });
+    const { symbol: sym, durationMs, setup, reasoning, usage } = await runAnalysis({
+      symbol, analysisType: DAILY_PLAN, timeframes: config.dailyPlan.timeframes, trigger: 'api',
+    });
+    res.json({ ok: true, symbol: sym, duration_ms: durationMs, setup, reasoning, usage: usage ? toUsageJson(usage) : null });
+  } catch (err: any) {
+    if (err instanceof AnalysisBusyError) {
+      res.status(409).json({ error: err.message });
+      return;
+    }
+    logger.error('POST /api/daily-plan/run failed', { error: err.message });
+    res.status(500).json({ error: err.message ?? 'Daily plan failed' });
+  }
 });
 
 const SCHEDULER_ENABLED_KEY = 'scheduler_enabled';
@@ -477,7 +506,9 @@ app.get('/api/symbols/:symbol/signals', requireApiKey, async (req, res) => {
 
 app.get('/api/signals/latest', async (_req, res) => {
   try {
+    // Kế hoạch ngày không phải tín hiệu vào lệnh → không để nó chiếm chỗ "tín hiệu mới nhất".
     const signal = await prisma.tradingSignal.findFirst({
+      where:   { analysis_type: { not: DAILY_PLAN } },
       orderBy: { created_at: 'desc' },
     });
     if (!signal) {
@@ -639,4 +670,5 @@ app.listen(port, async () => {
   }
 
   setupWatcher.start();
+  dailyPlanScheduler.start();
 });

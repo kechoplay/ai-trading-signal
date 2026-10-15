@@ -1,4 +1,4 @@
-import { SignalOrchestrator } from './SignalOrchestrator';
+import { DAILY_PLAN, SignalOrchestrator } from './SignalOrchestrator';
 import { TelegramNotifier } from './telegram/TelegramNotifier';
 import { RateLimitSnapshot, TokenUsage } from './ai/transport/LlmTransport';
 import { recordUsage } from './ai/UsageTracker';
@@ -71,7 +71,10 @@ export async function runAnalysis(opts: AnalysisRunOptions): Promise<AnalysisRun
     const durationMs = Date.now() - startedAt;
 
     const notifier  = TelegramNotifier.fromConfig();
-    const setup     = notifier.formatSignalCard(result, sym, currentPrice);
+    const isPlan    = analysisType === DAILY_PLAN;
+    const setup     = isPlan
+      ? notifier.formatPlanCard(result, sym, currentPrice)
+      : notifier.formatSignalCard(result, sym, currentPrice);
     const reasoning = notifier.formatAnalysis(rawText);
 
     await prisma.$transaction([
@@ -79,7 +82,7 @@ export async function runAnalysis(opts: AnalysisRunOptions): Promise<AnalysisRun
         data: {
           instrument:      sym,
           action:          result.action,
-          timeframe:       (timeframes ?? config.timeframes)[0] ?? null,
+          timeframe:       (timeframes ?? (isPlan ? config.dailyPlan.timeframes : config.timeframes))[0] ?? null,
           analysis_type:   analysisType,
           entry:           result.entry,
           stop_loss:       result.stopLoss,
@@ -96,7 +99,7 @@ export async function runAnalysis(opts: AnalysisRunOptions): Promise<AnalysisRun
       }),
       prisma.analysisLog.create({
         data: {
-          symbol: sym, duration_ms: durationMs, setup, reasoning, trigger,
+          symbol: sym, duration_ms: durationMs, setup, reasoning, trigger, analysis_type: analysisType,
           input_tokens:       usage?.inputTokens         ?? null,
           output_tokens:      usage?.outputTokens        ?? null,
           cache_read_tokens:  usage?.cacheReadTokens     ?? null,

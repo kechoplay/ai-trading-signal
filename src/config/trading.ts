@@ -155,6 +155,77 @@ export const config = {
     offsetSec: parseInt(process.env.SCHEDULER_OFFSET_SEC ?? '0', 10),
   },
 
+  // KẾ HOẠCH NGÀY VÀNG — lịch riêng, chạy theo GIỜ (không phải phút như `scheduler`):
+  // startHour, startHour+intervalHours, … ≤ endHour (mặc định 7h/11h/15h/19h, T2–T6).
+  // Mỗi lượt Claude lập plan cho phần còn lại của ngày (bias D/H4/H1, bản đồ mức giá,
+  // kịch bản BUY/SELL, lịch phiên) — KHÔNG ra lệnh. Lưu analysis_type='daily_plan' nên
+  // không trộn vào carry-forward của intraday. Tốn quota như một lượt intraday.
+  dailyPlan: {
+    enabled: (process.env.DAILY_PLAN_ENABLED ?? 'true').toLowerCase() !== 'false',
+    startHour: parseInt(process.env.DAILY_PLAN_START_HOUR ?? '7', 10),
+    endHour: parseInt(process.env.DAILY_PLAN_END_HOUR ?? '22', 10),
+    intervalHours: parseInt(process.env.DAILY_PLAN_INTERVAL_HOURS ?? '4', 10),
+    weekdays: (process.env.DAILY_PLAN_WEEKDAYS ?? '1,2,3,4,5')
+      .split(',')
+      .map((s) => parseInt(s.trim(), 10))
+      .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6),
+    // Prompt plan viết cho vàng — symbol crypto bị từ chối ở SignalOrchestrator.
+    symbols: (process.env.DAILY_PLAN_SYMBOLS ?? 'XAU/USD')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+    offsetSec: parseInt(process.env.DAILY_PLAN_OFFSET_SEC ?? '30', 10),
+    // Trùng mốc với scheduler intraday / SetupWatcher (single-flight) → chờ rồi thử lại
+    // thay vì bỏ lượt như intraday: plan chỉ vài lượt/ngày, mất một lượt là mất nửa phiên.
+    busyRetrySec: parseInt(process.env.DAILY_PLAN_BUSY_RETRY_SEC ?? '60', 10),
+    busyMaxWaitMin: parseInt(process.env.DAILY_PLAN_BUSY_MAX_WAIT_MIN ?? '15', 10),
+    timeframes: (process.env.DAILY_PLAN_TIMEFRAMES ?? 'D,H4,H1,M15')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+    // Số nến tính FACTS riêng cho plan — H4 của intraday vàng chỉ 30 nến (context), plan
+    // cần đọc cấu trúc H4/D nên lấy nhiều hơn.
+    // Số này là số nến LẤY VỀ — nến cuối tuần (thị trường đóng) bị lọc bỏ sau đó, nên
+    // dư ra ~30%: D 170 → ~120 ngày giao dịch, H4 160 → ~4 tuần, H1 160 → ~5 ngày.
+    candlesByTf: {
+      D:   parseInt(process.env.DAILY_PLAN_CANDLES_D   ?? '170', 10),
+      H4:  parseInt(process.env.DAILY_PLAN_CANDLES_H4  ?? '160', 10),
+      H1:  parseInt(process.env.DAILY_PLAN_CANDLES_H1  ?? '160', 10),
+      M15: parseInt(process.env.DAILY_PLAN_CANDLES_M15 ?? '96', 10),
+    } as Record<string, number>,
+    // Range premium/discount riêng cho plan (bảng FIB_LOOKBACK_BY_TF của preprocessor chỉ
+    // có H1/M15/M5 và dùng chung với crypto → D/H4 rơi về 80 nến). Khung không liệt kê
+    // giữ mặc định của preprocessor.
+    rangeLookbackByTf: {
+      D:  parseInt(process.env.DAILY_PLAN_RANGE_LOOKBACK_D  ?? '120', 10),
+      H4: parseInt(process.env.DAILY_PLAN_RANGE_LOOKBACK_H4 ?? '120', 10),
+    } as Record<string, number>,
+    // Lịch phiên vàng theo giờ New York (Intl tự xử lý DST):
+    //  - rolloverNyHour: ngày giao dịch bắt đầu lúc 17:00 NY (04:00 VN mùa hè / 05:00 mùa
+    //    đông) — PDH/PDL tính theo mốc này, KHÔNG theo nến D của TwelveData (cắt 03:00 VN
+    //    và có cả nến T7/CN đi ngang).
+    //  - đóng cửa cuối tuần: T6 closeFriNyHour → CN openSunNyHour.
+    //  - range Á (ICT Asian range): asiaStartNyHour → asiaEndNyHour (24 = nửa đêm NY).
+    session: {
+      rolloverNyHour:  parseInt(process.env.DAILY_PLAN_ROLLOVER_NY_HOUR   ?? '17', 10),
+      closeFriNyHour:  parseInt(process.env.DAILY_PLAN_CLOSE_FRI_NY_HOUR  ?? '17', 10),
+      openSunNyHour:   parseInt(process.env.DAILY_PLAN_OPEN_SUN_NY_HOUR   ?? '18', 10),
+      asiaStartNyHour: parseInt(process.env.DAILY_PLAN_ASIA_START_NY_HOUR ?? '20', 10),
+      asiaEndNyHour:   parseInt(process.env.DAILY_PLAN_ASIA_END_NY_HOUR   ?? '24', 10),
+    },
+    // Nến thô gửi kèm theo khung (0 = chỉ facts). Plan đọc hình dạng nến D/H4/H1.
+    rawCandlesByTf: {
+      D:   parseInt(process.env.DAILY_PLAN_RAW_CANDLES_D   ?? '10', 10),
+      H4:  parseInt(process.env.DAILY_PLAN_RAW_CANDLES_H4  ?? '18', 10),
+      H1:  parseInt(process.env.DAILY_PLAN_RAW_CANDLES_H1  ?? '24', 10),
+      M15: parseInt(process.env.DAILY_PLAN_RAW_CANDLES_M15 ?? '0', 10),
+    } as Record<string, number>,
+    // Plan trước đó (cùng symbol) trong N phút gần nhất → nhét vào prompt để cập nhật
+    // kịch bản nào đã kích hoạt / vô hiệu. 300 phút: bắt được plan cách 4h, nhưng lượt
+    // 7h sáng KHÔNG đọc lại plan 19h hôm trước.
+    previousPlanMaxAgeMin: parseInt(process.env.DAILY_PLAN_PREVIOUS_MAX_AGE_MIN ?? '300', 10),
+  },
+
   twelvedata: {
     apiKey: process.env.TWELVEDATA_API_KEY ?? '',
     baseUrl: process.env.TWELVEDATA_BASE_URL ?? 'https://api.twelvedata.com',

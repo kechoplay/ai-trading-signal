@@ -5,6 +5,7 @@ import { logger } from '../../logger';
 import {
   preprocess, IctFacts, LevelStatus, StructureEvent, SweepEvent, TimeframeAnalysis,
 } from './ict/IctPreprocessor';
+import { SessionLevels, computeSessionLevels } from './ict/SessionLevels';
 import { FuturesSentiment } from '../market/BinanceFuturesService';
 import { LlmTransport, Effort, RateLimitSnapshot, TokenUsage } from './transport/LlmTransport';
 import { AnthropicApiTransport } from './transport/AnthropicApiTransport';
@@ -40,6 +41,18 @@ export interface PendingSetup {
   takeProfit?: number | null;
   riskReward?: number | null;
 }
+
+/** Plan lượt trước trong ngày — nhét vào prompt kế hoạch ngày để cập nhật kịch bản. */
+export interface PreviousPlan {
+  ageMinutes: number;
+  analyzedAtVn: string;
+  priceThen: number | null;
+  trendBias: string | null;
+  scenarios: string;      // các block `#### KỊCH BẢN BUY/SELL` của plan trước
+}
+
+// Kế hoạch ngày đọc từ khung lớn xuống: D (bối cảnh) → H4 (dòng chảy) → H1 (mức trong ngày) → M15.
+const DAILY_PLAN_TF_ORDER = ['D', 'H4', 'H1', 'M15'];
 
 export class ClaudeAnalystService {
   protected readonly tfOrder: string[] = ['H4', 'H1', 'M15', 'M5'];
@@ -118,6 +131,68 @@ export class ClaudeAnalystService {
     // Lượt do SetupWatcher kích hoạt (chuỗi sweep → BOS/CHoCH → retest phát hiện cơ học).
     if (triggerNote) userPrompt += `\n\n${buildTriggerNoteBlock(triggerNote)}`;
 
+    const { rawText, usage, rateLimit } = await this.callModel(instrument, systemPrompt, userPrompt);
+    const result = this.parseAnalysisResult(rawText);
+    return { result, rawText, usage, rateLimit };
+  }
+
+  /**
+   * KẾ HOẠCH NGÀY (vàng) — không ra lệnh, chỉ lập bias + bản đồ mức giá + kịch bản
+   * BUY/SELL cho phần còn lại của ngày. Kết quả luôn là WATCHLIST (plan = những gì cần
+   * canh), kịch bản nằm trong conditionalSetups. `previousPlan` = plan lượt trước trong
+   * ngày, để model cập nhật thay vì lập lại từ đầu.
+   */
+  async analyzeDailyPlan(
+    instrument: string,
+    candlesByTimeframe: Record<string, Candle[]>,
+    currentPrice: number,
+    previousPlan?: PreviousPlan | null,
+  ): Promise<{
+    result: AnalysisResult;
+    rawText: string;
+    usage: TokenUsage | null;
+    rateLimit: RateLimitSnapshot | null;
+  }> {
+    const userPrompt = this.buildDailyPlanUserPrompt(candlesByTimeframe, currentPrice, previousPlan);
+
+    const { rawText, usage, rateLimit } =
+      await this.callModel(instrument, buildGoldDailyPlanSystemPrompt(), userPrompt);
+    return { result: this.parseDailyPlanResult(rawText), rawText, usage, rateLimit };
+  }
+
+  /**
+   * User prompt kế hoạch ngày = FACTS (range D/H4 dài hơn mặc định) + block mức giá
+   * theo phiên (PDH/PDL/PWH/PWL/range Á, code tính) + plan lượt trước. Public để chạy
+   * thử (dry-run) mà không gọi model.
+   */
+  buildDailyPlanUserPrompt(
+    candlesByTimeframe: Record<string, Candle[]>,
+    currentPrice: number,
+    previousPlan?: PreviousPlan | null,
+    now: Date = new Date(),
+  ): string {
+    const facts = preprocess(candlesByTimeframe, { now, fibLookbackByTf: config.dailyPlan.rangeLookbackByTf });
+    if (Number.isFinite(currentPrice) && currentPrice > 0) {
+      facts.meta.currentPrice = Math.round(currentPrice * 100) / 100;
+    }
+
+    let userPrompt = this.buildUserPrompt(
+      candlesByTimeframe, facts, DAILY_PLAN_TF_ORDER, 0, config.dailyPlan.rawCandlesByTf,
+    );
+    const h1 = candlesByTimeframe.H1 ?? [];
+    if (h1.length) {
+      const levels = computeSessionLevels(h1, candlesByTimeframe.H4 ?? [], now);
+      userPrompt += `\n\n${formatSessionLevels(levels, facts.meta.currentPrice)}`;
+    }
+    if (previousPlan) userPrompt += `\n\n${buildPreviousPlanBlock(previousPlan)}`;
+    return userPrompt;
+  }
+
+  private async callModel(instrument: string, systemPrompt: string, userPrompt: string): Promise<{
+    rawText: string;
+    usage: TokenUsage | null;
+    rateLimit: RateLimitSnapshot | null;
+  }> {
     logger.info('[Claude] User prompt', { prompt: userPrompt });
 
     // Gọi LLM qua transport đã chọn (API key hoặc subscription). max_tokens đủ lớn cho
@@ -153,9 +228,22 @@ export class ClaudeAnalystService {
     }
 
     logger.info('[Claude] Raw response:\n' + rawText);
+    return { rawText, usage, rateLimit };
+  }
 
-    const result = this.parseAnalysisResult(rawText);
-    return { result, rawText, usage, rateLimit };
+  /** Plan không có lệnh → WATCHLIST; kịch bản lấy từ `#### KỊCH BẢN BUY/SELL`. */
+  private parseDailyPlanResult(text: string): AnalysisResult {
+    const setups: ConditionalSetup[] = [];
+    for (const direction of ['BUY', 'SELL'] as const) {
+      const re  = new RegExp(`####\\s*KỊCH BẢN\\s+${direction}\\b[\\s\\S]*?(?=####\\s|###\\s|---|\n{3,}|$)`, 'i');
+      const raw = text.match(re)?.[0]?.trim();
+      if (raw) setups.push({ direction, rawText: raw });
+    }
+    return new AnalysisResult(
+      'WATCHLIST', null, null, null, null,
+      this.extractConfidence(text), this.extractBias(text), text,
+      {}, null, null, null, setups,
+    );
   }
 
   private parseAnalysisResult(text: string): AnalysisResult {
@@ -1101,6 +1189,142 @@ function buildTriggerNoteBlock(note: string): string {
     '',
     '⚠️ Đây chỉ là chuỗi sự kiện code dò được trên nến đã đóng — KHÔNG phải kết luận. Kiểm chứng ĐỘC LẬP bằng FACTS và nến thô theo đúng quy trình + 3 HARD GATE. Nếu thấy chuỗi này không hợp lệ (sweep yếu, displacement không thật, vùng retest đã hỏng, ngược bias, RR không đạt…) thì cứ ra WATCHLIST/NO TRADE như bình thường. Thêm 1 dòng vào SUMMARY: "Chuỗi kích hoạt: [XÁC NHẬN / BÁC BỎ] — [lý do ngắn]".',
   ].join('\n');
+}
+
+/** Plan lượt trước trong ngày — để model nói rõ kịch bản nào đã chạy / vô hiệu / còn chờ. */
+function buildPreviousPlanBlock(p: PreviousPlan): string {
+  return [
+    `=== KẾ HOẠCH LƯỢT TRƯỚC (cách đây ${p.ageMinutes} phút — lúc ${p.analyzedAtVn} giờ VN) ===`,
+    `Bias Overall lúc đó: ${p.trendBias ?? 'không rõ'} | Giá lúc đó: ${p.priceThen ?? 'không rõ'}`,
+    p.scenarios,
+    '',
+    '⚠️ Đánh giá ĐỘC LẬP bằng FACTS/nến MỚI — plan cũ chỉ là tham chiếu, được toàn quyền bác bỏ. Với từng kịch bản cũ ' +
+    'ghi vào mục "CẬP NHẬT SO VỚI PLAN TRƯỚC": ĐÃ KÍCH HOẠT (giá đã về vùng + phản ứng) / ĐÃ VÔ HIỆU (điều kiện hủy đã xảy ra) / ' +
+    'VẪN CHỜ (cập nhật lại mức nếu cần). Đổi bias so với plan trước thì phải nêu sự kiện cấu trúc (nến đã đóng) gây ra thay đổi.',
+  ].join('\n');
+}
+
+/** Block mức giá theo phiên — model dùng thay cho việc tự đọc PDH/PDL từ nến D. */
+function formatSessionLevels(l: SessionLevels, price: number): string {
+  const lines: string[] = [
+    `=== MỨC GIÁ THEO PHIÊN (code tính từ nến H1/H4 — ngày giao dịch bắt đầu lúc rollover 17:00 New York = ${l.rolloverVn} VN) ===`,
+    'Nến D của provider cắt ngày lệch rollover và có nến T7/CN đi ngang → PDH/PDL/PWH/PWL và range Á LẤY TỪ BLOCK NÀY, không đọc từ nến D.',
+  ];
+  const vs = (level: number, side: 'HIGH' | 'LOW', todayExtreme: number | undefined, label: string): string => {
+    if (todayExtreme == null) return `${label} chưa có nến hôm nay`;
+    const taken = side === 'HIGH' ? todayExtreme > level : todayExtreme < level;
+    return taken
+      ? `hôm nay ĐÃ giao dịch ${side === 'HIGH' ? 'trên' : 'dưới'} ${label} (${side === 'HIGH' ? 'high' : 'low'} hôm nay ${todayExtreme})`
+      : `hôm nay CHƯA chạm ${label}`;
+  };
+
+  const t = l.today;
+  lines.push(t
+    ? `Ngày giao dịch hiện tại ${l.tradingDay}: open ${t.open} | high/low đến giờ ${t.high} / ${t.low} (${t.bars} nến H1)`
+    : `Ngày giao dịch hiện tại ${l.tradingDay}: chưa có nến (phiên mới chưa mở)`);
+
+  const p = l.prevDay;
+  if (p) {
+    lines.push(
+      `PDH / PDL (ngày ${p.day}): ${p.high} / ${p.low} | close ${p.close} → ` +
+      `${vs(p.high, 'HIGH', t?.high, 'PDH')}; ${vs(p.low, 'LOW', t?.low, 'PDL')}`,
+    );
+  } else {
+    lines.push('PDH / PDL: không đủ nến H1 để dựng ngày hôm trước');
+  }
+
+  const w = l.prevWeek;
+  lines.push(w
+    ? `PWH / PWL (tuần từ ${w.weekOf}): ${w.high} / ${w.low}${w.complete ? '' : ' [THIẾU dữ liệu đầu tuần — có thể chưa phải cực trị thật]'}`
+    : 'PWH / PWL: không đủ nến H4');
+  if (l.thisWeek) lines.push(`Tuần này (từ ${l.thisWeek.weekOf}) đến giờ: high ${l.thisWeek.high} / low ${l.thisWeek.low}`);
+
+  const a = l.asia;
+  const asiaHead = `Range Á (${a.windowNy} NY = ${a.windowVn} VN)`;
+  if (a.status === 'NOT_STARTED' || a.high == null || a.low == null) {
+    lines.push(`${asiaHead}: CHƯA BẮT ĐẦU — chưa có mức range Á cho hôm nay`);
+  } else {
+    const where = price > a.high ? 'TRÊN range Á' : price < a.low ? 'DƯỚI range Á' : 'TRONG range Á';
+    lines.push(
+      `${asiaHead}: ${a.status === 'DONE' ? 'ĐÃ XONG' : `ĐANG CHẠY (${a.bars} nến H1 — high/low còn có thể đổi)`}` +
+      ` | high ${a.high} / low ${a.low} | giá hiện tại ${price} đang ${where}`,
+    );
+  }
+  if (p) {
+    const where = price > p.high ? 'TRÊN PDH' : price < p.low ? 'DƯỚI PDL' : 'TRONG range hôm qua';
+    lines.push(`Vị trí giá hiện tại ${price}: ${where}`);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * System prompt KẾ HOẠCH NGÀY cho vàng. Khác prompt intraday: KHÔNG ra lệnh, KHÔNG có
+ * HARD GATE vào lệnh — chỉ lập bản đồ cho phần còn lại của ngày để trader (và các lượt
+ * intraday) biết vùng nào cần canh. Format output cố định để parseDailyPlanResult bóc
+ * được `Bias Overall` + `#### KỊCH BẢN BUY/SELL` — đổi nhãn thì sửa parser cùng lúc.
+ */
+function buildGoldDailyPlanSystemPrompt(): string {
+  return `Bạn là trader XAU/USD theo phương pháp ICT/SMC, nhiệm vụ là LẬP KẾ HOẠCH GIAO DỊCH TRONG NGÀY — KHÔNG ra lệnh.
+Kế hoạch được chạy nhiều lần trong ngày (sáng, trước London, phiên London, trước New York). Mỗi lần lập plan cho PHẦN CÒN LẠI của ngày tính từ thời điểm phân tích, ưu tiên phiên kế tiếp.
+
+## PHÂN VAI KHUNG
+- **D — BỐI CẢNH**: hướng chủ đạo, vùng premium/discount của range nhiều ngày, mục tiêu thanh khoản lớn (draw on liquidity).
+- **MỨC THEO PHIÊN**: PDH/PDL, PWH/PWL, range Á và high/low hôm nay lấy từ block "MỨC GIÁ THEO PHIÊN" (code tính theo rollover 17:00 New York) — KHÔNG tự đọc từ nến D.
+- **H4 — DÒNG CHẢY**: cấu trúc HH/HL hay LH/LL, BOS/CHoCH có displacement, OB/FVG H4 còn fresh = POI chính trong ngày.
+- **H1 — MỨC TRONG NGÀY**: swing gần, equal highs/lows, vùng thanh khoản sẽ bị quét; POI H1 tinh chỉnh POI H4.
+- **M15 — chỉ để biết giá đang phản ứng thế nào ở vùng gần nhất**, không dùng để đặt bias.
+
+## QUY TẮC
+1. Dùng TRỰC TIẾP ICT FACTS code đã tính sẵn (swing, range, FVG/OB [fresh/mitigated], thanh khoản [unswept/swept/broken/breaking], BOS/CHoCH kèm displacement, ATR, ADX). KHÔNG tự tính lại.
+2. Chỉ nến ĐÃ ĐÓNG mới được dùng làm body close cho BOS/CHoCH/sweep. Nến ĐANG CHẠY chỉ cho biết giá hiện tại.
+3. Một BOS/CHoCH gắn nhãn "YẾU — KHÔNG displacement" KHÔNG được coi là đổi cấu trúc.
+4. Mức thanh khoản [swept] = đã quét và bị từ chối (có thể đảo chiều); [broken] = phá thật (tiếp diễn) — không đọc lẫn hai nhãn này.
+5. Giờ phiên: dùng dòng "Kill zone" trong FACTS (code đã xử lý DST) — KHÔNG tự suy giờ London/New York. Range Á "CHƯA BẮT ĐẦU" → không có mức range Á; "ĐANG CHẠY" → high/low còn có thể đổi, chỉ dùng làm tham chiếu tạm.
+6. Mọi mức giá phải lấy từ FACTS/nến thô — không bịa mức tròn. SL/TP tính theo USD, SL đặt sau swing/POI kèm đệm theo ATR H1, nêu cả khoảng cách USD.
+7. Mỗi kịch bản phải có điều kiện kích hoạt QUAN SÁT ĐƯỢC (ví dụ: "giá quét X rồi M5/M15 đóng nến quay lại trên Y" hoặc "giá hồi về FVG H1 A–B") và điều kiện vô hiệu bằng BODY CLOSE.
+8. Có đúng HAI kịch bản: một BUY và một SELL. Kịch bản thuận bias Overall gắn nhãn CHÍNH, ngược lại là PHỤ. Bias NEUTRAL → cả hai là PHỤ và nói rõ chờ phá range nào.
+9. Tin tức kinh tế: bạn KHÔNG có lịch tin — chỉ nhắc khung giờ thường có tin Mỹ (theo giờ New York trong FACTS) là vùng rủi ro, không bịa tên tin.
+10. Viết tiếng Việt, ngắn gọn, mỗi ý một dòng. KHÔNG dùng dòng "---" và KHÔNG để trống 2 dòng liên tiếp bên trong một block kịch bản.
+
+## FORMAT OUTPUT (giữ nguyên tiêu đề và nhãn — hệ thống parse tự động)
+### TÓM TẮT PLAN
+- Bias Overall: [BULLISH / BEARISH / NEUTRAL]
+- Confidence plan: [High / Medium / Low]
+- Thời điểm lập plan: [giờ VN] — phiên kế tiếp: [Á / London / New York]
+- Một câu: hôm nay ưu tiên làm gì (canh BUY ở đâu / canh SELL ở đâu / đứng ngoài tới khi nào).
+
+### BIAS ĐA KHUNG
+- Bias D: [BULLISH / BEARISH / NEUTRAL] — lý do (cấu trúc + vị trí trong range)
+- Bias H4: [...] — lý do
+- Bias H1: [...] — lý do
+- Draw on liquidity: [mức thanh khoản giá có khả năng tìm tới trong ngày + lý do]
+
+### BẢN ĐỒ MỨC GIÁ
+- Kháng cự / thanh khoản phía trên (gần → xa): mức — loại (PDH, equal highs, swing H1/H4, FVG/OB) — trạng thái
+- Hỗ trợ / thanh khoản phía dưới (gần → xa): ...
+- Vùng giá "không giao dịch" (giữa range, không POI): A–B
+
+#### KỊCH BẢN BUY — [CHÍNH / PHỤ]
+- Điều kiện kích hoạt: ...
+- Vùng entry (POI): A–B (khung, loại vùng)
+- SL dự kiến: ... (≈ X USD)
+- TP1: ... | TP2: ...  (RR ước tính 1:x tại TP1)
+- Vô hiệu nếu: [body close khung nào qua mức nào]
+- Khung giờ ưu tiên: [phiên/giờ VN]
+
+#### KỊCH BẢN SELL — [CHÍNH / PHỤ]
+- (cùng các dòng như trên)
+
+### LỊCH TRÌNH PHIÊN
+- [Phiên kế tiếp + giờ VN]: hành vi kỳ vọng (quét range Á? tiếp diễn? hồi về POI?)
+- [Phiên sau đó]: ...
+- Khung giờ rủi ro tin Mỹ: ...
+
+### CẬP NHẬT SO VỚI PLAN TRƯỚC
+- (Chỉ khi có "KẾ HOẠCH LƯỢT TRƯỚC" trong dữ liệu — mỗi kịch bản cũ: ĐÃ KÍCH HOẠT / ĐÃ VÔ HIỆU / VẪN CHỜ + lý do. Không có thì ghi "Plan đầu tiên trong ngày".)
+
+### LƯU Ý RỦI RO
+- 1–3 dòng: điều gì làm cả plan sai, khi nào nên đứng ngoài.`;
 }
 
 function buildPreviousWatchlistBlock(p: PendingSetup): string {

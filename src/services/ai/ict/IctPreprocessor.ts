@@ -841,6 +841,8 @@ export interface PreprocessOptions {
   now?: Date;
   /** Giá hiện tại từ provider; không có → close của nến mới nhất (khung nhỏ nhất). */
   currentPrice?: number;
+  /** Ghi đè lookback range/fib theo khung (kế hoạch ngày dùng D/H4 dài hơn bảng mặc định). */
+  fibLookbackByTf?: Record<string, number>;
 }
 
 /**
@@ -859,7 +861,7 @@ export function preprocess(candlesByTimeframe: Record<string, Candle[]>, opts: P
   for (const [tf, candles] of Object.entries(candlesByTimeframe)) {
     if (!candles || candles.length < 5) continue;
     const formingLast = isCandleForming(candles[candles.length - 1], tf, tz, now);
-    timeframes[tf] = analyzeTimeframe(candles, { fibLookback: FIB_LOOKBACK_BY_TF[tf] ?? 80, formingLast });
+    timeframes[tf] = analyzeTimeframe(candles, { fibLookback: opts.fibLookbackByTf?.[tf] ?? FIB_LOOKBACK_BY_TF[tf] ?? 80, formingLast });
 
     const seconds = TF_SECONDS[tf] ?? Infinity;
     if (seconds < shortestTf || fallbackPrice === 0) {

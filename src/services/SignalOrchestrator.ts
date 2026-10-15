@@ -1,6 +1,7 @@
-import { ClaudeAnalystService, CryptoExtras, PendingSetup, isCryptoInstrument } from './ai/ClaudeAnalystService';
+import { ClaudeAnalystService, CryptoExtras, PendingSetup, PreviousPlan, isCryptoInstrument } from './ai/ClaudeAnalystService';
 import { AnalysisResult } from './ai/dto/AnalysisResult';
 import { Candle } from './market/Candle';
+import { dropClosedMarketBars } from './ai/ict/SessionLevels';
 import { makeMarketDataProvider } from './market/MarketDataProviderFactory';
 import { BinanceFuturesService } from './market/BinanceFuturesService';
 import { RateLimitSnapshot, TokenUsage } from './ai/transport/LlmTransport';
@@ -11,6 +12,9 @@ import { prisma } from '../db';
 
 // Khung nến BTC dùng làm context cho altcoin (đủ để đọc cấu trúc/hướng chủ đạo).
 const BTC_CONTEXT_TIMEFRAMES = ['H4', 'H1'];
+
+/** analysis_type của kế hoạch ngày (DailyPlanScheduler) — tách khỏi carry-forward intraday. */
+export const DAILY_PLAN = 'daily_plan';
 
 export class SignalOrchestrator {
   constructor(
@@ -38,6 +42,7 @@ export class SignalOrchestrator {
   }> {
     const { instrument: defaultInstrument, timeframes: defaultTimeframes, cryptoTimeframes, candlesByTf: candlesByTfConfig, candlesByTfCrypto, candlesCount } = config;
     instrument = instrument ?? defaultInstrument;
+    if (analysisType === DAILY_PLAN) return this.runDailyPlan(instrument, timeframes);
     const isCrypto = isCryptoInstrument(instrument);
     // Crypto (không truyền timeframes riêng) → bộ khung từ M15 (D/H4/H1/M15); còn lại → mặc định.
     const fallbackTimeframes = isCrypto ? cryptoTimeframes : defaultTimeframes;
@@ -68,6 +73,92 @@ export class SignalOrchestrator {
     await this.notify(result, rawText, instrument, currentPrice);
 
     return { result, rawText, instrument, currentPrice, usage, rateLimit };
+  }
+
+  /**
+   * Kế hoạch ngày (vàng): khung D/H4/H1/M15 với số nến riêng, prompt plan, không
+   * carry-forward lệnh — thay vào đó đọc plan lượt trước để cập nhật kịch bản.
+   */
+  private async runDailyPlan(instrument: string, timeframes?: string[]): Promise<{
+    result: AnalysisResult;
+    rawText: string;
+    instrument: string;
+    currentPrice: number;
+    usage: TokenUsage | null;
+    rateLimit: RateLimitSnapshot | null;
+  }> {
+    if (isCryptoInstrument(instrument)) {
+      throw new Error(`Kế hoạch ngày chỉ hỗ trợ vàng — ${instrument} là crypto`);
+    }
+    const { candlesByTf, currentPrice } = await this.fetchDailyPlanData(instrument, timeframes);
+    const previous = await this.loadPreviousPlan(instrument);
+
+    const { result, rawText, usage, rateLimit } =
+      await this.claude.analyzeDailyPlan(instrument, candlesByTf, currentPrice, previous);
+
+    try {
+      const messageId = await this.telegram.send(this.telegram.formatPlanCard(result, instrument, currentPrice));
+      logger.info('Telegram daily plan sent', { message_id: messageId });
+      if (messageId) await this.telegram.sendComment(this.telegram.formatAnalysis(rawText), messageId);
+    } catch (err: any) {
+      logger.error('Failed to send Telegram daily plan', { error: err.message });
+    }
+
+    return { result, rawText, instrument, currentPrice, usage, rateLimit };
+  }
+
+  /**
+   * Nến + giá cho kế hoạch ngày. Bỏ nến cuối tuần đi ngang (provider vẫn trả nến T7/CN ở
+   * giá đóng cửa T6 cho XAU/USD — xem dropClosedMarketBars). Public để dry-run dùng chung.
+   */
+  async fetchDailyPlanData(instrument: string, timeframes?: string[]): Promise<{
+    candlesByTf: Record<string, Candle[]>;
+    currentPrice: number;
+  }> {
+    const plan = config.dailyPlan;
+    const resolvedTimeframes = (timeframes && timeframes.length > 0) ? timeframes : plan.timeframes;
+    logger.info('Daily plan analysis started', { instrument, timeframes: resolvedTimeframes });
+
+    const candlesByTf: Record<string, Candle[]> = {};
+    for (const tf of resolvedTimeframes) {
+      const count = plan.candlesByTf[tf] ?? config.candlesCount;
+      const raw = await this.market.fetchCandles(instrument, tf, count);
+      candlesByTf[tf] = dropClosedMarketBars(raw, tf);
+      logger.info('Daily plan candles', { tf, fetched: raw.length, kept: candlesByTf[tf].length });
+    }
+    const currentPrice = await this.market.fetchCurrentPrice(instrument);
+    return { candlesByTf, currentPrice };
+  }
+
+  /** Plan gần nhất cùng instrument trong cửa sổ previousPlanMaxAgeMin. Fail-soft → null. */
+  private async loadPreviousPlan(instrument: string): Promise<PreviousPlan | null> {
+    try {
+      const since = new Date(Date.now() - config.dailyPlan.previousPlanMaxAgeMin * 60_000);
+      const last = await prisma.tradingSignal.findFirst({
+        where:   { instrument, analysis_type: DAILY_PLAN, created_at: { gte: since } },
+        orderBy: { created_at: 'desc' },
+      });
+      if (!last) return null;
+
+      const raw = JSON.parse(last.raw_ai_response ?? '{}');
+      const scenarios = Array.isArray(raw.conditional_setups)
+        ? raw.conditional_setups.map((s: { rawText?: string }) => s?.rawText?.trim()).filter(Boolean).join('\n\n')
+        : '';
+      if (!scenarios) return null;
+
+      return {
+        ageMinutes:   Math.round((Date.now() - new Date(last.created_at).getTime()) / 60000),
+        analyzedAtVn: new Date(last.created_at).toLocaleString('vi-VN', {
+          timeZone: config.marketHours.timezone, hour12: false,
+        }),
+        priceThen: last.current_price ?? null,
+        trendBias: last.trend_bias ?? null,
+        scenarios,
+      };
+    } catch (err: any) {
+      logger.warn('Daily plan: nạp plan lượt trước thất bại — bỏ qua', { error: err?.message ?? String(err) });
+      return null;
+    }
   }
 
   /**

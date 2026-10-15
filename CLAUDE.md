@@ -6,7 +6,7 @@
 
 ## Tổng quan
 
-**AI Trading Signal** là hệ thống phân tích kỹ thuật và phát tín hiệu giao dịch cho **XAU/USD (vàng)** và các cặp **crypto (BTC/USD, ETH/USD…)** sử dụng Claude AI (Anthropic). Hệ thống lấy dữ liệu nến từ API thị trường, gửi qua Claude để phân tích đa khung thời gian, lưu kết quả vào SQLite và gửi thông báo qua Telegram. Phân tích được trigger theo ba đường: **scheduler nội bộ** theo đồng hồ (`SCHEDULER_INTERVAL_MIN`, 8h–22h, T2–T6 giờ VN), **SetupWatcher** theo sự kiện (chuỗi sweep → CHoCH có displacement → retest, dò cơ học mỗi 5 phút) và **thủ công** qua REST API / dashboard. Không dùng cron của OS — scheduler chạy trong process server.
+**AI Trading Signal** là hệ thống phân tích kỹ thuật và phát tín hiệu giao dịch cho **XAU/USD (vàng)** và các cặp **crypto (BTC/USD, ETH/USD…)** sử dụng Claude AI (Anthropic). Hệ thống lấy dữ liệu nến từ API thị trường, gửi qua Claude để phân tích đa khung thời gian, lưu kết quả vào SQLite và gửi thông báo qua Telegram. Phân tích được trigger theo ba đường: **scheduler nội bộ** theo đồng hồ (`SCHEDULER_INTERVAL_MIN`, 8h–22h, T2–T6 giờ VN), **SetupWatcher** theo sự kiện (chuỗi sweep → CHoCH có displacement → retest, dò cơ học mỗi 5 phút) và **thủ công** qua REST API / dashboard. Ngoài tín hiệu intraday còn có **kế hoạch ngày vàng** (`DailyPlanScheduler`, 7h/11h/15h/19h T2–T6) — plan bias + kịch bản, không ra lệnh. Không dùng cron của OS — scheduler chạy trong process server.
 
 - **Ngôn ngữ phân tích AI**: Tiếng Việt
 - **Khung thời gian phân tích**: Vàng dùng H4 (context), H1 (bias), M15 (POI), M5 (entry). Crypto dùng bộ khung riêng từ M15: D (context), H4 (bias), H1 (POI), M15 (entry) — cấu hình qua `TRADING_CRYPTO_TIMEFRAMES`, áp dụng khi instrument là crypto và request không truyền timeframes.
@@ -46,6 +46,7 @@ D:/ai-trading-signal/
         ├── SignalOrchestrator.ts      ← pipeline chính (fetch→AI→Telegram)
         ├── AnalysisRunner.ts          ← orchestrator + lưu DB + single-flight lock
         ├── AnalysisScheduler.ts       ← tự chạy theo chu kỳ (15p, 8h–22h, T2–T6)
+        ├── DailyPlanScheduler.ts      ← kế hoạch ngày vàng theo mốc giờ (7h/11h/15h/19h, T2–T6)
         ├── MarketHoursService.ts      ← kiểm tra giờ giao dịch
         ├── ai/
         │   ├── ClaudeAnalystService.ts  ← gọi Claude (build prompt vàng/crypto, parse text)
@@ -298,6 +299,42 @@ npm run db:migrate     # chạy migration
 
 ---
 
+## Kế hoạch ngày vàng (Daily Plan)
+
+**File:** `src/services/DailyPlanScheduler.ts` (lịch) + `SignalOrchestrator.runDailyPlan()` +
+`ClaudeAnalystService.analyzeDailyPlan()` / `buildGoldDailyPlanSystemPrompt()` +
+`TelegramNotifier.formatPlanCard()`.
+
+- **Lịch theo GIỜ, không theo phút**: mốc = `DAILY_PLAN_START_HOUR` (7), cộng
+  `DAILY_PLAN_INTERVAL_HOURS` (4) tới ≤ `DAILY_PLAN_END_HOUR` (22) → 7h/11h/15h/19h, T2–T6
+  giờ VN, +`DAILY_PLAN_OFFSET_SEC`. Tách khỏi `AnalysisScheduler` vì scheduler đó canh mốc
+  bằng `minute % interval` — không chạy được chu kỳ nhiều giờ.
+- **Đi qua `runAnalysis({ analysisType: 'daily_plan' })`** như mọi đường trigger khác (lưu DB +
+  single-flight). Đụng lượt khác (11h/15h/19h trùng mốc :00 của intraday) → KHÔNG bỏ lượt như
+  intraday mà chờ `BUSY_RETRY_SEC` rồi thử lại, tối đa `BUSY_MAX_WAIT_MIN`.
+- **Prompt riêng, không ra lệnh**: khung D/H4/H1/M15 (`DAILY_PLAN_TIMEFRAMES`, số nến riêng
+  `dailyPlan.candlesByTf`), output cố định: `Bias Overall:` + `#### KỊCH BẢN BUY — CHÍNH/PHỤ` +
+  `#### KỊCH BẢN SELL — …`. `parseDailyPlanResult()` luôn trả `WATCHLIST`, kịch bản vào
+  `conditionalSetups`. Đổi nhãn trong prompt phải sửa parser + `formatPlanCard` cùng lúc.
+  Chỉ vàng — symbol crypto bị từ chối.
+- **Plan lượt trước** (cùng symbol, ≤ `DAILY_PLAN_PREVIOUS_MAX_AGE_MIN` = 300 phút) được nhét
+  vào prompt để model ghi kịch bản cũ ĐÃ KÍCH HOẠT / ĐÃ VÔ HIỆU / VẪN CHỜ. Lượt 7h không đọc
+  plan 19h hôm trước.
+- **Nến cuối tuần bị lọc + mức theo phiên do code tính** (thêm 15/10/2026, `ict/SessionLevels.ts`).
+  TwelveData trả nến T7/CN đi ngang ở giá đóng cửa T6 cho XAU/USD ở MỌI khung (D/H4/H1 — ~40/120
+  nến H1 vào thứ Năm), và nến D cắt lúc 03:00 VN chứ không phải rollover. Plan nên:
+  (1) `dropClosedMarketBars()` bỏ nến có quá nửa thời gian nằm trong T6 17:00 → CN 18:00 NY (vì thế
+  số nến lấy về dư ~30%: D 170 / H4 160 / H1 160); (2) `computeSessionLevels()` dựng ngày giao dịch
+  từ H1 theo rollover 17:00 NY (T7 → gộp T6, CN → gộp T2) → PDH/PDL, high/low hôm nay, range Á
+  (20:00–24:00 NY, trạng thái CHƯA BẮT ĐẦU/ĐANG CHẠY/ĐÃ XONG); tuần từ H4 → PWH/PWL (cờ thiếu
+  dữ liệu đầu tuần). Block "MỨC GIÁ THEO PHIÊN" nối vào user prompt, prompt cấm tự đọc PDH/PDL từ
+  nến D; (3) range premium/discount D/H4 dùng `DAILY_PLAN_RANGE_LOOKBACK_*` (120) qua
+  `preprocess({ fibLookbackByTf })` — bảng `FIB_LOOKBACK_BY_TF` dùng chung với crypto nên không sửa.
+  **Lưu ý: intraday + SetupWatcher CHƯA lọc nến cuối tuần** — thứ Hai/Ba H1 214 nến vẫn chứa nến đi ngang.
+- `analysis_type='daily_plan'` → không lẫn vào carry-forward intraday (`loadPendingSetup` lọc
+  theo analysis_type); `/api/signals/latest` bỏ qua plan. Telegram: kênh chính nhận
+  `formatPlanCard` (bias + 2 kịch bản), comment nhận phân tích đầy đủ.
+
 ## Setup Watcher — kích hoạt phân tích theo sự kiện
 
 **File:** `src/services/setup/SetupWatcher.ts` (job) + `SetupDetector.ts` (hàm thuần)
@@ -469,6 +506,12 @@ retest dò được và `note` giải thích vì sao dừng ở bước đó. Y�
 Lịch sử đổi bước của watcher trong một ngày giờ VN (bảng `setup_watch_events`), mới nhất trước.
 Query: `?date=YYYY-MM-DD` (mặc định hôm nay) `&symbol=XAU/USD` `&limit=200` (tối đa 500). Trả
 `{ date, events[], triggered }` — `detail` đã được bóc thành `sweep`/`structure`/`zone`. Yêu cầu API key.
+
+### GET /api/daily-plan / POST /api/daily-plan/run
+
+`GET`: trạng thái `DailyPlanScheduler` (`hours`, `next_run_at`, `last_result`, `last_error`,
+`running`…). `POST` (body `{ symbol? }`, mặc định symbol đầu của `DAILY_PLAN_SYMBOLS`): lập plan
+ngay, trả `setup`/`reasoning` HTML như `/api/analyze`; 409 khi đang có lượt khác. Cả hai yêu cầu API key.
 
 ### GET /api/scheduler
 

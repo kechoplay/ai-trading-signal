@@ -463,6 +463,44 @@ export class TelegramNotifier {
     return lines.join('\n');
   }
 
+  /**
+   * Thẻ KẾ HOẠCH NGÀY — gửi kênh chính (plan không có lệnh nên "bản gọn" chính là bias +
+   * hai kịch bản), đồng thời là `setup` lưu analysis_logs. Phân tích đầy đủ vào comment.
+   */
+  formatPlanCard(result: AnalysisResult, instrument: string, currentPrice?: number): string {
+    const SEP = '━━━━━━━━━━━━━━━━━━━━━';
+    const lines: string[] = [
+      SEP,
+      `🗺 <b>${htmlEscape(instrument)}  KẾ HOẠCH NGÀY</b>`,
+      SEP,
+      `🕐 ${formatDate(new Date())} <i>(Giờ VN)</i>`,
+    ];
+
+    if (currentPrice != null) lines.push(`💵 <b>Giá hiện tại:</b>  ${formatPrice(currentPrice, 2)}`);
+    if (result.trendBias) {
+      const biasLabel =
+        result.trendBias.toUpperCase() === 'BULLISH' ? '📈 Tăng' :
+        result.trendBias.toUpperCase() === 'BEARISH' ? '📉 Giảm' :
+        '➖ Trung tính';
+      lines.push(`📐 <b>Bias trong ngày:</b> ${biasLabel}`);
+    }
+    if (result.confidence != null) lines.push(`🔎 <b>Độ tin cậy plan:</b> ${result.confidence}/100`);
+
+    for (const s of result.conditionalSetups) {
+      lines.push('');
+      // Tiêu đề "#### KỊCH BẢN BUY — CHÍNH" → nhãn riêng, giữ phần CHÍNH/PHỤ.
+      const rank = s.rawText.match(/^####[^\n]*?(?:BUY|SELL)\s*[—–-]?\s*([^\n]*)/i)?.[1]?.replace(/[[\]*]/g, '').trim();
+      const label = s.direction === 'BUY' ? '🟢 <b>KỊCH BẢN MUA' : '🔴 <b>KỊCH BẢN BÁN';
+      lines.push(`${label}${rank ? ` — ${htmlEscape(rank)}` : ''}</b>`);
+      lines.push(markdownToHtml(s.rawText.replace(/^####[^\n]*\n?/, '')));
+    }
+
+    lines.push('');
+    lines.push(SEP);
+    lines.push('<i>⚠️ Kế hoạch tham khảo từ AI, không phải lời khuyên đầu tư.</i>');
+    return lines.join('\n');
+  }
+
   // ─── private ──────────────────────────────────────────────────────────────
 
   private async sendPart(text: string, replyToMessageId?: string, chatId?: string): Promise<string | null> {
