@@ -457,6 +457,31 @@
     .w-note { color: var(--text); margin-bottom: 6px; }
     .w-facts { list-style: none; font-size: 12px; color: var(--muted); line-height: 1.7; }
     .w-facts b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+    .w-tabbar {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+      padding: 10px 18px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+    }
+    .w-tab {
+      border: 1px solid var(--border); background: var(--card); color: var(--muted);
+      border-radius: 8px; padding: 5px 12px; font-size: 12px; font-weight: 600; cursor: pointer;
+    }
+    .w-tab.active { background: #eef2ff; border-color: #6366f1; color: #4338ca; }
+    .w-tabbar input[type="date"] {
+      margin-left: auto; border: 1px solid var(--border); border-radius: 8px;
+      padding: 4px 8px; font-size: 12px; color: var(--text);
+    }
+    .w-ev { border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; margin-bottom: 8px; font-size: 13px; }
+    .w-ev-top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 4px; }
+    .w-ev-time { font-weight: 700; font-variant-numeric: tabular-nums; }
+    .w-ev-sym { color: var(--muted); font-size: 12px; }
+    .w-ev .w-step { font-size: 11px; }
+    .w-step.dead { background: #fee2e2; color: #b91c1c; }
+    .w-ev-res { font-size: 12px; margin-top: 6px; }
+    .w-ev-res.fired { color: #15803d; font-weight: 600; }
+    .w-ev-res.skip { color: #b45309; }
+    /* Nguồn kích hoạt trên modal tín hiệu Claude */
+    .trig-badge { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 10px; background: #f3f4f6; color: var(--muted); }
+    .trig-badge.event { background: #dcfce7; color: #15803d; }
   </style>
 </head>
 <body>
@@ -497,6 +522,11 @@
         <button class="nav-btn" onclick="loadWatcher(true)" title="Tải lại" style="padding:5px 9px;font-size:12px">🔄</button>
         <button class="sig-modal-close" onclick="closeWatcher()" aria-label="Đóng">×</button>
       </div>
+    </div>
+    <div class="w-tabbar">
+      <button class="w-tab active" id="wTabNow" onclick="switchWatcherTab('now')">Hiện tại</button>
+      <button class="w-tab" id="wTabHist" onclick="switchWatcherTab('history')">Lịch sử</button>
+      <input type="date" id="wDate" onchange="loadWatcher(true)" style="display:none" title="Chọn ngày (giờ VN)" />
     </div>
     <div class="sig-modal-body" id="wBody">
       <div class="empty">Đang tải…</div>
@@ -797,6 +827,7 @@ async function showSignals(symbol) {
       <div class="sig-item${open}">
         <div class="sig-item-head" onclick="toggleSigItem(this.parentElement)">
           <span class="sig-item-time">🕐 ${esc(time)}${secs}</span>
+          ${log.trigger ? `<span class="trig-badge ${log.trigger === 'event' ? 'event' : ''}">${esc(W_TRIG_LABEL[log.trigger] || log.trigger)}</span>` : ''}
           ${tokBadge(log)}
           <span class="sig-toggle">›</span>
         </div>
@@ -1201,7 +1232,8 @@ function wStepper(stage) {
   }).join('') + '</div>';
 }
 
-function wDirBlock(s) {
+/** Các mức sweep / cú phá / vùng retest của một hướng — dùng chung tab Hiện tại và Lịch sử. */
+function wFacts(s) {
   const facts = [];
   if (s.sweep) {
     facts.push(`Quét ${s.sweep.side === 'SELLSIDE' ? 'đáy' : 'đỉnh'} ${s.sweep.levelType === 'EQUAL' ? 'equal level' : 'swing'} `
@@ -1217,6 +1249,10 @@ function wDirBlock(s) {
     const zs = z.invalidated ? 'hỏng' : z.mitigated ? 'đã chạm' : 'fresh';
     facts.push(`Vùng retest ${esc(z.source)} <b>${swingNum(z.bottom)} – ${swingNum(z.top)}</b> · ${zs}`);
   }
+  return facts.length ? '<ul class="w-facts">' + facts.map(f => `<li>${f}</li>`).join('') + '</ul>' : '';
+}
+
+function wDirBlock(s) {
   const buy = s.direction === 'BUY';
   const biasTag = s.biasOk
     ? '<span class="w-tag bias-ok">trùng bias</span>'
@@ -1228,7 +1264,7 @@ function wDirBlock(s) {
       ${s.stage !== 'NONE' ? biasTag : ''}
     </div>
     <div class="w-note">${esc(s.note || '—')}</div>
-    ${facts.length ? '<ul class="w-facts">' + facts.map(f => `<li>${f}</li>`).join('') + '</ul>' : ''}
+    ${wFacts(s)}
   </div>`;
 }
 
@@ -1308,11 +1344,86 @@ async function loadWatcherStatus() {
   try { renderWatcherBtn(await fetchWatcher()); } catch { renderWatcherBtn(null); }
 }
 
+// ── Tab Lịch sử: mỗi bản ghi = một lần một hướng ĐỔI bước (bảng setup_watch_events) ──
+let watcherTab = 'now';
+
+const W_STAGE_LABEL = { SWEPT: '① Đã quét', CONFIRMED: '② BOS/CHoCH', RETEST: '③ Retest', NONE: '✕ Hủy / hết hạn' };
+const W_TRIG_LABEL = { event: '🎯 Watcher', scheduler: '⏱ Theo lịch', api: '👆 Bấm tay', mcp: 'MCP' };
+
+function todayVn() {
+  // en-CA cho ra dạng YYYY-MM-DD — đúng format của <input type="date">.
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
+}
+
+function wStageTag(stage, cls) {
+  return `<span class="w-step ${cls}">${esc(W_STAGE_LABEL[stage] || stage || '—')}</span>`;
+}
+
+function renderWatcherHistory(h) {
+  const body = document.getElementById('wBody');
+  const events = h.events || [];
+  const fired = events.filter(e => e.triggered);
+  const parts = [`<div class="sig-summary">
+    <span>📅 <b>${esc(h.date)}</b></span>
+    <span class="sep"></span>
+    <span><b>${events.length}</b> lần đổi bước</span>
+    <span>🎯 Gọi AI <b>${fired.length}</b> lần</span>
+    ${fired.length ? `<span>Kết quả: ${fired.map(e => '<b>' + esc(e.analysis_action || '…') + '</b>').join(', ')}</span>` : ''}
+  </div>`];
+
+  if (!events.length) {
+    parts.push('<div class="empty">Không có lần đổi bước nào trong ngày này.</div>');
+  }
+  for (const e of events) {
+    const buy = e.direction === 'BUY';
+    const time = new Date(e.created_at).toLocaleTimeString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', hour12: false });
+    const to = e.stage === 'NONE' ? wStageTag('NONE', 'dead') : wStageTag(e.stage, e.stage === 'RETEST' ? 'done' : 'now');
+    const from = e.prev_stage && e.prev_stage !== 'NONE' ? wStageTag(e.prev_stage, '') + '<span class="w-arrow">→</span>' : '';
+    let result = '';
+    if (e.triggered) {
+      result = `<div class="w-ev-res fired">⚡ Đã gọi AI${e.triggered_at ? ' lúc ' + esc(vnTime(e.triggered_at)) : ''} → `
+        + `${e.analysis_action ? 'kết quả ' + esc(e.analysis_action) : 'đang chạy…'}</div>`;
+    } else if (e.skip_reason) {
+      result = `<div class="w-ev-res skip">⏸ Không gọi AI: ${esc(e.skip_reason)}</div>`;
+    }
+    parts.push(`<div class="w-ev">
+      <div class="w-ev-top">
+        <span class="w-ev-time">${esc(time)}</span>
+        <span class="w-dir-name ${buy ? 'buy' : 'sell'}">${buy ? '🟢 BUY' : '🔴 SELL'}</span>
+        <span class="w-steps">${from}${to}</span>
+        <span class="w-ev-sym">${esc(e.symbol)} · ${esc(e.timeframe)} · giá ${swingNum(e.price)} · bias ${esc(e.bias || '—')}</span>
+      </div>
+      <div class="w-note">${esc(e.note || '')}</div>
+      ${wFacts(e)}
+      ${result}
+    </div>`);
+  }
+  body.innerHTML = parts.join('');
+}
+
+function switchWatcherTab(tab) {
+  watcherTab = tab;
+  document.getElementById('wTabNow').classList.toggle('active', tab === 'now');
+  document.getElementById('wTabHist').classList.toggle('active', tab === 'history');
+  const date = document.getElementById('wDate');
+  date.style.display = tab === 'history' ? '' : 'none';
+  if (tab === 'history' && !date.value) date.value = todayVn();
+  loadWatcher(true);
+}
+
 async function loadWatcher(showSpinner) {
   const body = document.getElementById('wBody');
   if (showSpinner) body.innerHTML = '<div class="empty">Đang tải…</div>';
   try {
     // Modal dùng apiFetch để được hỏi API key khi 401 (nút header thì không hỏi).
+    if (watcherTab === 'history') {
+      const date = document.getElementById('wDate').value || todayVn();
+      const res = await apiFetch('/api/setup-watcher/history?date=' + encodeURIComponent(date));
+      const h = await res.json();
+      if (!res.ok) throw new Error(h.error || 'HTTP ' + res.status);
+      renderWatcherHistory(h);
+      return;
+    }
     const res = await apiFetch('/api/setup-watcher');
     const st = await res.json();
     if (!res.ok) throw new Error(st.error || 'HTTP ' + res.status);

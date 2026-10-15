@@ -91,11 +91,12 @@ export async function runAnalysis(opts: AnalysisRunOptions): Promise<AnalysisRun
           trend_bias:      result.trendBias,
           raw_ai_response: JSON.stringify({ ...(result.raw ?? {}), conditional_setups: result.conditionalSetups }),
           analyze_at:      new Date(startedAt),
+          trigger,
         },
       }),
       prisma.analysisLog.create({
         data: {
-          symbol: sym, duration_ms: durationMs, setup, reasoning,
+          symbol: sym, duration_ms: durationMs, setup, reasoning, trigger,
           input_tokens:       usage?.inputTokens         ?? null,
           output_tokens:      usage?.outputTokens        ?? null,
           cache_read_tokens:  usage?.cacheReadTokens     ?? null,

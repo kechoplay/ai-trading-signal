@@ -156,6 +156,17 @@ Index: `(instrument, created_at)`
 `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens` — token của lượt gọi Claude,
 null với bản ghi cũ hoặc khi transport không báo cáo. `/api/usage` cộng dồn 4 cột này theo ngày.
 
+**Cột `trigger`** (thêm 14/10/2026) trên cả `trading_signals` và `analysis_logs`: nguồn kích hoạt
+lượt phân tích — `scheduler` (đồng hồ) / `event` (SetupWatcher) / `api` (bấm tay) / `mcp`; null với
+bản ghi cũ. Ghi trong `AnalysisRunner`. `GET /api/signals?trigger=event` lọc theo cột này.
+
+**Bảng `setup_watch_events`** (thêm 14/10/2026): lịch sử SetupWatcher — mỗi bản ghi là một lần một
+hướng (symbol × BUY/SELL) **đổi bước** `NONE/SWEPT/CONFIRMED/RETEST` (không ghi mỗi tick): `stage`,
+`prev_stage`, `setup_key`, `price`, `bias`, `bias_ok`, `note`, `detail` (JSON `{ sig, sweep,
+structure, zone }`), `triggered` + `triggered_at` + `analysis_action` (đã gọi AI chưa + kết quả),
+`skip_reason` (RETEST mà không gọi AI: ngược bias / cooldown / chạm trần ngày / đang bận).
+Index `(symbol, created_at)`, `(triggered, triggered_at)`.
+
 ---
 
 ## Cấu hình (.env)
@@ -305,7 +316,16 @@ chuỗi, được nối vào user prompt dưới dạng "gợi ý cần kiểm c
 
 Chặn quota: mỗi chuỗi (key = hướng + thời điểm sweep + thời điểm cú phá) chỉ kích hoạt 1 lần;
 `COOLDOWN_MIN` giữa hai lần cùng symbol; `MAX_PER_DAY` lần/ngày. Đang có lượt chạy (single-flight)
-→ không đánh dấu, thử lại tick sau. State chỉ ở RAM (restart có thể kích hoạt lại 1 lần).
+→ không đánh dấu, thử lại tick sau.
+
+Lịch sử (`setup_watch_events`, `recordTransitions()`): chỉ ghi khi một hướng ĐỔI bước — so bằng
+"chữ ký" `stage|sweep.time|structure.time` (lưu trong `detail.sig`), nên cùng bước nhưng sweep/cú
+phá khác vẫn ra bản ghi mới; `NONE` chỉ ghi khi một chuỗi vừa hỏng/hết hạn, không ghi khi đứng yên.
+Bản ghi RETEST được đánh dấu `triggered/triggered_at` NGAY TRƯỚC khi gọi AI (lượt AI ~3 phút), rồi
+`analysis_action` khi xong (`ERROR` nếu lỗi; busy → hoàn lại). Khi khởi động, `hydrate()` nạp lại
+từ bảng: key chuỗi đã kích hoạt 2 ngày gần nhất, mốc cooldown, số lần kích hoạt hôm nay → restart
+KHÔNG kích hoạt lặp. Bản ghi cuối mỗi (symbol, hướng) cũng đọc lại từ DB để không ghi trùng sau
+restart. Mọi lỗi DB fail-soft (chỉ log) — watcher vẫn dò tiếp.
 Watcher KHÔNG thay scheduler đồng hồ — hai đường chạy song song; nếu watcher đang chạy một lượt
 AI đúng lúc scheduler tới mốc thì scheduler bỏ lượt (AnalysisBusyError, như bấm tay).
 Request dữ liệu: ~1 request/symbol mỗi 5 phút + 1 request bias mỗi 15 phút (≈170 request/ngày
@@ -320,6 +340,10 @@ gần nhất/kế tiếp), cảnh báo ngoài khung giờ (`in_window_now`), l�
 nhất, rồi từng symbol × BUY/SELL với thanh 3 bước ① Quét → ② BOS/CHoCH + displacement → ③ Hồi
 về FVG/OB, nhãn trùng/ngược bias, `note` và các mức sweep/cú phá/vùng retest. Modal mở thì tự làm
 mới mỗi 30s. Watcher chỉ cập nhật snapshot trong khung giờ — ngoài giờ modal hiện số liệu lần dò cuối.
+Tab **Lịch sử** trong modal (chọn ngày, giờ VN) đọc `GET /api/setup-watcher/history`: mỗi lần đổi
+bước "bước trước → bước sau", các mức, và "⚡ Đã gọi AI → kết quả" hoặc "⏸ Không gọi AI: lý do".
+Modal "Tín hiệu từ Claude" gắn nhãn nguồn kích hoạt trên từng bản ghi (🎯 Watcher / ⏱ Theo lịch /
+👆 Bấm tay) từ cột `trigger`.
 
 ---
 
@@ -440,6 +464,12 @@ Trạng thái SetupWatcher: cấu hình, `triggers_today`, `next_run_at`, `last_
 và `symbols[symbol].setups[]` — mỗi hướng BUY/SELL đang ở bước nào (`stage`), sweep/cú phá/vùng
 retest dò được và `note` giải thích vì sao dừng ở bước đó. Yêu cầu API key.
 
+### GET /api/setup-watcher/history
+
+Lịch sử đổi bước của watcher trong một ngày giờ VN (bảng `setup_watch_events`), mới nhất trước.
+Query: `?date=YYYY-MM-DD` (mặc định hôm nay) `&symbol=XAU/USD` `&limit=200` (tối đa 500). Trả
+`{ date, events[], triggered }` — `detail` đã được bóc thành `sweep`/`structure`/`zone`. Yêu cầu API key.
+
 ### GET /api/scheduler
 
 Trạng thái scheduler: `enabled`, `interval_min`, `window`, `weekdays`, `symbols`, `runs_per_day`, `next_run_at`, `last_run_at`, `last_action`, `last_error`, `run_count`, `skip_count`, `running` (lượt đang chạy hoặc null). Dùng để soi mốc chạy kế tiếp và lỗi gần nhất mà không cần đọc log.
@@ -473,7 +503,8 @@ Token đã dùng + hạn mức còn lại. Không yêu cầu API key (dashboard 
 
 ### GET /api/signals
 
-Lấy danh sách tín hiệu trong ngày (giờ VN). Query param: `?limit=20` (tối đa 100).
+Lấy danh sách tín hiệu trong ngày (giờ VN). Query param: `?limit=20` (tối đa 100), `?trigger=event`
+(lọc theo nguồn kích hoạt: `event` / `scheduler` / `api` / `mcp`).
 
 ### GET /api/symbols / POST /api/symbols / DELETE /api/symbols/:symbol
 

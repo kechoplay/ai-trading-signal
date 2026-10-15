@@ -1,8 +1,9 @@
 import { config } from '../../config/trading';
+import { prisma } from '../../db';
 import { logger } from '../../logger';
 import { AnalysisBusyError, currentRun, runAnalysis } from '../AnalysisRunner';
 import { analyzeTimeframe, Bias } from '../ai/ict/IctPreprocessor';
-import { isCandleForming, zonedParts } from '../market/candleTime';
+import { candleOpenInstant, isCandleForming, zonedParts } from '../market/candleTime';
 import { MarketDataProvider } from '../market/MarketDataProvider';
 import { makeMarketDataProvider } from '../market/MarketDataProviderFactory';
 import { DetectedSetup, detectSetup } from './SetupDetector';
@@ -18,6 +19,27 @@ interface SymbolSnapshot {
   setups: DetectedSetup[];
 }
 
+/** Bản ghi lịch sử gần nhất của một (symbol, hướng) — để chỉ ghi khi ĐỔI bước. */
+interface LastRecorded {
+  id: number;
+  stage: string;
+  /** stage + thời điểm sweep + thời điểm cú phá: đổi một trong ba = bước/chuỗi mới. */
+  sig: string;
+  skipReason: string | null;
+}
+
+/** Chữ ký của trạng thái một hướng — cùng bước nhưng sweep/cú phá khác = chuỗi khác. */
+function sigOf(s: DetectedSetup): string {
+  return `${s.stage}|${s.sweep?.time ?? ''}|${s.structure?.time ?? ''}`;
+}
+
+/** 00:00 hôm nay theo múi giờ cấu hình (giờ VN) — mốc đếm "lần kích hoạt trong ngày". */
+function startOfToday(now: Date, tz: string): Date {
+  const p = zonedParts(now, tz);
+  const d = `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`;
+  return candleOpenInstant(`${d} 00:00:00`, tz) ?? now;
+}
+
 /**
  * Kích hoạt phân tích AI theo SỰ KIỆN. AnalysisScheduler chạy theo đồng hồ (mỗi 15–30
  * phút) nên gần như không bao giờ bắt đúng lúc "đã quét → đã CHoCH → đang retest" — cửa
@@ -29,8 +51,11 @@ interface SymbolSnapshot {
  * hoạt cùng symbol; trần số lần/ngày. Dùng chung single-flight của AnalysisRunner — đang
  * có lượt chạy thì bỏ qua và thử lại ở tick sau (chưa đánh dấu chuỗi là đã kích hoạt).
  *
- * State (key đã kích hoạt, đếm ngày) chỉ nằm trong RAM: restart process thì một chuỗi
- * đang RETEST có thể được kích hoạt thêm một lần — chấp nhận được, đổi lại không cần bảng DB.
+ * Lịch sử: mỗi lần một hướng ĐỔI bước (không phải mỗi tick) được ghi vào bảng
+ * `setup_watch_events`, kèm việc có gọi AI không + kết quả, hoặc lý do bỏ qua. Khi khởi
+ * động, watcher nạp lại từ bảng này các chuỗi đã kích hoạt, mốc cooldown và số lần kích
+ * hoạt trong ngày → restart không làm kích hoạt lặp. Mọi lỗi DB đều fail-soft (chỉ log):
+ * mất lịch sử còn hơn làm watcher ngừng dò.
  */
 export class SetupWatcher {
   private timer: NodeJS.Timeout | null = null;
@@ -46,6 +71,9 @@ export class SetupWatcher {
   private dayKey = '';
   private dayCount = 0;
   private marketInstance: MarketDataProvider | null = null;
+  /** key `${symbol}|${direction}` → bản ghi lịch sử gần nhất; null = DB chưa có bản ghi nào. */
+  private readonly lastRecorded = new Map<string, LastRecorded | null>();
+  private hydrated = false;
 
   constructor(
     // Tạo provider lười: thiếu API key thì chỉ watcher lỗi ở tick (log), không làm sập
@@ -211,6 +239,16 @@ export class SetupWatcher {
     };
     const setups = (['BUY', 'SELL'] as const).map((d) => detectSetup(a, d, live, bias, params));
     this.snapshots.set(symbol, { at: now.toISOString(), price: live.price, bias, setups });
+    await this.recordTransitions(symbol, cfg.timeframe, live.price, bias, setups);
+
+    // RETEST nhưng ngược/chưa rõ bias → ghi lý do vào lịch sử (không kích hoạt).
+    if (cfg.requireBias) {
+      for (const s of setups) {
+        if (s.stage === 'RETEST' && !s.biasOk) {
+          await this.setSkipReason(symbol, s.direction, `ngược / chưa rõ bias ${cfg.biasTimeframe} (${bias ?? 'không rõ'})`);
+        }
+      }
+    }
 
     const ready = setups
       .filter((s) => s.stage === 'RETEST' && s.key != null && !this.triggered.has(s.key))
@@ -224,40 +262,180 @@ export class SetupWatcher {
     if (today !== this.dayKey) { this.dayKey = today; this.dayCount = 0; }
     if (this.dayCount >= cfg.maxPerDay) {
       logger.info('Setup watcher: đủ chuỗi nhưng đã chạm trần lần kích hoạt/ngày', { symbol, key: ready.key, max: cfg.maxPerDay });
+      await this.setSkipReason(symbol, ready.direction, `đã chạm trần ${cfg.maxPerDay} lần kích hoạt/ngày`);
       return;
     }
     const last = this.lastTriggerAt.get(symbol);
     if (last != null && Date.now() - last < cfg.cooldownMin * 60_000) {
       logger.info('Setup watcher: đủ chuỗi nhưng còn trong cooldown', { symbol, key: ready.key });
+      const leftMin = Math.ceil((cfg.cooldownMin * 60_000 - (Date.now() - last)) / 60_000);
+      await this.setSkipReason(symbol, ready.direction, `còn cooldown (${cfg.cooldownMin}p, còn ~${leftMin}p)`);
       return;
     }
     if (currentRun()) {
       // Không đánh dấu key → tick sau thử lại nếu chuỗi vẫn ở RETEST.
       logger.info('Setup watcher: đang có phân tích chạy — thử lại tick sau', { symbol, key: ready.key });
+      await this.setSkipReason(symbol, ready.direction, 'đang có lượt phân tích khác chạy — thử lại tick sau');
       return;
     }
 
     const note = buildTriggerNote(cfg.timeframe, cfg.biasTimeframe, ready, live.price, bias);
     logger.info('Setup watcher: kích hoạt phân tích AI theo sự kiện', { symbol, key: ready.key, direction: ready.direction });
 
+    // Bản ghi lịch sử của bước RETEST vừa/đã ghi — đánh dấu kích hoạt ngay TRƯỚC khi chạy
+    // (~3 phút) để restart giữa chừng vẫn đếm đúng cooldown/trần ngày.
+    const eventId = this.lastRecorded.get(`${symbol}|${ready.direction}`)?.id ?? null;
     this.rememberKey(ready.key);
     this.lastTriggerAt.set(symbol, Date.now());
     this.dayCount++;
+    await this.updateEvent(eventId, { triggered: true, triggered_at: new Date(), skip_reason: null });
     try {
       const r = await runAnalysis({ symbol, analysisType: 'intraday', trigger: 'event', triggerNote: note });
       this.lastTrigger = { symbol, at: new Date().toISOString(), key: ready.key, action: r.action };
+      await this.updateEvent(eventId, { analysis_action: r.action });
     } catch (err: unknown) {
       if (err instanceof AnalysisBusyError) {
         // Bị chen ngay giữa currentRun() và runAnalysis → hoàn lại để tick sau thử lại.
         this.triggered.delete(ready.key);
         this.lastTriggerAt.delete(symbol);
         this.dayCount--;
+        await this.updateEvent(eventId, { triggered: false, triggered_at: null });
         logger.warn('Setup watcher: phân tích bị chặn (busy) — thử lại tick sau', { symbol });
         return;
       }
       this.lastTrigger = { symbol, at: new Date().toISOString(), key: ready.key, action: null };
+      await this.updateEvent(eventId, { analysis_action: 'ERROR' });
       throw err;
     }
+  }
+
+  // ── Lịch sử (bảng setup_watch_events) ─────────────────────────────────────────
+
+  /**
+   * Nạp lại từ DB (1 lần, ở tick đầu): key các chuỗi đã kích hoạt 2 ngày gần nhất, mốc
+   * cooldown từng symbol và số lần kích hoạt hôm nay — để restart không kích hoạt lặp.
+   */
+  private async hydrate(): Promise<void> {
+    if (this.hydrated) return;
+    this.hydrated = true; // lỗi cũng không thử lại mỗi tick — chạy tiếp với state rỗng
+    try {
+      const now = new Date();
+      const rows = await prisma.setupWatchEvent.findMany({
+        where: { triggered: true, triggered_at: { gte: new Date(now.getTime() - 2 * 86_400_000) } },
+        select: { symbol: true, setup_key: true, triggered_at: true },
+        orderBy: { triggered_at: 'asc' },
+      });
+      const todayStart = startOfToday(now, config.marketHours.timezone).getTime();
+      for (const r of rows) {
+        if (r.setup_key) this.rememberKey(r.setup_key);
+        const at = r.triggered_at?.getTime();
+        if (at == null) continue;
+        this.lastTriggerAt.set(r.symbol, Math.max(this.lastTriggerAt.get(r.symbol) ?? 0, at));
+        if (at >= todayStart) this.dayCount++;
+      }
+      const p = zonedParts(now, config.marketHours.timezone);
+      this.dayKey = `${p.year}-${p.month}-${p.day}`;
+      logger.info('Setup watcher: nạp lại lịch sử kích hoạt từ DB', { keys: this.triggered.size, today: this.dayCount });
+    } catch (err: unknown) {
+      logger.warn('Setup watcher: nạp lịch sử từ DB thất bại — chạy với state rỗng', { error: errMsg(err) });
+    }
+  }
+
+  /** Ghi một bản ghi cho mỗi hướng vừa ĐỔI bước (hoặc đổi sang chuỗi khác). */
+  private async recordTransitions(
+    symbol: string, timeframe: string, price: number, bias: Bias | null, setups: DetectedSetup[],
+  ): Promise<void> {
+    await this.hydrate();
+    for (const s of setups) {
+      const k = `${symbol}|${s.direction}`;
+      try {
+        let prev = this.lastRecorded.get(k);
+        if (prev === undefined) {
+          // Lần đầu từ khi khởi động → đọc bản ghi cuối trong DB để không ghi trùng sau restart.
+          const row = await prisma.setupWatchEvent.findFirst({
+            where: { symbol, direction: s.direction, timeframe },
+            orderBy: { id: 'desc' },
+            select: { id: true, stage: true, detail: true, skip_reason: true },
+          });
+          prev = row ? { id: row.id, stage: row.stage, sig: parseSig(row.detail), skipReason: row.skip_reason } : null;
+          this.lastRecorded.set(k, prev);
+        }
+
+        const sig = sigOf(s);
+        if (prev && prev.sig === sig) continue;
+        // Đứng yên ở "chưa có gì" thì không đáng ghi; chỉ ghi NONE khi một chuỗi vừa hỏng/hết hạn.
+        if (s.stage === 'NONE' && (!prev || prev.stage === 'NONE')) continue;
+
+        const row = await prisma.setupWatchEvent.create({
+          data: {
+            symbol, timeframe, direction: s.direction, stage: s.stage,
+            prev_stage: prev?.stage ?? null,
+            setup_key: s.key,
+            price,
+            bias,
+            bias_ok: s.biasOk,
+            note: s.note,
+            detail: JSON.stringify({ sig, sweep: s.sweep, structure: s.structure, zone: s.zone }),
+          },
+          select: { id: true },
+        });
+        this.lastRecorded.set(k, { id: row.id, stage: s.stage, sig, skipReason: null });
+      } catch (err: unknown) {
+        logger.warn('Setup watcher: ghi lịch sử thất bại', { symbol, direction: s.direction, error: errMsg(err) });
+      }
+    }
+  }
+
+  /** Ghi lý do RETEST mà không kích hoạt — chỉ ghi khi lý do đổi (tránh update mỗi tick). */
+  private async setSkipReason(symbol: string, direction: 'BUY' | 'SELL', reason: string): Promise<void> {
+    const rec = this.lastRecorded.get(`${symbol}|${direction}`);
+    if (!rec || rec.skipReason === reason) return;
+    rec.skipReason = reason;
+    await this.updateEvent(rec.id, { skip_reason: reason });
+  }
+
+  private async updateEvent(
+    id: number | null,
+    data: { triggered?: boolean; triggered_at?: Date | null; analysis_action?: string | null; skip_reason?: string | null },
+  ): Promise<void> {
+    if (id == null) return;
+    try {
+      await prisma.setupWatchEvent.update({ where: { id }, data });
+    } catch (err: unknown) {
+      logger.warn('Setup watcher: cập nhật lịch sử thất bại', { id, error: errMsg(err) });
+    }
+  }
+
+  /**
+   * Lịch sử chuyển bước trong một ngày (giờ VN) — cho GET /api/setup-watcher/history.
+   * `date` dạng YYYY-MM-DD, mặc định hôm nay; mới nhất trước.
+   */
+  async history(opts: { symbol?: string; date?: string; limit?: number }): Promise<Record<string, unknown>> {
+    const tz = config.marketHours.timezone;
+    const now = new Date();
+    const date = opts.date && /^\d{4}-\d{2}-\d{2}$/.test(opts.date)
+      ? opts.date
+      : (() => { const p = zonedParts(now, tz); return `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`; })();
+    const from = candleOpenInstant(`${date} 00:00:00`, tz) ?? startOfToday(now, tz);
+    const to = new Date(from.getTime() + 86_400_000);
+    const limit = Math.min(Math.max(opts.limit ?? 200, 1), 500);
+
+    const rows = await prisma.setupWatchEvent.findMany({
+      where: { created_at: { gte: from, lt: to }, ...(opts.symbol ? { symbol: opts.symbol } : {}) },
+      orderBy: { id: 'desc' },
+      take: limit,
+    });
+    const events = rows.map(({ detail, ...r }) => {
+      let parsed: Record<string, unknown> = {};
+      try { parsed = JSON.parse(detail ?? '{}'); } catch { /* bản ghi hỏng JSON → bỏ chi tiết */ }
+      const { sig: _sig, ...rest } = parsed;
+      return { ...r, ...rest };
+    });
+    return {
+      date,
+      events,
+      triggered: events.filter((e) => e.triggered).length,
+    };
   }
 
   private rememberKey(key: string): void {
@@ -266,6 +444,20 @@ export class SetupWatcher {
       const oldest = this.triggered.values().next().value;
       if (oldest !== undefined) this.triggered.delete(oldest);
     }
+  }
+}
+
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** Lấy chữ ký trạng thái đã lưu trong cột `detail` (JSON) — '' nếu thiếu/hỏng. */
+function parseSig(detail: string | null): string {
+  try {
+    const sig = (JSON.parse(detail ?? '{}') as { sig?: unknown }).sig;
+    return typeof sig === 'string' ? sig : '';
+  } catch {
+    return '';
   }
 }
 

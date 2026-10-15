@@ -59,6 +59,10 @@ model AnalysisLog {
   cache_read_tokens  Int?
   cache_write_tokens Int?
 
+  // Nguồn kích hoạt: scheduler (đồng hồ) | event (SetupWatcher) | api (bấm tay) | mcp.
+  // null với bản ghi cũ (trước khi có cột này).
+  trigger            String?
+
   symbolRef     Symbol   @relation(fields: [symbol], references: [symbol])
 
   @@index([symbol, analyzed_at])
@@ -93,10 +97,40 @@ model TradingSignal {
   telegram_message_id String?
   sent_at             DateTime?
   analyze_at          DateTime?
+  // Nguồn kích hoạt: scheduler | event | api | mcp (null với bản ghi cũ) — để so hiệu quả
+  // tín hiệu do SetupWatcher kích hoạt với tín hiệu chạy theo đồng hồ.
+  trigger             String?
   created_at          DateTime  @default(now())
   updated_at          DateTime  @updatedAt
 
   @@index([instrument, created_at])
   @@index([analysis_type, created_at])
   @@map("trading_signals")
+}
+
+// Lịch sử SetupWatcher: mỗi bản ghi = một lần một hướng ĐỔI BƯỚC trong chuỗi
+// sweep → BOS/CHoCH → retest (không ghi mỗi tick). Xem SetupWatcher.recordTransitions().
+model SetupWatchEvent {
+  id              Int      @id @default(autoincrement())
+  symbol          String
+  timeframe       String
+  direction       String              // BUY | SELL
+  stage           String              // NONE | SWEPT | CONFIRMED | RETEST
+  prev_stage      String?             // null = lần đầu ghi nhận hướng này
+  setup_key       String?             // định danh chuỗi (sweep + cú phá), null trước bước CONFIRMED
+  price           Float
+  bias            String?
+  bias_ok         Boolean  @default(false)
+  note            String   @db.Text
+  detail          String?  @db.Text   // JSON { sweep, structure, zone }
+  // Watcher đã gọi AI cho chuỗi này chưa + kết quả; skip_reason = vì sao RETEST mà không gọi.
+  triggered       Boolean  @default(false)
+  triggered_at    DateTime?           // lúc gọi AI — nạp lại cooldown/trần/ngày sau restart
+  analysis_action String?
+  skip_reason     String?
+  created_at      DateTime @default(now())
+
+  @@index([symbol, created_at])
+  @@index([triggered, triggered_at])
+  @@map("setup_watch_events")
 }

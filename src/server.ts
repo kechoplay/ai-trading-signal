@@ -163,6 +163,20 @@ app.get('/api/setup-watcher', requireApiKey, (_req, res) => {
   res.json(setupWatcher.status());
 });
 
+// Lịch sử chuyển bước của watcher trong một ngày (giờ VN), mới nhất trước.
+// Query: ?date=YYYY-MM-DD (mặc định hôm nay) &symbol=XAU/USD &limit=200 (tối đa 500).
+app.get('/api/setup-watcher/history', requireApiKey, async (req, res) => {
+  try {
+    const symbol = typeof req.query.symbol === 'string' && req.query.symbol ? req.query.symbol.toUpperCase() : undefined;
+    const date = typeof req.query.date === 'string' ? req.query.date : undefined;
+    const limit = parseInt(String(req.query.limit ?? '200'), 10) || 200;
+    res.json(await setupWatcher.history({ symbol, date, limit }));
+  } catch (err: any) {
+    logger.error('GET /api/setup-watcher/history failed', { error: err?.message ?? String(err) });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.get('/api/scheduler', requireApiKey, (_req, res) => {
   res.json(scheduler.status());
 });
@@ -448,6 +462,8 @@ app.get('/api/symbols/:symbol/signals', requireApiKey, async (req, res) => {
         id: true, symbol: true, analyzed_at: true, duration_ms: true, setup: true, reasoning: true,
         // Token của lượt phân tích — dashboard hiện ngay trên từng bản ghi tín hiệu.
         input_tokens: true, output_tokens: true, cache_read_tokens: true, cache_write_tokens: true,
+        // Nguồn kích hoạt (scheduler/event/api/mcp) — badge "watcher" trên modal tín hiệu.
+        trigger: true,
       },
     });
     res.json(logs);
@@ -478,8 +494,10 @@ app.get('/api/signals/latest', async (_req, res) => {
 app.get('/api/signals', async (req, res) => {
   try {
     const limit = Math.min(parseInt(String(req.query.limit ?? '20'), 10), 100);
+    // ?trigger=event → chỉ tín hiệu do SetupWatcher kích hoạt (scheduler | api | mcp tương tự).
+    const trigger = typeof req.query.trigger === 'string' && req.query.trigger ? req.query.trigger : undefined;
     const signals = await prisma.tradingSignal.findMany({
-      where:   { created_at: { gte: startOfTodayVN() } },
+      where:   { created_at: { gte: startOfTodayVN() }, ...(trigger ? { trigger } : {}) },
       orderBy: { created_at: 'desc' },
       take:    limit,
     });
