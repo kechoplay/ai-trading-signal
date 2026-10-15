@@ -421,7 +421,7 @@ Khung H1, M15, M5 kèm nến OHLC thô (đã đóng) để bạn đọc hình d�
 - \`[swept]\` — wick vượt qua rồi body close QUAY LẠI bên trong → liquidity sweep thật (dấu hiệu đảo chiều sớm).
 - \`[broken]\` — body close bên ngoài và KHÔNG quay lại → **phá thật, KHÔNG phải sweep**; đây là tín hiệu TIẾP DIỄN theo hướng phá, tuyệt đối không đọc thành "đã quét xong → đảo chiều".
 - \`[breaking]\` — vừa đóng cửa bên ngoài, chưa đủ nến để biết là sweep hay phá thật → chưa được dùng làm căn cứ cho cả hai hướng.
-**ĐỌC CHUỖI BOS/CHoCH trong FACTS**: mỗi sự kiện ghi "có displacement" hoặc "YẾU — KHÔNG displacement". Sự kiện YẾU KHÔNG thỏa định nghĩa BOS/CHoCH hợp lệ bên dưới — chỉ là body close nhích qua mức. "Vùng retest" đi kèm là FVG/OB do chính cú phá đó tạo ra — đây là vùng chờ hồi về (bước retest) chuẩn nhất; nhãn "hỏng" = đã bị body close xuyên mép xa, không còn là POI.
+**ĐỌC CHUỖI BOS/CHoCH trong FACTS**: mỗi sự kiện ghi "có displacement" hoặc "YẾU — KHÔNG displacement". Sự kiện YẾU KHÔNG thỏa định nghĩa BOS/CHoCH hợp lệ bên dưới — chỉ là body close nhích qua mức. "Vùng retest" đi kèm là FVG/OB do chính cú phá đó tạo ra (nhãn "FVG+OB" = FVG gộp với OB liền kề thành một vùng) — đây là vùng chờ hồi về (bước retest) chuẩn nhất; nhãn "hỏng" = đã bị body close xuyên mép xa quá ngưỡng chịu lệch, không còn là POI. Nhãn "xuyên nông … trong ngưỡng chịu lệch" = vùng VẪN hợp lệ nhưng mép xa đã yếu — SL phải nằm ngoài cả phần đã bị xuyên, không đặt sát mép.
 Phân tích THUẦN TÚY từ price action theo đúng quy trình bên dưới. Bỏ qua mọi bình luận ngoài cấu trúc output.
 
 ## QUY ƯỚC
@@ -1074,8 +1074,13 @@ function formatTimeframeFacts(a: TimeframeAnalysis): string {
       ? `có displacement (thân ${s.bodyAtr}× ATR)`
       : `YẾU — KHÔNG displacement (thân ${s.bodyAtr}× ATR, không FVG)`;
     const z = s.retestZone;
+    const zoneState = z?.invalidated
+      ? `hỏng — đã bị body close xuyên ${z.penetrationAtr}× ATR`
+      : z?.penetrationAtr
+        ? `còn hiệu lực — body close xuyên nông ${z.penetrationAtr}× ATR, trong ngưỡng chịu lệch`
+        : z?.mitigated ? 'đã chạm lại' : 'fresh, chưa hồi về';
     const zone = z
-      ? ` → vùng retest ${z.source} ${z.bottom}–${z.top} [${z.invalidated ? 'hỏng — đã bị body close xuyên' : z.mitigated ? 'đã chạm lại' : 'fresh, chưa hồi về'}]`
+      ? ` → vùng retest ${z.source} ${z.bottom}–${z.top} [${zoneState}]`
       : ' → không có FVG/OB để retest';
     return `${s.kind} ${s.direction} phá ${s.level} (${s.time}) — ${disp}${zone}`;
   };

@@ -93,7 +93,7 @@ export function detectSetup(
     return { ...base, stage: 'CONFIRMED', sweep, structure, key, note: 'đã có BOS/CHoCH nhưng không có FVG/OB để retest' };
   }
   if (zone.invalidated) {
-    return { ...base, sweep, structure, zone, key, note: `vùng retest ${zone.source} ${zone.bottom}–${zone.top} đã bị body close xuyên — hỏng` };
+    return { ...base, sweep, structure, zone, key, note: `vùng retest ${zone.source} ${zone.bottom}–${zone.top} đã bị body close xuyên ${zone.penetrationAtr}× ATR — hỏng` };
   }
 
   // 3) Retest: giá đang trong/sát vùng, hoặc wick vừa chạm vùng mà giá chưa chạy xa.

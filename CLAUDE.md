@@ -291,6 +291,16 @@ npm run db:migrate     # chạy migration
   `ICT_DISPLACEMENT_BODY_ATR`× ATR, hoặc cú phá để lại FVG) và `retestZone` (FVG/OB do chính cú
   phá tạo ra, kèm cờ `invalidated` khi đã bị body close xuyên mép xa). Prompt in sự kiện không
   displacement thành "YẾU" — khớp định nghĩa CHoCH hợp lệ. `recentStructure` giữ để tương thích.
+- **Vùng retest có ngưỡng chịu lệch + gộp FVG/OB** (thêm 15/10/2026, `describeBreak`). Trước đó
+  một nến M15 đóng thân xuyên mép xa của FVG 0.7 USD chỉ 0.12 USD đã đánh dấu vùng `invalidated`
+  → SetupWatcher hủy cả chuỗi sweep → BOS trước khi tới RETEST. Nay: (1) chỉ `invalidated` khi
+  body close xuyên mép xa QUÁ `ICT_RETEST_INVALIDATE_ATR` (0.25)× ATR; độ xuyên sâu nhất ghi ở
+  `penetrationAtr` (FACTS in "xuyên nông … trong ngưỡng chịu lệch"); (2) FVG gộp với OB của chính
+  cú đẩy (nến ngược chiều cuối cùng trước nến giữa FVG, lùi ≤3 cây — `obBeforeFvg()`, vì
+  `findOrderBlocks` đòi nến đẩy ≥1.2× ATR nên bỏ sót) khi hai vùng cách ≤
+  `ICT_RETEST_MERGE_OB_GAP_ATR` (0.5)× ATR → `source = 'FVG+OB'`, hộp = hợp của hai vùng. Đặt
+  `ICT_RETEST_INVALIDATE_ATR=0` + `ICT_RETEST_MERGE_OB_GAP_ATR=-1` = hành vi cũ. Áp dụng cho cả
+  FACTS gửi Claude lẫn SetupWatcher.
 - **Kill zone tính theo thời điểm phân tích + giờ London/New York thật** (`Intl`, tự xử lý DST).
   Bản cũ cố định 14–17h / 19:30–22h VN (giờ mùa hè) nên từ cuối tháng 10 gắn nhãn sai. Prompt
   vàng giờ bảo model dùng nhãn trong FACTS thay vì tự suy DST từ timestamp.

@@ -119,7 +119,8 @@ export interface Liquidity {
 
 /** Vùng để chờ giá hồi về sau một cú phá cấu trúc — FVG/OB do chính displacement tạo ra. */
 export interface RetestZone {
-  source: 'FVG' | 'OB';
+  /** FVG+OB = FVG gộp với OB liền kề (`ict.retestMergeObGapAtr`) thành một vùng dày hơn. */
+  source: 'FVG' | 'OB' | 'FVG+OB';
   type: 'BULLISH' | 'BEARISH';
   top: number;
   bottom: number;
@@ -127,8 +128,13 @@ export interface RetestZone {
   index: number;
   /** Giá đã hồi chạm vùng sau khi hình thành chưa. */
   mitigated: boolean;
-  /** Đã có nến body close xuyên qua mép xa của vùng → vùng hỏng, không còn là POI. */
+  /**
+   * Đã có nến body close xuyên qua mép xa của vùng QUÁ `ict.retestInvalidateAtr` × ATR
+   * → vùng hỏng, không còn là POI. Xuyên nông hơn ngưỡng chỉ ghi vào `penetrationAtr`.
+   */
   invalidated: boolean;
+  /** Body close xuyên mép xa sâu nhất, quy ra bội số ATR (0 = chưa nến nào đóng qua mép xa). */
+  penetrationAtr: number;
 }
 
 /** Sự kiện cấu trúc: body-close phá swing gần nhất theo hướng nào. */
@@ -723,15 +729,73 @@ function describeBreak(
 
   const displacement = (atrValue > 0 && maxBody >= atrValue * config.ict.displacementBodyAtr) || Boolean(fvg);
 
-  const zoneOf = (source: 'FVG' | 'OB', z: Fvg | OrderBlock): RetestZone => {
-    // Vùng hỏng khi có nến body close xuyên qua mép XA sau cú phá.
+  type Box = { top: number; bottom: number; index: number; mitigated: boolean };
+  const zoneOf = (source: RetestZone['source'], z: Box): RetestZone => {
+    // Vùng hỏng khi có nến body close xuyên qua mép XA sau cú phá, sâu hơn ngưỡng chịu lệch.
     const startAt = Math.max(i + 1, z.index + 2);
-    const invalidated = candles.slice(startAt).some((c) => (bullish ? c.close < z.bottom : c.close > z.top));
-    return { source, type: direction, top: z.top, bottom: z.bottom, index: z.index, mitigated: z.mitigated, invalidated };
+    let depth = 0;
+    for (const c of candles.slice(startAt)) {
+      depth = Math.max(depth, bullish ? z.bottom - c.close : c.close - z.top);
+    }
+    const tolerance = Math.max(0, config.ict.retestInvalidateAtr) * atrValue;
+    const invalidated = depth > tolerance;
+    const penetrationAtr = depth > 0 && atrValue > 0 ? Number((depth / atrValue).toFixed(2)) : 0;
+    return {
+      source, type: direction, top: z.top, bottom: z.bottom, index: z.index,
+      mitigated: z.mitigated, invalidated, penetrationAtr,
+    };
   };
-  const retestZone = fvg ? zoneOf('FVG', fvg) : ob ? zoneOf('OB', ob) : null;
+
+  let retestZone: RetestZone | null = null;
+  if (fvg) {
+    const fvgOb = ob ?? obBeforeFvg(candles, fvg, direction);
+    const merged = fvgOb ? mergeFvgOb(fvg, fvgOb, atrValue) : null;
+    retestZone = merged ? zoneOf('FVG+OB', merged) : zoneOf('FVG', fvg);
+  } else if (ob) {
+    retestZone = zoneOf('OB', ob);
+  }
 
   return { displacement, bodyAtr, retestZone };
+}
+
+/**
+ * OB của chính cú đẩy tạo ra FVG: nến ngược chiều cuối cùng trước nến đẩy (nến giữa FVG),
+ * lùi tối đa 3 cây. `findOrderBlocks` đòi nến đẩy ≥ 1.2× ATR nên bỏ sót OB của những cú
+ * phá vừa đủ displacement (~1× ATR) — đúng loại hay để lại FVG mỏng cần gộp nhất.
+ */
+function obBeforeFvg(candles: Candle[], fvg: Fvg, direction: 'BULLISH' | 'BEARISH'): OrderBlock | null {
+  const bullish = direction === 'BULLISH';
+  for (let k = fvg.index - 1; k >= Math.max(0, fvg.index - 3); k--) {
+    const c = candles[k];
+    if (bullish ? c.close < c.open : c.close > c.open) {
+      const top = r2(c.high);
+      const bottom = r2(c.low);
+      // Mitigated tính từ sau nến thứ 3 của FVG — trước đó là chính cú đẩy.
+      const after = candles.slice(fvg.index + 2);
+      const mitigated = after.some((x) => (bullish ? x.low <= top : x.high >= bottom));
+      return { type: direction, top, bottom, index: k, time: c.time, mitigated };
+    }
+  }
+  return null;
+}
+
+/** Gộp FVG + OB thành một hộp khi hai vùng chồng nhau hoặc cách ≤ `retestMergeObGapAtr` × ATR. */
+function mergeFvgOb(
+  fvg: Fvg,
+  ob: OrderBlock,
+  atrValue: number,
+): { top: number; bottom: number; index: number; mitigated: boolean } | null {
+  const maxGap = config.ict.retestMergeObGapAtr;
+  if (maxGap < 0) return null;
+  const gap = Math.max(0, Math.max(fvg.bottom, ob.bottom) - Math.min(fvg.top, ob.top));
+  if (gap > maxGap * atrValue) return null;
+  return {
+    top: Math.max(fvg.top, ob.top),
+    bottom: Math.min(fvg.bottom, ob.bottom),
+    // Index muộn hơn: phép kiểm "hỏng" chỉ bắt đầu sau khi cả hai vùng đã hình thành.
+    index: Math.max(fvg.index, ob.index),
+    mitigated: fvg.mitigated || ob.mitigated,
+  };
 }
 
 function findStructureEvents(

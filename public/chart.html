@@ -1248,7 +1248,9 @@ function wFacts(s) {
   }
   if (s.zone) {
     const z = s.zone;
-    const zs = z.invalidated ? 'hỏng' : z.mitigated ? 'đã chạm' : 'fresh';
+    const zs = z.invalidated ? `hỏng (xuyên ${z.penetrationAtr ?? '?'}× ATR)`
+      : z.penetrationAtr ? `xuyên nông ${z.penetrationAtr}× ATR — còn hiệu lực`
+      : z.mitigated ? 'đã chạm' : 'fresh';
     facts.push(`Vùng retest ${esc(z.source)} <b>${swingNum(z.bottom)} – ${swingNum(z.top)}</b> · ${zs}`);
   }
   return facts.length ? '<ul class="w-facts">' + facts.map(f => `<li>${f}</li>`).join('') + '</ul>' : '';

@@ -74,6 +74,13 @@ export const config = {
     sweepRecentBars: parseInt(process.env.ICT_SWEEP_RECENT_BARS ?? '24', 10),
     // Số sự kiện BOS/CHoCH gần nhất gửi vào prompt cho mỗi khung.
     structureEvents: parseInt(process.env.ICT_STRUCTURE_EVENTS ?? '3', 10),
+    // Vùng retest (FVG/OB của cú phá) chỉ bị coi là HỎNG khi body close xuyên mép xa
+    // QUÁ N× ATR. 0 = xuyên 1 tick cũng hỏng (hành vi cũ) — với FVG mỏng vài giá điều
+    // đó hủy oan cả chuỗi chỉ vì nến đóng nhích qua mép vài cent.
+    retestInvalidateAtr: parseFloat(process.env.ICT_RETEST_INVALIDATE_ATR ?? '0.25'),
+    // Gộp FVG với OB (nến ngược cuối cùng trước cú đẩy) khi hai vùng cách nhau ≤ N× ATR
+    // → một vùng retest dày hơn. Số âm = tắt gộp, chỉ dùng FVG (hoặc OB khi không có FVG).
+    retestMergeObGapAtr: parseFloat(process.env.ICT_RETEST_MERGE_OB_GAP_ATR ?? '0.5'),
   },
 
   // SETUP WATCHER — kích hoạt phân tích AI theo SỰ KIỆN thay vì chỉ theo đồng hồ.
