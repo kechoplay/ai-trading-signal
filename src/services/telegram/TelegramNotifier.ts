@@ -354,7 +354,7 @@ export class TelegramNotifier {
   }
 
   /** Bản gọn cho channel chính — chỉ header + entry/SL/TP, không kèm giá/xu hướng/confidence/kịch bản. */
-  formatSignalSummary(result: AnalysisResult, instrument: string): string {
+  formatSignalSummary(result: AnalysisResult, instrument: string, source?: string | null): string {
     const SEP = '━━━━━━━━━━━━━━━━━━━━━';
     const time = formatDate(new Date());
 
@@ -369,6 +369,7 @@ export class TelegramNotifier {
       `📊 <b>${htmlEscape(instrument)}</b>  ${actionLine}`,
       SEP,
       `🕐 ${time} <i>(Giờ VN)</i>`,
+      ...sourceLine(source),
     ];
 
     if (result.action === 'BUY' || result.action === 'SELL') {
@@ -386,7 +387,7 @@ export class TelegramNotifier {
     return lines.join('\n');
   }
 
-  formatSignalCard(result: AnalysisResult, instrument: string, currentPrice?: number): string {
+  formatSignalCard(result: AnalysisResult, instrument: string, currentPrice?: number, source?: string | null): string {
     const SEP = '━━━━━━━━━━━━━━━━━━━━━';
     const time = formatDate(new Date());
 
@@ -401,6 +402,7 @@ export class TelegramNotifier {
       `📊 <b>${htmlEscape(instrument)}</b>  ${actionLine}`,
       SEP,
       `🕐 ${time} <i>(Giờ VN)</i>`,
+      ...sourceLine(source),
     ];
 
     if (currentPrice != null) {
@@ -467,13 +469,14 @@ export class TelegramNotifier {
    * Thẻ KẾ HOẠCH NGÀY — gửi kênh chính (plan không có lệnh nên "bản gọn" chính là bias +
    * hai kịch bản), đồng thời là `setup` lưu analysis_logs. Phân tích đầy đủ vào comment.
    */
-  formatPlanCard(result: AnalysisResult, instrument: string, currentPrice?: number): string {
+  formatPlanCard(result: AnalysisResult, instrument: string, currentPrice?: number, source?: string | null): string {
     const SEP = '━━━━━━━━━━━━━━━━━━━━━';
     const lines: string[] = [
       SEP,
       `🗺 <b>${htmlEscape(instrument)}  KẾ HOẠCH NGÀY</b>`,
       SEP,
       `🕐 ${formatDate(new Date())} <i>(Giờ VN)</i>`,
+      ...sourceLine(source),
     ];
 
     if (currentPrice != null) lines.push(`💵 <b>Giá hiện tại:</b>  ${formatPrice(currentPrice, 2)}`);
@@ -687,4 +690,21 @@ function toNum(val: unknown): number {
   if (typeof val === 'number') return val;
   if (val && typeof (val as any).toNumber === 'function') return (val as any).toNumber();
   return parseFloat(String(val));
+}
+
+/**
+ * Nhãn nguồn kích hoạt (cột `trigger`) — để phân biệt trên Telegram tin do SetupWatcher
+ * hay scheduler bắn ra. Khớp W_TRIG_LABEL trong public/chart.html.
+ */
+export const TRIGGER_LABEL: Record<string, string> = {
+  event:     '🎯 Watcher (sweep → BOS/CHoCH → retest)',
+  scheduler: '⏱ Theo lịch',
+  api:       '👆 Bấm tay',
+  mcp:       '🤖 MCP',
+};
+
+/** Dòng "Nguồn" dưới dòng giờ — rỗng khi không truyền trigger (vd thẻ lưu cho dashboard). */
+function sourceLine(source?: string | null): string[] {
+  if (!source) return [];
+  return [`🔔 <b>Nguồn:</b> ${htmlEscape(TRIGGER_LABEL[source] ?? source)}`];
 }

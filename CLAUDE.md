@@ -383,7 +383,7 @@ mới mỗi 30s. Watcher chỉ cập nhật snapshot trong khung giờ — ngoà
 Tab **Lịch sử** trong modal (chọn ngày, giờ VN) đọc `GET /api/setup-watcher/history`: mỗi lần đổi
 bước "bước trước → bước sau", các mức, và "⚡ Đã gọi AI → kết quả" hoặc "⏸ Không gọi AI: lý do".
 Modal "Tín hiệu từ Claude" gắn nhãn nguồn kích hoạt trên từng bản ghi (🎯 Watcher / ⏱ Theo lịch /
-👆 Bấm tay) từ cột `trigger`.
+👆 Bấm tay) từ cột `trigger`, cộng badge `🗺 Plan` khi `analysis_type = 'daily_plan'` (plan cũng là `scheduler`).
 
 ---
 
@@ -588,6 +588,7 @@ trên từng bản ghi + dải tổng token trong ngày.
 - **Kênh chính** nhận bản gọn (`formatSignalSummary`): chỉ header + entry/SL/TP/RR, không kèm giá hiện tại/xu hướng/confidence/kịch bản tiềm năng. **Comment** (discussion thread) mới nhận bản đầy đủ: `formatSignalCard` (giá, xu hướng, confidence, kịch bản) nối với `formatAnalysis` (phân tích chi tiết). `setup` trả về trong response `POST /api/analyze` (cho dashboard) vẫn dùng `formatSignalCard` đầy đủ, không đổi.
 - Gửi signal card dạng HTML (không dùng Markdown)
 - Badge action: 🟢 MUA / 🔴 BÁN / 👁 ĐANG CANH (WATCHLIST) / ⚪ KHÔNG VÀO LỆNH
+- **Dòng nguồn** `🔔 Nguồn: 🎯 Watcher / ⏱ Theo lịch / 👆 Bấm tay / 🤖 MCP` ngay dưới dòng giờ (`TRIGGER_LABEL`), trên cả kênh chính lẫn comment, kể cả thẻ kế hoạch ngày. `trigger` đi `runAnalysis` → `SignalOrchestrator.run(…, trigger)` → `notify`. Thẻ `setup` lưu `analysis_logs` KHÔNG kèm dòng này (dashboard có badge riêng).
 - Auto-split tin nhắn >4000 ký tự
 - Discussion thread: tự resolve DISCUSSION_ID nếu chưa set
 - Chuyển đổi markdown AI → HTML Telegram (bảng, bold, italic, bullet)

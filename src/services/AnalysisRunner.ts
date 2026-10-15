@@ -67,7 +67,7 @@ export async function runAnalysis(opts: AnalysisRunOptions): Promise<AnalysisRun
     logger.info('Analysis started', { symbol: requested, timeframes: timeframes ?? 'default', analysisType, trigger });
 
     const { result, rawText, instrument: sym, currentPrice, usage, rateLimit } =
-      await SignalOrchestrator.fromConfig().run(symbol, timeframes, analysisType, triggerNote);
+      await SignalOrchestrator.fromConfig().run(symbol, timeframes, analysisType, triggerNote, trigger);
     const durationMs = Date.now() - startedAt;
 
     const notifier  = TelegramNotifier.fromConfig();

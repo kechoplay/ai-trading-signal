@@ -493,6 +493,8 @@ app.get('/api/symbols/:symbol/signals', requireApiKey, async (req, res) => {
         input_tokens: true, output_tokens: true, cache_read_tokens: true, cache_write_tokens: true,
         // Nguồn kích hoạt (scheduler/event/api/mcp) — badge "watcher" trên modal tín hiệu.
         trigger: true,
+        // 'daily_plan' → badge "🗺 Plan" (plan cũng chạy theo lịch, cùng trigger 'scheduler').
+        analysis_type: true,
       },
     });
     res.json(logs);

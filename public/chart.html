@@ -482,6 +482,7 @@
     /* Nguồn kích hoạt trên modal tín hiệu Claude */
     .trig-badge { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 10px; background: #f3f4f6; color: var(--muted); }
     .trig-badge.event { background: #dcfce7; color: #15803d; }
+    .trig-badge.plan { background: #dbeafe; color: #1d4ed8; }
   </style>
 </head>
 <body>
@@ -827,6 +828,7 @@ async function showSignals(symbol) {
       <div class="sig-item${open}">
         <div class="sig-item-head" onclick="toggleSigItem(this.parentElement)">
           <span class="sig-item-time">🕐 ${esc(time)}${secs}</span>
+          ${log.analysis_type === 'daily_plan' ? '<span class="trig-badge plan">🗺 Plan</span>' : ''}
           ${log.trigger ? `<span class="trig-badge ${log.trigger === 'event' ? 'event' : ''}">${esc(W_TRIG_LABEL[log.trigger] || log.trigger)}</span>` : ''}
           ${tokBadge(log)}
           <span class="sig-toggle">›</span>
