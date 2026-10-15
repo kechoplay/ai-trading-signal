@@ -26,6 +26,8 @@ interface LastRecorded {
   /** stage + thời điểm sweep + thời điểm cú phá: đổi một trong ba = bước/chuỗi mới. */
   sig: string;
   skipReason: string | null;
+  /** Bản ghi này là lần đã gọi AI — không ghi đè skip_reason lên nó. */
+  triggered: boolean;
 }
 
 /** Chữ ký của trạng thái một hướng — cùng bước nhưng sweep/cú phá khác = chuỗi khác. */
@@ -66,14 +68,15 @@ export class SetupWatcher {
   private lastTrigger: { symbol: string; at: string; key: string; action: string | null } | null = null;
   private readonly snapshots = new Map<string, SymbolSnapshot>();
   private readonly biasCache = new Map<string, { bias: Bias; at: number }>();
-  private readonly triggered = new Set<string>();
+  /** key chuỗi đã kích hoạt → thời điểm kích hoạt (ms) — để ghi lý do khi chuỗi retest lại. */
+  private readonly triggered = new Map<string, number>();
   private readonly lastTriggerAt = new Map<string, number>();
   private dayKey = '';
   private dayCount = 0;
   private marketInstance: MarketDataProvider | null = null;
   /** key `${symbol}|${direction}` → bản ghi lịch sử gần nhất; null = DB chưa có bản ghi nào. */
   private readonly lastRecorded = new Map<string, LastRecorded | null>();
-  private hydrated = false;
+  private hydrating: Promise<void> | null = null;
 
   constructor(
     // Tạo provider lười: thiếu API key thì chỉ watcher lỗi ở tick (log), không làm sập
@@ -102,6 +105,9 @@ export class SetupWatcher {
       logger.error('Setup watcher cấu hình không hợp lệ — không bật', { intervalMin: cfg.intervalMin, symbols: this.symbols });
       return;
     }
+    // Nạp lịch sử ngay khi khởi động (không đợi tick đầu trong khung giờ) để status —
+    // triggers_today, last_trigger — đúng cả khi restart ngoài giờ.
+    void this.hydrate();
     this.arm();
     logger.info('Setup watcher bật', {
       interval_min: cfg.intervalMin, timeframe: cfg.timeframe, bias_timeframe: cfg.biasTimeframe,
@@ -250,6 +256,15 @@ export class SetupWatcher {
       }
     }
 
+    // RETEST của chuỗi đã gọi AI rồi → ghi lý do, nếu không thẻ lịch sử trông như bị bỏ qua vô cớ.
+    for (const s of setups) {
+      const firedAt = s.key != null ? this.triggered.get(s.key) : undefined;
+      if (s.stage === 'RETEST' && firedAt != null && (s.biasOk || !cfg.requireBias)) {
+        const at = new Date(firedAt).toLocaleTimeString('vi-VN', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false });
+        await this.setSkipReason(symbol, s.direction, `chuỗi này đã gọi AI lúc ${at} — mỗi chuỗi chỉ kích hoạt 1 lần`);
+      }
+    }
+
     const ready = setups
       .filter((s) => s.stage === 'RETEST' && s.key != null && !this.triggered.has(s.key))
       .filter((s) => s.biasOk || !cfg.requireBias)
@@ -284,8 +299,10 @@ export class SetupWatcher {
 
     // Bản ghi lịch sử của bước RETEST vừa/đã ghi — đánh dấu kích hoạt ngay TRƯỚC khi chạy
     // (~3 phút) để restart giữa chừng vẫn đếm đúng cooldown/trần ngày.
-    const eventId = this.lastRecorded.get(`${symbol}|${ready.direction}`)?.id ?? null;
-    this.rememberKey(ready.key);
+    const rec = this.lastRecorded.get(`${symbol}|${ready.direction}`) ?? null;
+    const eventId = rec?.id ?? null;
+    if (rec) rec.triggered = true;
+    this.rememberKey(ready.key, Date.now());
     this.lastTriggerAt.set(symbol, Date.now());
     this.dayCount++;
     await this.updateEvent(eventId, { triggered: true, triggered_at: new Date(), skip_reason: null });
@@ -297,6 +314,7 @@ export class SetupWatcher {
       if (err instanceof AnalysisBusyError) {
         // Bị chen ngay giữa currentRun() và runAnalysis → hoàn lại để tick sau thử lại.
         this.triggered.delete(ready.key);
+        if (rec) rec.triggered = false;
         this.lastTriggerAt.delete(symbol);
         this.dayCount--;
         await this.updateEvent(eventId, { triggered: false, triggered_at: null });
@@ -312,26 +330,41 @@ export class SetupWatcher {
   // ── Lịch sử (bảng setup_watch_events) ─────────────────────────────────────────
 
   /**
-   * Nạp lại từ DB (1 lần, ở tick đầu): key các chuỗi đã kích hoạt 2 ngày gần nhất, mốc
-   * cooldown từng symbol và số lần kích hoạt hôm nay — để restart không kích hoạt lặp.
+   * Nạp lại từ DB (1 lần, gọi từ start() và trước tick đầu): key các chuỗi đã kích hoạt 2
+   * ngày gần nhất, mốc cooldown từng symbol, số lần kích hoạt hôm nay và lần kích hoạt gần
+   * nhất — để restart không kích hoạt lặp và modal "Hiện tại" không mất "kích hoạt gần nhất".
+   * Mọi caller dùng chung một promise: tick đầu chờ nạp xong rồi mới dò (không kích hoạt lặp).
    */
-  private async hydrate(): Promise<void> {
-    if (this.hydrated) return;
-    this.hydrated = true; // lỗi cũng không thử lại mỗi tick — chạy tiếp với state rỗng
+  private hydrate(): Promise<void> {
+    // Lỗi cũng không thử lại mỗi tick — chạy tiếp với state rỗng.
+    this.hydrating ??= this.loadHistory();
+    return this.hydrating;
+  }
+
+  private async loadHistory(): Promise<void> {
     try {
       const now = new Date();
       const rows = await prisma.setupWatchEvent.findMany({
         where: { triggered: true, triggered_at: { gte: new Date(now.getTime() - 2 * 86_400_000) } },
-        select: { symbol: true, setup_key: true, triggered_at: true },
+        select: { symbol: true, setup_key: true, triggered_at: true, analysis_action: true },
         orderBy: { triggered_at: 'asc' },
       });
       const todayStart = startOfToday(now, config.marketHours.timezone).getTime();
       for (const r of rows) {
-        if (r.setup_key) this.rememberKey(r.setup_key);
         const at = r.triggered_at?.getTime();
         if (at == null) continue;
+        if (r.setup_key) this.rememberKey(r.setup_key, at);
         this.lastTriggerAt.set(r.symbol, Math.max(this.lastTriggerAt.get(r.symbol) ?? 0, at));
         if (at >= todayStart) this.dayCount++;
+      }
+      // Bản ghi cuối (sort asc) = lần kích hoạt gần nhất. analysis_action null = lượt bị
+      // ngắt giữa chừng (vd restart khi AI đang chạy) — modal hiện như lỗi.
+      const last = rows[rows.length - 1];
+      if (last?.triggered_at && !this.lastTrigger) {
+        this.lastTrigger = {
+          symbol: last.symbol, at: last.triggered_at.toISOString(),
+          key: last.setup_key ?? '', action: last.analysis_action,
+        };
       }
       const p = zonedParts(now, config.marketHours.timezone);
       this.dayKey = `${p.year}-${p.month}-${p.day}`;
@@ -355,9 +388,11 @@ export class SetupWatcher {
           const row = await prisma.setupWatchEvent.findFirst({
             where: { symbol, direction: s.direction, timeframe },
             orderBy: { id: 'desc' },
-            select: { id: true, stage: true, detail: true, skip_reason: true },
+            select: { id: true, stage: true, detail: true, skip_reason: true, triggered: true },
           });
-          prev = row ? { id: row.id, stage: row.stage, sig: parseSig(row.detail), skipReason: row.skip_reason } : null;
+          prev = row
+            ? { id: row.id, stage: row.stage, sig: parseSig(row.detail), skipReason: row.skip_reason, triggered: row.triggered }
+            : null;
           this.lastRecorded.set(k, prev);
         }
 
@@ -379,7 +414,7 @@ export class SetupWatcher {
           },
           select: { id: true },
         });
-        this.lastRecorded.set(k, { id: row.id, stage: s.stage, sig, skipReason: null });
+        this.lastRecorded.set(k, { id: row.id, stage: s.stage, sig, skipReason: null, triggered: false });
       } catch (err: unknown) {
         logger.warn('Setup watcher: ghi lịch sử thất bại', { symbol, direction: s.direction, error: errMsg(err) });
       }
@@ -389,7 +424,7 @@ export class SetupWatcher {
   /** Ghi lý do RETEST mà không kích hoạt — chỉ ghi khi lý do đổi (tránh update mỗi tick). */
   private async setSkipReason(symbol: string, direction: 'BUY' | 'SELL', reason: string): Promise<void> {
     const rec = this.lastRecorded.get(`${symbol}|${direction}`);
-    if (!rec || rec.skipReason === reason) return;
+    if (!rec || rec.triggered || rec.skipReason === reason) return;
     rec.skipReason = reason;
     await this.updateEvent(rec.id, { skip_reason: reason });
   }
@@ -438,10 +473,10 @@ export class SetupWatcher {
     };
   }
 
-  private rememberKey(key: string): void {
-    this.triggered.add(key);
+  private rememberKey(key: string, at: number): void {
+    this.triggered.set(key, at);
     if (this.triggered.size > MAX_TRIGGERED_KEYS) {
-      const oldest = this.triggered.values().next().value;
+      const oldest = this.triggered.keys().next().value;
       if (oldest !== undefined) this.triggered.delete(oldest);
     }
   }

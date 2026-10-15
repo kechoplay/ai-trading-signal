@@ -359,9 +359,12 @@ Lịch sử (`setup_watch_events`, `recordTransitions()`): chỉ ghi khi một h
 "chữ ký" `stage|sweep.time|structure.time` (lưu trong `detail.sig`), nên cùng bước nhưng sweep/cú
 phá khác vẫn ra bản ghi mới; `NONE` chỉ ghi khi một chuỗi vừa hỏng/hết hạn, không ghi khi đứng yên.
 Bản ghi RETEST được đánh dấu `triggered/triggered_at` NGAY TRƯỚC khi gọi AI (lượt AI ~3 phút), rồi
-`analysis_action` khi xong (`ERROR` nếu lỗi; busy → hoàn lại). Khi khởi động, `hydrate()` nạp lại
-từ bảng: key chuỗi đã kích hoạt 2 ngày gần nhất, mốc cooldown, số lần kích hoạt hôm nay → restart
-KHÔNG kích hoạt lặp. Bản ghi cuối mỗi (symbol, hướng) cũng đọc lại từ DB để không ghi trùng sau
+`analysis_action` khi xong (`ERROR` nếu lỗi; busy → hoàn lại). Ngay trong `start()`, `hydrate()` nạp lại
+từ bảng: key chuỗi đã kích hoạt 2 ngày gần nhất (kèm giờ kích hoạt), mốc cooldown, số lần kích hoạt
+hôm nay và `last_trigger` → restart KHÔNG kích hoạt lặp và modal không mất "kích hoạt gần nhất"
+(trước 15/10/2026 `last_trigger` chỉ nằm trong RAM, và hydrate chỉ chạy ở tick đầu TRONG khung giờ).
+Tick đầu chờ chung promise của hydrate. Chuỗi đã kích hoạt mà retest lại → ghi `skip_reason`
+"chuỗi này đã gọi AI lúc HH:MM" (không ghi đè lên bản ghi đã gọi AI). Bản ghi cuối mỗi (symbol, hướng) cũng đọc lại từ DB để không ghi trùng sau
 restart. Mọi lỗi DB fail-soft (chỉ log) — watcher vẫn dò tiếp.
 Watcher KHÔNG thay scheduler đồng hồ — hai đường chạy song song; nếu watcher đang chạy một lượt
 AI đúng lúc scheduler tới mốc thì scheduler bỏ lượt (AnalysisBusyError, như bấm tay).
