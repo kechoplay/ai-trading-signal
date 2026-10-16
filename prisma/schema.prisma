@@ -134,3 +134,26 @@ model SetupWatchEvent {
   @@index([triggered, triggered_at])
   @@map("setup_watch_events")
 }
+
+// Mỗi lần watcher dò một symbol (mỗi tick ~5 phút trong khung giờ) một bản ghi — kể cả khi
+// không hướng nào đổi bước. setup_watch_events chỉ ghi lúc đổi bước nên không đủ để xem
+// "watcher đã chạy những lần nào, mỗi lần thấy gì".
+model SetupWatchTick {
+  id              Int      @id @default(autoincrement())
+  symbol          String
+  timeframe       String
+  price           Float?
+  bias            String?
+  buy_stage       String?             // NONE | SWEPT | CONFIRMED | RETEST — null khi lỗi/bỏ tick
+  sell_stage      String?
+  // IDLE (dò xong, không gọi AI) | TRIGGERED | SKIPPED (RETEST nhưng không gọi AI) | ERROR | BUSY (bỏ tick vì tick trước còn chạy)
+  outcome         String
+  analysis_action String?
+  reason          String?  @db.Text   // lý do bỏ qua / thông điệp lỗi
+  detail          String?  @db.Text   // JSON { BUY: { note, bias_ok }, SELL: { … } }
+  duration_ms     Int?
+  created_at      DateTime            // lúc BẮT ĐẦU dò — sự kiện đổi bước của tick nằm sau mốc này
+
+  @@index([symbol, created_at])
+  @@map("setup_watch_ticks")
+}

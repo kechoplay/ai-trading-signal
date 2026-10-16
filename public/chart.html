@@ -479,6 +479,27 @@
     .w-ev-res { font-size: 12px; margin-top: 6px; }
     .w-ev-res.fired { color: #15803d; font-weight: 600; }
     .w-ev-res.skip { color: #b45309; }
+    .w-tabbar select {
+      border: 1px solid var(--border); border-radius: 8px; padding: 4px 8px; font-size: 12px; color: var(--text); background: var(--card);
+    }
+    /* Mỗi lần dò (tick) một dòng; các lần đổi bước của tick đó lồng bên dưới */
+    .w-tick { border-left: 3px solid var(--border); padding: 6px 0 6px 10px; margin-bottom: 4px; font-size: 12px; }
+    .w-tick.idle { color: var(--muted); }
+    .w-tick.has-ev { border-left-color: #f59e0b; }
+    .w-tick.o-TRIGGERED { border-left-color: #22c55e; }
+    .w-tick.o-ERROR { border-left-color: #ef4444; }
+    .w-tick-top { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+    .w-tick-top .w-step { font-size: 10px; padding: 2px 7px; }
+    .w-tick-out { font-weight: 600; }
+    .w-tick-out.TRIGGERED { color: #15803d; }
+    .w-tick-out.SKIPPED { color: #b45309; }
+    .w-tick-out.ERROR { color: #b91c1c; }
+    .w-tick-out.BUSY { color: var(--muted); }
+    .w-tick-reason { margin-top: 3px; color: var(--muted); }
+    .w-tick details { margin-top: 3px; }
+    .w-tick summary { cursor: pointer; color: var(--muted); font-size: 11px; }
+    .w-tick details div { color: var(--text); margin: 2px 0 0 12px; }
+    .w-tick .w-ev { margin: 6px 0 2px; }
     /* Nguồn kích hoạt trên modal tín hiệu Claude */
     .trig-badge { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 10px; background: #f3f4f6; color: var(--muted); }
     .trig-badge.event { background: #dcfce7; color: #15803d; }
@@ -527,7 +548,11 @@
     <div class="w-tabbar">
       <button class="w-tab active" id="wTabNow" onclick="switchWatcherTab('now')">Hiện tại</button>
       <button class="w-tab" id="wTabHist" onclick="switchWatcherTab('history')">Lịch sử</button>
-      <input type="date" id="wDate" onchange="loadWatcher(true)" style="display:none" title="Chọn ngày (giờ VN)" />
+      <select id="wHistFilter" onchange="loadWatcher(true)" style="display:none;margin-left:auto" title="Lọc lịch sử">
+        <option value="all">Tất cả lần dò</option>
+        <option value="changes">Chỉ lần có thay đổi / gọi AI</option>
+      </select>
+      <input type="date" id="wDate" onchange="loadWatcher(true)" style="display:none;margin-left:0" title="Chọn ngày (giờ VN)" />
     </div>
     <div class="sig-modal-body" id="wBody">
       <div class="empty">Đang tải…</div>
@@ -1348,7 +1373,7 @@ async function loadWatcherStatus() {
   try { renderWatcherBtn(await fetchWatcher()); } catch { renderWatcherBtn(null); }
 }
 
-// ── Tab Lịch sử: mỗi bản ghi = một lần một hướng ĐỔI bước (bảng setup_watch_events) ──
+// ── Tab Lịch sử: mọi lần dò (setup_watch_ticks) + các lần một hướng ĐỔI bước (setup_watch_events) ──
 let watcherTab = 'now';
 
 const W_STAGE_LABEL = { SWEPT: '① Đã quét', CONFIRMED: '② BOS/CHoCH', RETEST: '③ Retest', NONE: '✕ Hủy / hết hạn' };
@@ -1363,45 +1388,124 @@ function wStageTag(stage, cls) {
   return `<span class="w-step ${cls}">${esc(W_STAGE_LABEL[stage] || stage || '—')}</span>`;
 }
 
+const W_OUTCOME_LABEL = { TRIGGERED: '⚡ Gọi AI', SKIPPED: '⏸ Không gọi AI', ERROR: '✗ Lỗi', BUSY: '⏭ Bỏ tick', IDLE: '' };
+const hhmm = iso => new Date(iso).toLocaleTimeString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', hour12: false });
+
+/** Thẻ một lần ĐỔI bước (bảng setup_watch_events). */
+function wEventCard(e) {
+  const buy = e.direction === 'BUY';
+  const to = e.stage === 'NONE' ? wStageTag('NONE', 'dead') : wStageTag(e.stage, e.stage === 'RETEST' ? 'done' : 'now');
+  const from = e.prev_stage && e.prev_stage !== 'NONE' ? wStageTag(e.prev_stage, '') + '<span class="w-arrow">→</span>' : '';
+  let result = '';
+  if (e.triggered) {
+    result = `<div class="w-ev-res fired">⚡ Đã gọi AI${e.triggered_at ? ' lúc ' + esc(vnTime(e.triggered_at)) : ''} → `
+      + `${e.analysis_action ? 'kết quả ' + esc(e.analysis_action) : 'đang chạy…'}</div>`;
+  } else if (e.skip_reason) {
+    result = `<div class="w-ev-res skip">⏸ Không gọi AI: ${esc(e.skip_reason)}</div>`;
+  }
+  return `<div class="w-ev">
+    <div class="w-ev-top">
+      <span class="w-ev-time">${esc(hhmm(e.created_at))}</span>
+      <span class="w-dir-name ${buy ? 'buy' : 'sell'}">${buy ? '🟢 BUY' : '🔴 SELL'}</span>
+      <span class="w-steps">${from}${to}</span>
+      <span class="w-ev-sym">${esc(e.symbol)} · ${esc(e.timeframe)} · giá ${swingNum(e.price)} · bias ${esc(e.bias || '—')}</span>
+    </div>
+    <div class="w-note">${esc(e.note || '')}</div>
+    ${wFacts(e)}
+    ${result}
+  </div>`;
+}
+
+/** Chip bước của một hướng trong dòng tick: "BUY ② BOS/CHoCH", NONE = xám. */
+function wTickStage(dir, stage) {
+  if (!stage) return '';
+  const cls = stage === 'RETEST' ? 'done' : stage === 'NONE' ? '' : 'now';
+  const label = stage === 'NONE' ? 'chưa có' : (W_STAGE_LABEL[stage] || stage);
+  return `<span class="w-step ${cls}">${dir} ${esc(label)}</span>`;
+}
+
+/** Một dòng = một lần watcher dò một symbol (bảng setup_watch_ticks) + các lần đổi bước của lần đó. */
+function wTickRow(t, evs) {
+  const out = W_OUTCOME_LABEL[t.outcome] ?? esc(t.outcome);
+  const action = t.outcome === 'TRIGGERED'
+    ? ' → ' + (t.analysis_action ? '<b>' + esc(t.analysis_action) + '</b>' : 'đang chạy…') : '';
+  const idle = t.outcome === 'IDLE' && !evs.length;
+  const notes = Object.entries(t.setups || {})
+    .map(([dir, x]) => `<div><b>${esc(dir)}</b>: ${esc(x.note || '—')}${x.bias_ok ? '' : ' <i>(ngược / chưa rõ bias)</i>'}</div>`)
+    .join('');
+  return `<div class="w-tick o-${esc(t.outcome)}${idle ? ' idle' : ''}${evs.length ? ' has-ev' : ''}">
+    <div class="w-tick-top">
+      <span class="w-ev-time">${esc(hhmm(t.created_at))}</span>
+      <span class="w-ev-sym">${esc(t.symbol)} · ${esc(t.timeframe)}${t.price != null ? ' · giá ' + swingNum(t.price) : ''}${t.bias ? ' · bias ' + esc(t.bias) : ''}</span>
+      ${wTickStage('BUY', t.buy_stage)}${wTickStage('SELL', t.sell_stage)}
+      ${out ? `<span class="w-tick-out ${esc(t.outcome)}">${out}${action}</span>` : ''}
+    </div>
+    ${t.reason ? `<div class="w-tick-reason">${esc(t.reason)}</div>` : ''}
+    ${notes ? `<details><summary>Ghi chú từng hướng</summary>${notes}</details>` : ''}
+    ${evs.map(wEventCard).join('')}
+  </div>`;
+}
+
 function renderWatcherHistory(h) {
   const body = document.getElementById('wBody');
   const events = h.events || [];
+  const ticks = h.ticks || [];
+  const onlyChanges = document.getElementById('wHistFilter').value === 'changes';
   const fired = events.filter(e => e.triggered);
+  const count = o => ticks.filter(t => t.outcome === o).length;
+  const errors = count('ERROR'), busy = count('BUSY');
+
+  // Gắn mỗi lần đổi bước vào lần dò sinh ra nó: lần dò mới nhất cùng symbol bắt đầu
+  // trước nó (tick ghi giờ BẮT ĐẦU, đổi bước ghi trong lúc dò). Không khớp tick nào
+  // (dữ liệu trước khi có bảng setup_watch_ticks) → hiện riêng.
+  const ticksBySym = {};
+  for (const t of ticks) (ticksBySym[t.symbol] ||= []).push(t); // đã sắp mới → cũ
+  const evByTick = new Map();
+  const loose = [];
+  for (const e of events) {
+    const at = new Date(e.created_at).getTime();
+    const t = (ticksBySym[e.symbol] || []).find(x => new Date(x.created_at).getTime() <= at);
+    const fits = t && at - new Date(t.created_at).getTime() <= (t.duration_ms || 0) + 60_000;
+    if (fits) {
+      if (!evByTick.has(t.id)) evByTick.set(t.id, []);
+      evByTick.get(t.id).push(e);
+    } else {
+      loose.push(e);
+    }
+  }
+
   const parts = [`<div class="sig-summary">
     <span>📅 <b>${esc(h.date)}</b></span>
     <span class="sep"></span>
+    <span><b>${ticks.length}</b> lần dò</span>
     <span><b>${events.length}</b> lần đổi bước</span>
     <span>🎯 Gọi AI <b>${fired.length}</b> lần</span>
     ${fired.length ? `<span>Kết quả: ${fired.map(e => '<b>' + esc(e.analysis_action || '…') + '</b>').join(', ')}</span>` : ''}
+    ${errors ? `<span style="color:#b91c1c">✗ Lỗi <b>${errors}</b></span>` : ''}
+    ${busy ? `<span>⏭ Bỏ tick <b>${busy}</b></span>` : ''}
+    ${ticks.length ? `<span class="sep"></span><span>${esc(hhmm(ticks[ticks.length - 1].created_at))} → ${esc(hhmm(ticks[0].created_at))}</span>` : ''}
   </div>`];
 
-  if (!events.length) {
-    parts.push('<div class="empty">Không có lần đổi bước nào trong ngày này.</div>');
+  // Dòng thời gian chung, mới nhất trước: lần dò (kèm đổi bước lồng trong) + đổi bước lẻ.
+  const items = [
+    ...ticks.map(t => ({
+      at: t.created_at,
+      html: () => wTickRow(t, evByTick.get(t.id) || []),
+      changed: t.outcome !== 'IDLE' || evByTick.has(t.id),
+    })),
+    ...loose.map(e => ({ at: e.created_at, html: () => wEventCard(e), changed: true })),
+  ].sort((a, b) => new Date(b.at) - new Date(a.at));
+  const shown = onlyChanges ? items.filter(i => i.changed) : items;
+
+  if (!ticks.length && events.length) {
+    parts.push('<div class="w-alert info">Ngày này chưa ghi từng lần dò (chỉ có các lần đổi bước).</div>');
   }
-  for (const e of events) {
-    const buy = e.direction === 'BUY';
-    const time = new Date(e.created_at).toLocaleTimeString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', hour12: false });
-    const to = e.stage === 'NONE' ? wStageTag('NONE', 'dead') : wStageTag(e.stage, e.stage === 'RETEST' ? 'done' : 'now');
-    const from = e.prev_stage && e.prev_stage !== 'NONE' ? wStageTag(e.prev_stage, '') + '<span class="w-arrow">→</span>' : '';
-    let result = '';
-    if (e.triggered) {
-      result = `<div class="w-ev-res fired">⚡ Đã gọi AI${e.triggered_at ? ' lúc ' + esc(vnTime(e.triggered_at)) : ''} → `
-        + `${e.analysis_action ? 'kết quả ' + esc(e.analysis_action) : 'đang chạy…'}</div>`;
-    } else if (e.skip_reason) {
-      result = `<div class="w-ev-res skip">⏸ Không gọi AI: ${esc(e.skip_reason)}</div>`;
-    }
-    parts.push(`<div class="w-ev">
-      <div class="w-ev-top">
-        <span class="w-ev-time">${esc(time)}</span>
-        <span class="w-dir-name ${buy ? 'buy' : 'sell'}">${buy ? '🟢 BUY' : '🔴 SELL'}</span>
-        <span class="w-steps">${from}${to}</span>
-        <span class="w-ev-sym">${esc(e.symbol)} · ${esc(e.timeframe)} · giá ${swingNum(e.price)} · bias ${esc(e.bias || '—')}</span>
-      </div>
-      <div class="w-note">${esc(e.note || '')}</div>
-      ${wFacts(e)}
-      ${result}
-    </div>`);
+  if (!shown.length) {
+    parts.push(`<div class="empty">${onlyChanges && items.length
+      ? 'Không có lần dò nào có thay đổi / gọi AI trong ngày này.'
+      : 'Watcher không chạy lần nào trong ngày này.'}</div>`);
   }
+  parts.push(...shown.map(i => i.html()));
   body.innerHTML = parts.join('');
 }
 
@@ -1411,6 +1515,7 @@ function switchWatcherTab(tab) {
   document.getElementById('wTabHist').classList.toggle('active', tab === 'history');
   const date = document.getElementById('wDate');
   date.style.display = tab === 'history' ? '' : 'none';
+  document.getElementById('wHistFilter').style.display = tab === 'history' ? '' : 'none';
   if (tab === 'history' && !date.value) date.value = todayVn();
   loadWatcher(true);
 }

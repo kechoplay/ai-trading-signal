@@ -11,6 +11,8 @@ import { DetectedSetup, detectSetup } from './SetupDetector';
 /** Giữ tối đa ngần này key chuỗi đã kích hoạt (đủ cho vài ngày, chặn phình RAM). */
 const MAX_TRIGGERED_KEYS = 500;
 const SYMBOL_GAP_MS = 400;
+/** Trần số dòng mỗi loại (đổi bước / lần dò) trả về cho một ngày lịch sử. */
+const HISTORY_MAX_ROWS = 5000;
 
 interface SymbolSnapshot {
   at: string;
@@ -28,6 +30,16 @@ interface LastRecorded {
   skipReason: string | null;
   /** Bản ghi này là lần đã gọi AI — không ghi đè skip_reason lên nó. */
   triggered: boolean;
+}
+
+/** Kết quả một lần dò một symbol — ghi thành một dòng `setup_watch_ticks`. */
+interface TickLog {
+  price?: number;
+  bias?: Bias | null;
+  setups?: DetectedSetup[];
+  outcome: 'IDLE' | 'TRIGGERED' | 'SKIPPED' | 'ERROR' | 'BUSY';
+  action?: string | null;
+  reasons: string[];
 }
 
 /** Chữ ký của trạng thái một hướng — cùng bước nhưng sweep/cú phá khác = chuỗi khác. */
@@ -53,8 +65,8 @@ function startOfToday(now: Date, tz: string): Date {
  * hoạt cùng symbol; trần số lần/ngày. Dùng chung single-flight của AnalysisRunner — đang
  * có lượt chạy thì bỏ qua và thử lại ở tick sau (chưa đánh dấu chuỗi là đã kích hoạt).
  *
- * Lịch sử: mỗi lần một hướng ĐỔI bước (không phải mỗi tick) được ghi vào bảng
- * `setup_watch_events`, kèm việc có gọi AI không + kết quả, hoặc lý do bỏ qua. Khi khởi
+ * Lịch sử: mỗi lần dò một symbol ghi một dòng `setup_watch_ticks` (kể cả khi đứng yên);
+ * riêng lần một hướng ĐỔI bước được ghi chi tiết vào bảng `setup_watch_events`, kèm việc có gọi AI không + kết quả, hoặc lý do bỏ qua. Khi khởi
  * động, watcher nạp lại từ bảng này các chuỗi đã kích hoạt, mốc cooldown và số lần kích
  * hoạt trong ngày → restart không làm kích hoạt lặp. Mọi lỗi DB đều fail-soft (chỉ log):
  * mất lịch sử còn hơn làm watcher ngừng dò.
@@ -183,19 +195,31 @@ export class SetupWatcher {
 
     if (!this.inWindow(new Date())) return;
     // Tick trước còn đang chạy (thường vì đang chờ một lượt phân tích AI ~3 phút) → bỏ tick.
-    if (this.running) return;
+    if (this.running) {
+      const at = new Date();
+      for (const symbol of this.symbols) {
+        await this.recordTick(symbol, at, { outcome: 'BUSY', reasons: ['tick trước còn chạy (đang chờ lượt phân tích AI)'] });
+      }
+      return;
+    }
 
     this.running = true;
     this.lastTickAt = new Date();
     try {
       for (const symbol of this.symbols) {
+        const startedAt = new Date();
+        const tick: TickLog = { outcome: 'IDLE', reasons: [] };
         try {
-          await this.checkSymbol(symbol);
+          await this.checkSymbol(symbol, tick);
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
           this.lastError = `${new Date().toISOString()} — ${symbol}: ${message}`;
+          // Lượt AI đã gọi mà lỗi → giữ TRIGGERED (action = ERROR), chỉ thêm thông điệp lỗi.
+          if (tick.outcome !== 'TRIGGERED') tick.outcome = 'ERROR';
+          tick.reasons.push(message);
           logger.warn('Setup watcher: lỗi khi dò symbol — chờ tick sau', { symbol, error: message });
         }
+        await this.recordTick(symbol, startedAt, tick);
         if (SYMBOL_GAP_MS > 0) await new Promise((r) => setTimeout(r, SYMBOL_GAP_MS));
       }
     } finally {
@@ -217,12 +241,14 @@ export class SetupWatcher {
     return bias;
   }
 
-  private async checkSymbol(symbol: string): Promise<void> {
+  private async checkSymbol(symbol: string, tick: TickLog): Promise<void> {
     const cfg = config.setupWatcher;
     const tz = config.marketHours.timezone;
     const candles = await this.market.fetchCandles(symbol, cfg.timeframe, cfg.candles);
     if (candles.length < 30) {
       logger.warn('Setup watcher: quá ít nến để dò chuỗi', { symbol, timeframe: cfg.timeframe, count: candles.length });
+      tick.outcome = 'ERROR';
+      tick.reasons.push(`quá ít nến ${cfg.timeframe} (${candles.length}) để dò chuỗi`);
       return;
     }
 
@@ -244,6 +270,7 @@ export class SetupWatcher {
       retestProximityAtr: cfg.retestProximityAtr,
     };
     const setups = (['BUY', 'SELL'] as const).map((d) => detectSetup(a, d, live, bias, params));
+    Object.assign(tick, { price: live.price, bias, setups });
     this.snapshots.set(symbol, { at: now.toISOString(), price: live.price, bias, setups });
     await this.recordTransitions(symbol, cfg.timeframe, live.price, bias, setups);
 
@@ -251,7 +278,7 @@ export class SetupWatcher {
     if (cfg.requireBias) {
       for (const s of setups) {
         if (s.stage === 'RETEST' && !s.biasOk) {
-          await this.setSkipReason(symbol, s.direction, `ngược / chưa rõ bias ${cfg.biasTimeframe} (${bias ?? 'không rõ'})`);
+          await this.skip(tick, symbol, s.direction, `ngược / chưa rõ bias ${cfg.biasTimeframe} (${bias ?? 'không rõ'})`);
         }
       }
     }
@@ -261,7 +288,7 @@ export class SetupWatcher {
       const firedAt = s.key != null ? this.triggered.get(s.key) : undefined;
       if (s.stage === 'RETEST' && firedAt != null && (s.biasOk || !cfg.requireBias)) {
         const at = new Date(firedAt).toLocaleTimeString('vi-VN', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false });
-        await this.setSkipReason(symbol, s.direction, `chuỗi này đã gọi AI lúc ${at} — mỗi chuỗi chỉ kích hoạt 1 lần`);
+        await this.skip(tick, symbol, s.direction, `chuỗi này đã gọi AI lúc ${at} — mỗi chuỗi chỉ kích hoạt 1 lần`);
       }
     }
 
@@ -277,20 +304,20 @@ export class SetupWatcher {
     if (today !== this.dayKey) { this.dayKey = today; this.dayCount = 0; }
     if (this.dayCount >= cfg.maxPerDay) {
       logger.info('Setup watcher: đủ chuỗi nhưng đã chạm trần lần kích hoạt/ngày', { symbol, key: ready.key, max: cfg.maxPerDay });
-      await this.setSkipReason(symbol, ready.direction, `đã chạm trần ${cfg.maxPerDay} lần kích hoạt/ngày`);
+      await this.skip(tick, symbol, ready.direction, `đã chạm trần ${cfg.maxPerDay} lần kích hoạt/ngày`);
       return;
     }
     const last = this.lastTriggerAt.get(symbol);
     if (last != null && Date.now() - last < cfg.cooldownMin * 60_000) {
       logger.info('Setup watcher: đủ chuỗi nhưng còn trong cooldown', { symbol, key: ready.key });
       const leftMin = Math.ceil((cfg.cooldownMin * 60_000 - (Date.now() - last)) / 60_000);
-      await this.setSkipReason(symbol, ready.direction, `còn cooldown (${cfg.cooldownMin}p, còn ~${leftMin}p)`);
+      await this.skip(tick, symbol, ready.direction, `còn cooldown (${cfg.cooldownMin}p, còn ~${leftMin}p)`);
       return;
     }
     if (currentRun()) {
       // Không đánh dấu key → tick sau thử lại nếu chuỗi vẫn ở RETEST.
       logger.info('Setup watcher: đang có phân tích chạy — thử lại tick sau', { symbol, key: ready.key });
-      await this.setSkipReason(symbol, ready.direction, 'đang có lượt phân tích khác chạy — thử lại tick sau');
+      await this.skip(tick, symbol, ready.direction, 'đang có lượt phân tích khác chạy — thử lại tick sau');
       return;
     }
 
@@ -306,8 +333,11 @@ export class SetupWatcher {
     this.lastTriggerAt.set(symbol, Date.now());
     this.dayCount++;
     await this.updateEvent(eventId, { triggered: true, triggered_at: new Date(), skip_reason: null });
+    tick.outcome = 'TRIGGERED';
+    tick.reasons.push(`${ready.direction}: chuỗi tới RETEST → gọi AI`);
     try {
       const r = await runAnalysis({ symbol, analysisType: 'intraday', trigger: 'event', triggerNote: note });
+      tick.action = r.action;
       this.lastTrigger = { symbol, at: new Date().toISOString(), key: ready.key, action: r.action };
       await this.updateEvent(eventId, { analysis_action: r.action });
     } catch (err: unknown) {
@@ -318,11 +348,14 @@ export class SetupWatcher {
         this.lastTriggerAt.delete(symbol);
         this.dayCount--;
         await this.updateEvent(eventId, { triggered: false, triggered_at: null });
+        tick.outcome = 'SKIPPED';
+        tick.reasons = [`${ready.direction}: phân tích bị chặn (busy) — thử lại tick sau`];
         logger.warn('Setup watcher: phân tích bị chặn (busy) — thử lại tick sau', { symbol });
         return;
       }
       this.lastTrigger = { symbol, at: new Date().toISOString(), key: ready.key, action: null };
       await this.updateEvent(eventId, { analysis_action: 'ERROR' });
+      tick.action = 'ERROR';
       throw err;
     }
   }
@@ -429,6 +462,41 @@ export class SetupWatcher {
     await this.updateEvent(rec.id, { skip_reason: reason });
   }
 
+  /** RETEST mà không gọi AI: ghi lý do vào bản ghi đổi bước + vào dòng tick hiện tại. */
+  private async skip(tick: TickLog, symbol: string, direction: 'BUY' | 'SELL', reason: string): Promise<void> {
+    tick.outcome = 'SKIPPED';
+    tick.reasons.push(`${direction}: ${reason}`);
+    await this.setSkipReason(symbol, direction, reason);
+  }
+
+  /** Một dòng `setup_watch_ticks` cho mỗi lần dò một symbol — kể cả khi không có gì đổi. */
+  private async recordTick(symbol: string, startedAt: Date, tick: TickLog): Promise<void> {
+    const stageOf = (d: 'BUY' | 'SELL'): DetectedSetup | undefined => tick.setups?.find((s) => s.direction === d);
+    const detail = tick.setups
+      ? JSON.stringify(Object.fromEntries(tick.setups.map((s) => [s.direction, { note: s.note, bias_ok: s.biasOk }])))
+      : null;
+    try {
+      await prisma.setupWatchTick.create({
+        data: {
+          symbol,
+          timeframe: config.setupWatcher.timeframe,
+          price: tick.price ?? null,
+          bias: tick.bias ?? null,
+          buy_stage: stageOf('BUY')?.stage ?? null,
+          sell_stage: stageOf('SELL')?.stage ?? null,
+          outcome: tick.outcome,
+          analysis_action: tick.action ?? null,
+          reason: tick.reasons.length ? tick.reasons.join(' · ') : null,
+          detail,
+          duration_ms: Date.now() - startedAt.getTime(),
+          created_at: startedAt,
+        },
+      });
+    } catch (err: unknown) {
+      logger.warn('Setup watcher: ghi lần dò thất bại', { symbol, error: errMsg(err) });
+    }
+  }
+
   private async updateEvent(
     id: number | null,
     data: { triggered?: boolean; triggered_at?: Date | null; analysis_action?: string | null; skip_reason?: string | null },
@@ -442,7 +510,8 @@ export class SetupWatcher {
   }
 
   /**
-   * Lịch sử chuyển bước trong một ngày (giờ VN) — cho GET /api/setup-watcher/history.
+   * Lịch sử một ngày (giờ VN) — cho GET /api/setup-watcher/history: các lần đổi bước
+   * (`events`) + MỌI lần dò (`ticks`, bảng setup_watch_ticks).
    * `date` dạng YYYY-MM-DD, mặc định hôm nay; mới nhất trước.
    */
   async history(opts: { symbol?: string; date?: string; limit?: number }): Promise<Record<string, unknown>> {
@@ -453,22 +522,29 @@ export class SetupWatcher {
       : (() => { const p = zonedParts(now, tz); return `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`; })();
     const from = candleOpenInstant(`${date} 00:00:00`, tz) ?? startOfToday(now, tz);
     const to = new Date(from.getTime() + 86_400_000);
-    const limit = Math.min(Math.max(opts.limit ?? 200, 1), 500);
+    // ~170 lần dò/symbol/ngày (5p, 8h–22h) — trần đủ rộng để luôn trả HẾT một ngày.
+    const limit = Math.min(Math.max(opts.limit ?? HISTORY_MAX_ROWS, 1), HISTORY_MAX_ROWS);
+    const where = { created_at: { gte: from, lt: to }, ...(opts.symbol ? { symbol: opts.symbol } : {}) };
 
-    const rows = await prisma.setupWatchEvent.findMany({
-      where: { created_at: { gte: from, lt: to }, ...(opts.symbol ? { symbol: opts.symbol } : {}) },
-      orderBy: { id: 'desc' },
-      take: limit,
-    });
+    const [rows, tickRows] = await Promise.all([
+      prisma.setupWatchEvent.findMany({ where, orderBy: { id: 'desc' }, take: limit }),
+      prisma.setupWatchTick.findMany({ where, orderBy: [{ created_at: 'desc' }, { id: 'desc' }], take: limit }),
+    ]);
     const events = rows.map(({ detail, ...r }) => {
       let parsed: Record<string, unknown> = {};
       try { parsed = JSON.parse(detail ?? '{}'); } catch { /* bản ghi hỏng JSON → bỏ chi tiết */ }
       const { sig: _sig, ...rest } = parsed;
       return { ...r, ...rest };
     });
+    const ticks = tickRows.map(({ detail, ...r }) => {
+      let setups: Record<string, unknown> = {};
+      try { setups = JSON.parse(detail ?? '{}'); } catch { /* bỏ chi tiết */ }
+      return { ...r, setups };
+    });
     return {
       date,
       events,
+      ticks,
       triggered: events.filter((e) => e.triggered).length,
     };
   }

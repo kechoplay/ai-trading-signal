@@ -167,13 +167,14 @@ app.get('/api/setup-watcher', requireApiKey, (_req, res) => {
   res.json(setupWatcher.status());
 });
 
-// Lịch sử chuyển bước của watcher trong một ngày (giờ VN), mới nhất trước.
-// Query: ?date=YYYY-MM-DD (mặc định hôm nay) &symbol=XAU/USD &limit=200 (tối đa 500).
+// Lịch sử watcher trong một ngày (giờ VN), mới nhất trước: các lần đổi bước (`events`) +
+// mọi lần dò (`ticks`). Query: ?date=YYYY-MM-DD (mặc định hôm nay) &symbol=XAU/USD &limit=N
+// (mặc định = trần 5000, tức trả hết cả ngày).
 app.get('/api/setup-watcher/history', requireApiKey, async (req, res) => {
   try {
     const symbol = typeof req.query.symbol === 'string' && req.query.symbol ? req.query.symbol.toUpperCase() : undefined;
     const date = typeof req.query.date === 'string' ? req.query.date : undefined;
-    const limit = parseInt(String(req.query.limit ?? '200'), 10) || 200;
+    const limit = parseInt(String(req.query.limit ?? ''), 10) || undefined;
     res.json(await setupWatcher.history({ symbol, date, limit }));
   } catch (err: any) {
     logger.error('GET /api/setup-watcher/history failed', { error: err?.message ?? String(err) });

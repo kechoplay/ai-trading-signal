@@ -168,6 +168,12 @@ structure, zone }`), `triggered` + `triggered_at` + `analysis_action` (đã gọ
 `skip_reason` (RETEST mà không gọi AI: ngược bias / cooldown / chạm trần ngày / đang bận).
 Index `(symbol, created_at)`, `(triggered, triggered_at)`.
 
+**Bảng `setup_watch_ticks`** (thêm 16/10/2026): MỖI lần watcher dò một symbol một bản ghi, kể cả khi
+không có gì đổi (~170 dòng/symbol/ngày): `price`, `bias`, `buy_stage`/`sell_stage`, `outcome`
+(`IDLE` / `TRIGGERED` / `SKIPPED` / `ERROR` / `BUSY` = bỏ tick vì tick trước còn chờ AI), `analysis_action`,
+`reason`, `detail` (JSON note từng hướng), `duration_ms`. `created_at` = lúc BẮT ĐẦU dò (ghi tường minh) —
+UI dựa vào đó để lồng các bản ghi `setup_watch_events` vào đúng lần dò sinh ra chúng. Index `(symbol, created_at)`.
+
 ---
 
 ## Cấu hình (.env)
@@ -390,8 +396,10 @@ gần nhất/kế tiếp), cảnh báo ngoài khung giờ (`in_window_now`), l�
 nhất, rồi từng symbol × BUY/SELL với thanh 3 bước ① Quét → ② BOS/CHoCH + displacement → ③ Hồi
 về FVG/OB, nhãn trùng/ngược bias, `note` và các mức sweep/cú phá/vùng retest. Modal mở thì tự làm
 mới mỗi 30s. Watcher chỉ cập nhật snapshot trong khung giờ — ngoài giờ modal hiện số liệu lần dò cuối.
-Tab **Lịch sử** trong modal (chọn ngày, giờ VN) đọc `GET /api/setup-watcher/history`: mỗi lần đổi
-bước "bước trước → bước sau", các mức, và "⚡ Đã gọi AI → kết quả" hoặc "⏸ Không gọi AI: lý do".
+Tab **Lịch sử** trong modal (chọn ngày, giờ VN) đọc `GET /api/setup-watcher/history`: dòng thời gian
+MỌI lần dò (`ticks` — giá, bias, bước BUY/SELL, kết quả), các lần đổi bước ("bước trước → bước sau",
+các mức, "⚡ Đã gọi AI → kết quả" / "⏸ Không gọi AI: lý do") lồng dưới lần dò tương ứng. Bộ lọc
+"Chỉ lần có thay đổi / gọi AI" ẩn các lần dò đứng yên.
 Modal "Tín hiệu từ Claude" gắn nhãn nguồn kích hoạt trên từng bản ghi (🎯 Watcher / ⏱ Theo lịch /
 👆 Bấm tay) từ cột `trigger`, cộng badge `🗺 Plan` khi `analysis_type = 'daily_plan'` (plan cũng là `scheduler`).
 
@@ -516,9 +524,10 @@ retest dò được và `note` giải thích vì sao dừng ở bước đó. Y�
 
 ### GET /api/setup-watcher/history
 
-Lịch sử đổi bước của watcher trong một ngày giờ VN (bảng `setup_watch_events`), mới nhất trước.
-Query: `?date=YYYY-MM-DD` (mặc định hôm nay) `&symbol=XAU/USD` `&limit=200` (tối đa 500). Trả
-`{ date, events[], triggered }` — `detail` đã được bóc thành `sweep`/`structure`/`zone`. Yêu cầu API key.
+Lịch sử watcher trong một ngày giờ VN, mới nhất trước. Query: `?date=YYYY-MM-DD` (mặc định hôm nay)
+`&symbol=XAU/USD` `&limit=N` (mặc định = trần 5000/loại, tức trả hết cả ngày). Trả
+`{ date, events[], ticks[], triggered }` — `events` từ `setup_watch_events` (`detail` đã bóc thành
+`sweep`/`structure`/`zone`), `ticks` từ `setup_watch_ticks` (`detail` bóc thành `setups`). Yêu cầu API key.
 
 ### GET /api/daily-plan / POST /api/daily-plan/run
 
