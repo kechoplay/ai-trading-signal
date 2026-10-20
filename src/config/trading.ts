@@ -301,6 +301,9 @@ export const config = {
       M15: parseInt(process.env.CLAUDE_RAW_CANDLES_M15 ?? '20', 10),
       M5:  parseInt(process.env.CLAUDE_RAW_CANDLES_M5  ?? '60', 10),
     } as Record<string, number>,
+    // Nến thô H4 cho crypto — để model đếm "≥2 nến H4 xác nhận" khi đảo chiều ngược dòng D
+    // dựa trên sweep-and-reject (khung entry M15 vẫn dùng rawCandlesCrypto). 0 = chỉ facts.
+    rawCandlesCryptoH4: parseInt(process.env.CLAUDE_RAW_CANDLES_CRYPTO_H4 ?? '12', 10),
   },
 
   telegram: {

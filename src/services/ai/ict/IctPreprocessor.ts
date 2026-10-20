@@ -168,6 +168,12 @@ export interface SweepEvent {
   /** Index nến xác nhận (nến đóng cửa quay lại bên trong) — trong mảng nến ĐÃ ĐÓNG. */
   index: number;
   time: string;
+  /**
+   * Số nến ĐÃ ĐÓNG liên tiếp, tính ngược từ nến đóng gần nhất về tới nến xác nhận, đóng
+   * cửa đúng phía đảo chiều (BUYSIDE: dưới mức, SELLSIDE: trên mức). 0 = nến gần nhất đã
+   * đóng lại bên kia mức (đảo chiều thất bại). Dùng cho luật "≥2 nến xác nhận".
+   */
+  holdCloses: number;
 }
 
 /**
@@ -640,6 +646,17 @@ function findLiquidity(
 //   (swing đơn lẻ hoặc equal level) rồi body close quay lại. Chỉ giữ sự kiện mà mức đó
 //   VẪN ở trạng thái SWEPT (chưa bị phá thật về sau).
 
+/** Chuỗi nến đã đóng liên tiếp (tính từ nến cuối lùi về `fromIndex`) đóng cửa đúng phía đảo chiều. */
+function holdCloses(candles: Candle[], level: number, side: 'HIGH' | 'LOW', fromIndex: number): number {
+  let n = 0;
+  for (let i = candles.length - 1; i >= fromIndex; i--) {
+    const back = side === 'HIGH' ? candles[i].close < level : candles[i].close > level;
+    if (!back) break;
+    n++;
+  }
+  return n;
+}
+
 function findSweeps(
   candles: Candle[],
   swings: { highs: Swing[]; lows: Swing[] },
@@ -660,6 +677,7 @@ function findSweeps(
       extreme: chk.extreme,
       index: chk.eventIndex,
       time: candles[chk.eventIndex].time,
+      holdCloses: holdCloses(candles, level, side, chk.eventIndex),
     });
   };
 

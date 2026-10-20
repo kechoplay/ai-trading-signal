@@ -391,7 +391,10 @@ export class ClaudeAnalystService {
    * chỉ gửi nến khung entry (trả undefined → buildUserPrompt fallback về rawCandlesFor).
    */
   protected rawCandlesByTfFor(instrument: string): Record<string, number> | undefined {
-    return isCryptoInstrument(instrument) ? undefined : config.claude.rawCandlesByTf;
+    if (!isCryptoInstrument(instrument)) return config.claude.rawCandlesByTf;
+    // Crypto: khung entry (M15) + vài nến H4 để đếm nến xác nhận sweep-and-reject.
+    const [, tfBias, , tfEntry] = this.cryptoTfOrder;
+    return { [tfEntry]: config.claude.rawCandlesCrypto, [tfBias]: config.claude.rawCandlesCryptoH4 };
   }
 
   protected buildGoldSystemPrompt(): string {
@@ -817,7 +820,7 @@ Bạn là trader futures/perpetual chuyên nghiệp thị trường crypto với
 ## DỮ LIỆU
 Tôi cung cấp dữ liệu ${instrument} (hợp đồng perpetual) trên các khung: ${tfContext} (context), ${tfBias} (bias), ${tfPoi} (POI), ${tfEntry} (entry/confirmation).
 QUAN TRỌNG — code đã TÍNH SẴN "ICT/SMC FACTS" cho mọi khung: bias, ATR, **tỉ lệ biến động ATR(14)/ATR nền**, **ADX/DMI (regime)**, range mở rộng + **DEALING RANGE (leg đang chạy)**, swing highs/lows, FVG, order block, equal highs/lows (liquidity), **chuỗi BOS/CHoCH kèm cờ displacement + vùng retest (FVG/OB do cú phá tạo ra)**, **sự kiện liquidity sweep**. DÙNG TRỰC TIẾP các con số này, KHÔNG tính lại, KHÔNG tự vẽ range — nhiệm vụ của bạn là DIỄN GIẢI và ra quyết định, không phải bấm máy.
-Chỉ khung ${tfEntry} (entry) kèm thêm nến OHLC thô để đọc confirmation; các khung còn lại chỉ có facts đã tính sẵn — coi đó là đủ context.
+Khung ${tfEntry} (entry) kèm nến OHLC thô để đọc confirmation; khung ${tfBias} kèm vài nến thô cuối để đếm nến xác nhận (luật sweep-and-reject bên dưới); các khung còn lại chỉ có facts đã tính sẵn — coi đó là đủ context.
 FACTS và nến thô chỉ gồm nến ĐÃ ĐÓNG; nến chưa đóng ghi riêng ở dòng "Nến ĐANG CHẠY" — không dùng "close" tạm của nó làm body close. Nhãn mức thanh khoản: \`[unswept]\` pool còn nguyên; \`[swept]\` wick vượt rồi body close quay lại (sweep thật); \`[broken]\` phá thật, KHÔNG phải sweep (đọc theo hướng tiếp diễn); \`[breaking]\` chưa kết luận. Sự kiện BOS/CHoCH ghi "YẾU — KHÔNG displacement" thì không phải CHoCH hợp lệ. "Vùng retest" ghi "hỏng" = đã bị body close xuyên mép xa quá ngưỡng chịu lệch, không còn là POI.
 Dòng "Kill zone London/New York" ở đầu FACTS là của vàng — với crypto dùng mục giờ thanh khoản bên dưới.
 Nếu có, tôi cung cấp thêm (ở cuối phần dữ liệu): funding rate + open interest (block FUTURES SENTIMENT), và BTC context — bias các khung của BTC (block BTC CONTEXT) khi instrument là altcoin. Nếu không thấy block tương ứng nghĩa là dữ liệu đó không có → đừng bịa.
@@ -833,6 +836,7 @@ Phân tích THUẦN TÚY từ price action + sentiment futures. Bỏ qua mọi b
 - **BOS hợp lệ**: body close (KHÔNG tính wick) vượt swing high/low gần nhất theo hướng xu hướng. Dùng làm căn cứ vào lệnh thì cũng phải có displacement — FACTS ghi sẵn cờ này.
 - **CHoCH hợp lệ**: body close phá swing point ngược hướng cấu trúc cũ + ít nhất 1 nến displacement xác nhận (thân lớn, momentum rõ). MỘT nến wick quét đỉnh/đáy rồi đóng ngược KHÔNG phải CHoCH — đó là liquidity sweep / dấu hiệu sớm, ghi nhận nhưng KHÔNG dùng xác định bias.
 - **Liquidity sweep**: giá quét qua đỉnh/đáy rõ ràng (equal highs/lows, swing cũ, số tròn tâm lý) rồi body close quay lại — FACTS liệt kê ở dòng "Liquidity sweep gần nhất" và nhãn \`[swept]\`. Phải xác định sweep ĐÃ xảy ra trước khi kỳ vọng đảo chiều — không vào lệnh TRƯỚC khi vùng thanh khoản đối diện bị quét.
+- **Đảo chiều NGƯỢC dòng ${tfContext} dựa trên sweep-and-reject**: nếu căn cứ chính của lệnh ngược dòng ${tfContext} là kiểu "giá quét đỉnh/đáy rồi MỘT nến đóng cửa quay lại" (chưa có CHoCH ${tfBias} CÓ displacement theo đúng định nghĩa trên) → đó chỉ là dấu hiệu SỚM, rất dễ bị chính leg cũ nuốt lại ngay sau đó (whipsaw), nhất là khi ADX ${tfBias} vẫn nghiêng theo hướng cũ. Bắt buộc có **≥2 nến ${tfBias} ĐÃ ĐÓNG liên tiếp đóng cửa đúng phía đảo chiều** so với mức bị quét (nến ${tfBias} đang chạy KHÔNG được đếm) mới được xuất ORDER — cả LIVE CONFIRM lẫn LIMIT-CHỜ-POI. Cách đếm: cú quét có trong dòng "Liquidity sweep gần nhất" khung ${tfBias} → đọc thẳng số "giữ phía đảo chiều N nến đã đóng liên tiếp" (N đã tính cả nến đóng cửa quay lại; FACTS ghi "đảo chiều chưa giữ được" = 0); cú quét chỉ thấy ở khung nhỏ hơn → đếm trên nến thô ${tfBias} ĐÃ ĐÓNG từ nến chứa cú quét trở đi. Áp dụng cả khi căn cứ là chuỗi chuẩn ${tfEntry} đi ngược dòng ${tfContext} (CHoCH ${tfEntry} không thay được xác nhận ${tfBias}). Chỉ 1 nến → giữ **WATCHLIST** dù các cổng khác PASS, ghi rõ "chỉ 1 nến ${tfBias} xác nhận sweep-reject, chờ nến ${tfBias} thứ 2 trước khi đảo ngược dòng ${tfContext}". KHÔNG áp dụng khi lệnh THUẬN dòng ${tfContext}.
 - **POI hợp lệ**: OB/FVG ${tfPoi} fresh, có entry dự kiến qua Cổng 1, VÀ nằm sau một cú sweep + displacement.
 - **Chuỗi chuẩn ${tfEntry}**: trên FACTS ${tfEntry} có đủ: sweep \`[swept]\` → BOS/CHoCH **có displacement** theo hướng NGƯỢC cú quét → giá đang hồi về "vùng retest" (FVG/OB do chính cú phá tạo ra, không ghi "hỏng"). Khi chuỗi này **thuận bias ${tfBias}** và entry tại vùng retest qua Cổng 1, vùng retest ${tfEntry} ĐƯỢC DÙNG LÀM POI (POI cấp entry) dù không có OB/FVG ${tfPoi} tương ứng — vì sweep + displacement chính là điều kiện tạo POI hợp lệ. Giá đang ở trong vùng retest = đủ điều kiện LIVE CONFIRM (CHoCH có displacement đã là confirmation; thêm nến rejection/engulfing tại vùng thì càng tốt). Vùng retest nằm trong/chồng lên một POI ${tfPoi} fresh = confluence; KHÔNG có POI ${tfPoi} đi kèm → confidence tối đa Medium. Ghi rõ trong output từng mắt xích đã thỏa / còn thiếu.
 - **Inversion FVG**: một FVG bị giá trade-through bằng body close rồi được tôn trọng TỪ PHÍA NGƯỢC LẠI → nó đã ĐẢO VAI. Bearish FVG bị xuyên và giữ từ trên = tín hiệu LONG; bullish FVG bị xuyên và giữ từ dưới = tín hiệu SHORT. KHÔNG được tiếp tục coi một FVG đã bị invert là POI theo hướng cũ.
@@ -894,7 +898,7 @@ Phân tích THUẦN TÚY từ price action + sentiment futures. Bỏ qua mọi b
 6. **${tfPoi} — POI**: tìm OB/FVG ${tfPoi} fresh có entry dự kiến qua Cổng 1, đã có sweep + displacement. Ưu tiên "vùng retest" mà FACTS gắn với một BOS/CHoCH CÓ displacement. Ghi rõ vùng giá POI và khoảng cách tới giá hiện tại (= bao nhiêu × ATR ${tfPoi}). Nếu POI ${tfPoi} chưa được giá chạm tới → ghi rõ là CHƯA chạm, KHÔNG được mượn FVG khung khác để "cứu" entry — **ngoại lệ duy nhất** là vùng retest của "chuỗi chuẩn ${tfEntry}" (xem định nghĩa), vì nó tự là một POI hợp lệ.
 
 7. **${tfEntry} — Confirmation**: chỉ xét KHI giá đã chạm POI. Cần liquidity sweep + CHoCH/BOS nội bộ ${tfEntry} có displacement + nến xác nhận (engulfing / rejection / displacement). Chưa chạm POI hoặc chưa confirm → KHÔNG được xuất ORDER ở chế độ LIVE CONFIRM — **bắt buộc xét tiếp LIMIT-CHỜ-POI** trước khi kết luận WATCHLIST.
-   > **LIMIT-CHỜ-POI** chỉ hợp lệ khi thỏa TẤT CẢ: (a) POI fresh hợp lệ; (b) entry dự kiến (giữa POI) qua Cổng 1; (c) RR TP1 qua Cổng 3 + 4; (d) entry cách giá hiện tại **≤ 1× ATR ${tfPoi}** (≤ 1.5× khi ADX ${tfBias} STRONG_TREND thuận chiều lệnh) — ghi rõ ngưỡng đã dùng; (e) có invalidation body close rõ ràng để hủy lệnh chờ TRƯỚC khi khớp. Thiếu một điều → WATCHLIST. Ghi rõ đây là lệnh chờ, vào khi giá CHẠM POI.
+   > **LIMIT-CHỜ-POI** chỉ hợp lệ khi thỏa TẤT CẢ: (a) POI fresh hợp lệ; (b) entry dự kiến (giữa POI) qua Cổng 1; (c) RR TP1 qua Cổng 3 + 4; (d) entry cách giá hiện tại **≤ 1× ATR ${tfPoi}** (≤ 1.5× khi ADX ${tfBias} STRONG_TREND thuận chiều lệnh) — ghi rõ ngưỡng đã dùng; (e) có invalidation body close rõ ràng để hủy lệnh chờ TRƯỚC khi khớp; (f) nếu lệnh NGƯỢC dòng ${tfContext} dựa trên sweep-and-reject: đã có ≥2 nến ${tfBias} xác nhận (xem định nghĩa). Thiếu một điều → WATCHLIST. Ghi rõ đây là lệnh chờ, vào khi giá CHẠM POI.
 
 ## CÁCH ĐẶT SL / TP (bắt buộc)
 
@@ -913,6 +917,7 @@ Phân tích THUẦN TÚY từ price action + sentiment futures. Bỏ qua mọi b
 - TP1 sau khi áp **Cổng 3** vẫn đạt RR ≥ 1:${config.minRr}.
 - SL logic, đệm ≥ 1.5× ATR ${tfAtr}, không sát liquidity / số tròn.
 - Biến động không cực đoan (ATR(14)/ATR nền ${tfEntry} trong FACTS < 2×).
+- Lệnh NGƯỢC dòng ${tfContext} dựa trên sweep-and-reject: ≥2 nến ${tfBias} đã đóng xác nhận (chỉ 1 nến → WATCHLIST).
 Thiếu BẤT KỲ điều nào → KHÔNG xuất ORDER.
 
 ### ⛔ CỔNG 4 — TỰ KIỂM RR (HARD GATE, chạy ngay trước khi xuất ORDER)
@@ -923,6 +928,7 @@ Trước khi in ra bất kỳ ORDER nào, kiểm tra lần cuối theo thứ t�
 4. SL đệm ≥ 1.5× ATR ${tfAtr} chưa?
 5. ATR(14)/ATR nền ${tfEntry} trong FACTS ≥ 2× không? (≥ 2× → fail)
 6. Nếu LIMIT-CHỜ-POI: entry cách giá hiện tại ≤ ngưỡng ATR ${tfPoi} cho phép chưa? (vượt → WATCHLIST)
+7. Nếu NGƯỢC dòng ${tfContext} dựa trên sweep-and-reject: đủ ≥2 nến ${tfBias} đã đóng xác nhận chưa? (chỉ 1 nến → WATCHLIST)
 RR TP1 < 1:${config.minRr} sau mọi điều chỉnh → **tự động NO TRADE**, bất kể các yếu tố khác đẹp đến đâu.
 
 ## TIÊU CHÍ CONFIDENCE (chỉ ảnh hưởng độ tin cậy/size — KHÔNG chặn lệnh; chỉ 4 cổng mới chặn)
@@ -973,6 +979,7 @@ Khởi điểm mọi lệnh đã qua 4 cổng = **Medium**. Các CẢNH BÁO h�
 - Bộ khung đang dùng: ${tfContext}/${tfBias}/${tfPoi}/${tfEntry} — Chế độ: LIVE / LIMIT-CHỜ-POI / N/A
 - BTC context (nếu alt): cùng hướng / ngược hướng / không áp dụng
 - Context ${tfContext}: BULLISH / BEARISH / NEUTRAL (lệnh thuận hay ngược dòng)
+- Đảo chiều ngược dòng ${tfContext} (sweep-and-reject): [N] nến ${tfBias} đã đóng xác nhận — đủ / thiếu / không áp dụng
 - Bias ${tfBias}: BULLISH / BEARISH / NEUTRAL
 - Mẫu số Cổng 1: dealing range ${tfBias} [low–high, = N× ATR] (hoặc "range mở rộng" + lý do fallback)
 - Premium/Discount: **tại entry dự kiến [X]% leg** (giá hiện tại [Y]%) — regime ADX ${tfBias} [giá trị → regime], ngưỡng [W%] — **Cổng 1: PASS / FAIL**
@@ -1113,7 +1120,10 @@ function formatTimeframeFacts(a: TimeframeAnalysis): string {
     list.length
       ? list.map((e) =>
         `${e.side === 'BUYSIDE' ? 'quét ĐỈNH (buyside)' : 'quét ĐÁY (sellside)'} ${e.levelType === 'EQUAL' ? 'equal level' : 'swing'} ${e.level}`
-        + ` — râu tới ${e.extreme}, đóng cửa quay lại lúc ${e.time}`).join(' | ')
+        + ` — râu tới ${e.extreme}, đóng cửa quay lại lúc ${e.time}`
+        + (e.holdCloses > 0
+          ? `, giữ phía đảo chiều ${e.holdCloses} nến đã đóng liên tiếp tới nay`
+          : ', nến đóng gần nhất ĐÃ quay lại bên kia mức (đảo chiều chưa giữ được)')).join(' | ')
       : '— (chưa có cú quét nào bị từ chối gần đây)';
 
   // range_size = rangeHigh − rangeLow (mẫu số cho % khoảng cách tới EQ ở Cổng 1.5 & 6).
