@@ -421,6 +421,10 @@ Tab **Lịch sử** trong modal (chọn ngày, giờ VN) đọc `GET /api/setup-
 MỌI lần dò (`ticks` — giá, bias, bước BUY/SELL, kết quả), các lần đổi bước ("bước trước → bước sau",
 các mức, "⚡ Đã gọi AI → kết quả" / "⏸ Không gọi AI: lý do") lồng dưới lần dò tương ứng. Bộ lọc
 "Chỉ lần có thay đổi / gọi AI" ẩn các lần dò đứng yên.
+Hàng **tab symbol** (Tất cả / từng symbol, thêm 20/10/2026) dưới hàng Hiện tại/Lịch sử lọc cả hai chế độ
+phía client (không gọi lại API); danh sách lấy từ `watch_symbols` trong `GET /api/setup-watcher`, tab ở chế độ
+Hiện tại có chấm màu theo bước xa nhất, ở Lịch sử có số lần đổi bước trong ngày; tab chọn nhớ ở
+`localStorage.watcherSym`. Chỉ 1 symbol → ẩn hàng tab.
 Modal "Tín hiệu từ Claude" gắn nhãn nguồn kích hoạt trên từng bản ghi (🎯 Watcher / ⏱ Theo lịch /
 👆 Bấm tay) từ cột `trigger`, cộng badge `🗺 Plan` khi `analysis_type = 'daily_plan'` (plan cũng là `scheduler`).
 

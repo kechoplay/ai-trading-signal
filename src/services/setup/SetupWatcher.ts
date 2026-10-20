@@ -170,6 +170,8 @@ export class SetupWatcher {
       last_tick_at: this.lastTickAt?.toISOString() ?? null,
       last_trigger: this.lastTrigger,
       last_error: this.lastError,
+      // Danh sách symbol đang dò (kể cả symbol chưa có snapshot) — modal dựng tab theo đây.
+      watch_symbols: this.symbols,
       symbols: Object.fromEntries(this.snapshots),
     };
   }

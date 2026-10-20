@@ -466,6 +466,22 @@
       border-radius: 8px; padding: 5px 12px; font-size: 12px; font-weight: 600; cursor: pointer;
     }
     .w-tab.active { background: #eef2ff; border-color: #6366f1; color: #4338ca; }
+    /* Hàng tab symbol — lọc cả "Hiện tại" lẫn "Lịch sử" */
+    .w-symtabs {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+      padding: 8px 18px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+    }
+    .w-symtab {
+      display: inline-flex; align-items: center; gap: 6px;
+      border: 1px solid var(--border); background: var(--card); color: var(--muted);
+      border-radius: 999px; padding: 4px 12px; font-size: 12px; font-weight: 600; cursor: pointer;
+    }
+    .w-symtab.active { background: #eef2ff; border-color: #6366f1; color: #4338ca; }
+    .w-symtab .w-dot { width: 8px; height: 8px; border-radius: 50%; background: #cbd5e1; }
+    .w-symtab .w-dot.s1 { background: #60a5fa; }
+    .w-symtab .w-dot.s2 { background: #f59e0b; }
+    .w-symtab .w-dot.s3 { background: #22c55e; }
+    .w-symtab .w-cnt { font-weight: 400; font-size: 11px; }
     .w-tabbar input[type="date"] {
       margin-left: auto; border: 1px solid var(--border); border-radius: 8px;
       padding: 4px 8px; font-size: 12px; color: var(--text);
@@ -554,6 +570,7 @@
       </select>
       <input type="date" id="wDate" onchange="loadWatcher(true)" style="display:none;margin-left:0" title="Chọn ngày (giờ VN)" />
     </div>
+    <div class="w-symtabs" id="wSymTabs" role="tablist" aria-label="Lọc theo symbol"></div>
     <div class="sig-modal-body" id="wBody">
       <div class="empty">Đang tải…</div>
     </div>
@@ -1316,9 +1333,58 @@ function renderWatcherBtn(st) {
     + `Đã kích hoạt AI ${st.triggers_today}/${st.max_per_day > 0 ? st.max_per_day : "∞"} lần hôm nay. Bấm để xem chi tiết.`;
 }
 
+// ── Tab symbol trong modal: lọc cả "Hiện tại" lẫn "Lịch sử" (lọc phía client, không gọi lại API) ──
+let watcherSym = (() => { try { return localStorage.getItem('watcherSym') || 'ALL'; } catch { return 'ALL'; } })();
+let watcherLastStatus = null;
+let watcherLastHistory = null;
+
+function watcherSymMatch(symbol) { return watcherSym === 'ALL' || symbol === watcherSym; }
+
+/** Bước xa nhất (0–3) của một symbol trong snapshot hiện tại — màu chấm trên tab. */
+function watcherSymRank(symbol) {
+  const snap = watcherLastStatus?.symbols?.[symbol];
+  return Math.max(0, ...((snap?.setups || []).map(s => W_RANK[s.stage] ?? 0)));
+}
+
+function renderWatcherSymTabs() {
+  const el = document.getElementById('wSymTabs');
+  const st = watcherLastStatus;
+  const list = [...new Set([
+    ...(st?.watch_symbols || Object.keys(st?.symbols || {})),
+    // Ngày cũ có thể có symbol đã bỏ khỏi danh sách dò → vẫn cho lọc.
+    ...(watcherTab === 'history' ? (watcherLastHistory?.ticks || []).map(t => t.symbol) : []),
+    ...(watcherTab === 'history' ? (watcherLastHistory?.events || []).map(e => e.symbol) : []),
+  ])];
+  if (watcherSym !== 'ALL' && !list.includes(watcherSym)) watcherSym = 'ALL';
+  if (list.length < 2) { el.style.display = 'none'; return; } // 1 symbol → tab thừa
+  el.style.display = '';
+
+  // Lịch sử: đếm số lần đổi bước của mỗi symbol trong ngày; Hiện tại: chấm màu theo bước xa nhất.
+  const evCount = sym => (watcherLastHistory?.events || []).filter(e => e.symbol === sym).length;
+  const tab = (sym, label, extra) =>
+    `<button class="w-symtab${watcherSym === sym ? ' active' : ''}" role="tab" aria-selected="${watcherSym === sym}"`
+    + ` data-sym="${esc(sym)}" onclick="selectWatcherSym(this.dataset.sym)">${extra}${esc(label)}</button>`;
+  el.innerHTML = tab('ALL', 'Tất cả', '') + list.map(sym => {
+    const extra = watcherTab === 'history'
+      ? ''
+      : `<span class="w-dot${watcherSymRank(sym) ? ' s' + watcherSymRank(sym) : ''}"></span>`;
+    const cnt = watcherTab === 'history' ? ` <span class="w-cnt">${evCount(sym)}</span>` : '';
+    return tab(sym, sym, extra).replace('</button>', cnt + '</button>');
+  }).join('');
+}
+
+function selectWatcherSym(sym) {
+  watcherSym = sym;
+  try { localStorage.setItem('watcherSym', sym); } catch { /* chế độ riêng tư — chỉ mất ghi nhớ */ }
+  if (watcherTab === 'history' && watcherLastHistory) renderWatcherHistory(watcherLastHistory);
+  else if (watcherLastStatus) renderWatcher(watcherLastStatus);
+}
+
 function renderWatcher(st) {
   const body = document.getElementById('wBody');
   const parts = [];
+  watcherLastStatus = st;
+  renderWatcherSymTabs();
 
   parts.push(`<div class="sig-summary">
     <span>${st.enabled ? '🟢 <b>BẬT</b>' : '⚪ <b>TẮT</b>'}</span>
@@ -1343,9 +1409,9 @@ function renderWatcher(st) {
   }
   if (st.last_error) parts.push(`<div class="w-alert err">✗ Lỗi gần nhất: ${esc(st.last_error)}</div>`);
 
-  const snaps = Object.entries(st.symbols || {});
+  const snaps = Object.entries(st.symbols || {}).filter(([symbol]) => watcherSymMatch(symbol));
   if (!snaps.length) {
-    parts.push('<div class="empty">Chưa có lần dò nào — watcher vừa khởi động hoặc đang ngoài khung giờ.</div>');
+    parts.push(`<div class="empty">Chưa có lần dò nào${watcherSym === 'ALL' ? '' : ' cho ' + esc(watcherSym)} — watcher vừa khởi động hoặc đang ngoài khung giờ.</div>`);
   }
   for (const [symbol, snap] of snaps) {
     const setups = (snap.setups || []).slice().sort((a, b) => a.direction.localeCompare(b.direction)); // BUY trước SELL
@@ -1448,8 +1514,10 @@ function wTickRow(t, evs) {
 
 function renderWatcherHistory(h) {
   const body = document.getElementById('wBody');
-  const events = h.events || [];
-  const ticks = h.ticks || [];
+  watcherLastHistory = h;
+  renderWatcherSymTabs();
+  const events = (h.events || []).filter(e => watcherSymMatch(e.symbol));
+  const ticks = (h.ticks || []).filter(t => watcherSymMatch(t.symbol));
   const onlyChanges = document.getElementById('wHistFilter').value === 'changes';
   const fired = events.filter(e => e.triggered);
   const count = o => ticks.filter(t => t.outcome === o).length;
@@ -1475,7 +1543,7 @@ function renderWatcherHistory(h) {
   }
 
   const parts = [`<div class="sig-summary">
-    <span>📅 <b>${esc(h.date)}</b></span>
+    <span>📅 <b>${esc(h.date)}</b>${watcherSym === 'ALL' ? '' : ' · <b>' + esc(watcherSym) + '</b>'}</span>
     <span class="sep"></span>
     <span><b>${ticks.length}</b> lần dò</span>
     <span><b>${events.length}</b> lần đổi bước</span>
