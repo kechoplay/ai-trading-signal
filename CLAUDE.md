@@ -255,9 +255,13 @@ npm run db:migrate     # chạy migration
 
 **Prompt vàng — hai cơ chế quyết định việc ra ORDER (đọc kỹ trước khi sửa HARD GATE):**
 - **BA CHẾ ĐỘ VÀO LỆNH** (HARD GATE 2): `LIVE CONFIRM` (giá đã ở POI + M5 đã confirm) **hoặc** `LIMIT-CHỜ-POI` (POI fresh, entry dự kiến qua Gate 1 + Gate 3, cách giá hiện tại ≤ 1× ATR H1 — **nới ≤ 1.5× ATR H1 khi regime H1 là STRONG_TREND thuận hướng ADX**, có invalidation body-close → xuất ORDER lệnh chờ, tự hạ 1 bậc confidence) **hoặc** `BREAKOUT CONTINUATION` (POI hợp lệ nào cũng xa hơn ngưỡng B, nhưng có BOS thật M15/H1 thuận dòng H4 + STRONG_TREND thuận ADX, entry retest ngay mép vừa bị BOS phá, vẫn qua Gate 1 + Gate 3 tại mức retest, luôn 1 phần SCALP → tự hạ 2 bậc confidence). Lý do tồn tại: phân tích chạy rời rạc theo lần bấm nút, nếu bắt buộc live-confirm thì cửa sổ chỉ 1–2 nến M5 → gần như luôn trượt về WATCHLIST. WATCHLIST giờ chỉ dùng khi KHÔNG thỏa cả ba chế độ.
-- **Nới ngưỡng ATR H1 của chế độ B + thêm chế độ C** (thêm 02/09/2026, Hard Gate 2 trong `buildGoldSystemPrompt`). Trước đó ngưỡng "POI cách giá hiện tại ≤ 1× ATR H1" là cố định, không phân biệt regime — quan sát thực tế: một lệnh BUY bị đẩy về WATCHLIST vì POI cách đúng 1.02× ATR H1 (nhỉnh hơn ngưỡng 0.02) dù regime đang STRONG_TREND thuận chiều lệnh, và nhiều lệnh chờ khác đặt được nhưng giá chạy thẳng 3–4× ATR M5 không hồi về POI, khiến tỷ lệ khớp lệnh thấp có hệ thống ở cả hai chiều BUY/SELL trong thị trường trending. Xử lý hai lớp: (1) nới ngưỡng lên 1.5× ATR H1 riêng khi STRONG_TREND thuận hướng ADX — giữ nguyên 1× cho các regime khác; (2) thêm chế độ C `BREAKOUT CONTINUATION` cho trường hợp POI hợp lệ còn xa hơn cả ngưỡng đã nới nhưng đã có BOS thật để retest — đổi lại RR/độ an toàn kém hơn B nên luôn hạ 2 bậc confidence + ép 1 phần SCALP, không cho phép khi ngược dòng H4. **Lưu ý: prompt crypto chưa áp dụng cả hai thay đổi này.**
+- **Nới ngưỡng ATR H1 của chế độ B + thêm chế độ C** (thêm 02/09/2026, Hard Gate 2 trong `buildGoldSystemPrompt`). Trước đó ngưỡng "POI cách giá hiện tại ≤ 1× ATR H1" là cố định, không phân biệt regime — quan sát thực tế: một lệnh BUY bị đẩy về WATCHLIST vì POI cách đúng 1.02× ATR H1 (nhỉnh hơn ngưỡng 0.02) dù regime đang STRONG_TREND thuận chiều lệnh, và nhiều lệnh chờ khác đặt được nhưng giá chạy thẳng 3–4× ATR M5 không hồi về POI, khiến tỷ lệ khớp lệnh thấp có hệ thống ở cả hai chiều BUY/SELL trong thị trường trending. Xử lý hai lớp: (1) nới ngưỡng lên 1.5× ATR H1 riêng khi STRONG_TREND thuận hướng ADX — giữ nguyên 1× cho các regime khác; (2) thêm chế độ C `BREAKOUT CONTINUATION` cho trường hợp POI hợp lệ còn xa hơn cả ngưỡng đã nới nhưng đã có BOS thật để retest — đổi lại RR/độ an toàn kém hơn B nên luôn hạ 2 bậc confidence + ép 1 phần SCALP, không cho phép khi ngược dòng H4. **Prompt crypto (20/10/2026): có giới hạn khoảng cách LIMIT-CHỜ-POI ≤1× ATR H1 (nới 1.5× khi ADX H4 STRONG_TREND thuận) + hạ 1 bậc; KHÔNG có chế độ C.**
 - **HARD GATE 1 đo tại GIÁ VÀO LỆNH DỰ KIẾN**, không phải giá hiện tại — nếu không, giá hiện tại ở premium sâu sẽ chặn oan một lệnh BUY có entry nằm ở POI discount.
-- **HARD GATE 1 đo trên DEALING RANGE, không phải range 80 nến.** `RangeFib` trong `IctPreprocessor` lấy high/low của lookback cố định (H1 = 80 nến ≈ 3 ngày vàng) — dùng range macro ~120 USD đó làm mẫu số cho entry scalp SL 6–12 USD là sai đơn vị đo, mọi pullback nông trong leg tăng đều thành "premium >60%" và bị chặn oan. Mẫu số chính thức là `activeLeg` (`findActiveLeg()`): nhịp từ pivot đối nghịch gần nhất tới cực trị hiện tại, tự mở rộng khi giá vượt pivot cũ. Fallback về range mở rộng khi `activeLeg = null` hoặc `sizeAtr < 1` (leg nhỏ hơn 1× ATR = nhiễu). Range mở rộng vẫn gửi vào prompt làm bối cảnh + chọn mục tiêu thanh khoản xa, nhưng KHÔNG dùng để chặn lệnh. **Lưu ý: prompt crypto chưa áp dụng — vẫn dùng luật EQ trên range mở rộng.**
+- **HARD GATE 1 đo trên DEALING RANGE, không phải range 80 nến.** `RangeFib` trong `IctPreprocessor` lấy high/low của lookback cố định (H1 = 80 nến ≈ 3 ngày vàng) — dùng range macro ~120 USD đó làm mẫu số cho entry scalp SL 6–12 USD là sai đơn vị đo, mọi pullback nông trong leg tăng đều thành "premium >60%" và bị chặn oan. Mẫu số chính thức là `activeLeg` (`findActiveLeg()`): nhịp từ pivot đối nghịch gần nhất tới cực trị hiện tại, tự mở rộng khi giá vượt pivot cũ. Fallback về range mở rộng khi `activeLeg = null` hoặc `sizeAtr < 1` (leg nhỏ hơn 1× ATR = nhiễu). Range mở rộng vẫn gửi vào prompt làm bối cảnh + chọn mục tiêu thanh khoản xa, nhưng KHÔNG dùng để chặn lệnh. **Prompt crypto đã áp dụng từ 20/10/2026** — Cổng 1 đo trên `DEALING RANGE` H4 tại entry dự kiến, ngưỡng 75/25 · 60/40 · 55/45 theo ADX H4.
+Cùng đợt: thang confidence neo theo `minRr` (High ≥ 1.5× minRr), Low vẫn ra ORDER (giảm size) thay vì
+NO TRADE; "biến động cực đoan" đọc từ dòng FACTS `Biến động: ATR(14)/ATR nền` (`atrBaseline` trong
+`IctPreprocessor`, `ICT_ATR_BASELINE_BARS` = 96) — ≥2× khung M15 là fail Cổng 4; vùng retest của chuỗi
+chuẩn M15 (sweep → CHoCH displacement → retest) được dùng làm POI dù không có POI H1 (tối đa Medium).
 - **THANG TP HAI TẦNG**: `TP chốt non` (mức thanh khoản/rào cản gần nhất, chốt 40–50% + dời breakeven, **không** bị Gate 3 ràng buộc) và `TP1 chính` (mục tiêu thật — **HARD GATE 3 đo RR trên mức này**). Cổng 3 phân loại rào cản nghịch hướng: **CỨNG** (fresh, chưa bị body close xuyên, khung ≥M15, **và dày ≥0.25× ATR H1** → bắt buộc lùi TP1) vs **MỀM** (đã mitigated / đã bị xuyên / chỉ khung M5 / **mỏng <0.25× ATR H1** → không chặn TP1, chỉ đặt chốt non trước nó). Tiêu chí độ dày thêm vào 13/08/2026: một FVG rộng <0.25× ATR H1 không phải bức tường, để nó chặn TP1 thì mọi scalp có FVG mỏng nằm giữa đường đều bị bóp RR và loại oan.
 - **ĐẢO CHIỀU NGƯỢC DÒNG H4 DỰA TRÊN SWEEP-AND-REJECT — cần ≥2 nến H1 xác nhận** (thêm 21/08/2026, phần "ĐỊNH NGHĨA KỸ THUẬT BẮT BUỘC" + Hard Gate 2 chế độ B trong `buildGoldSystemPrompt`). Trước đó, một lệnh ngược dòng H4 có thể được xuất ORDER chỉ dựa vào MỘT nến H1 đóng cửa ngược lại sau cú sweep đỉnh/đáy (kiểu "giá quét lên rồi H1 đóng nến quay lại dưới mức cũ" = sweep-and-reject) — không phải CHoCH thật (thiếu displacement). Sự cố quan sát được: 21/08/2026 giá quét 4547.99 rồi H1 đóng nến 4541.01 (dưới 4544.49), hệ thống lập tức đảo từ BUY sang SELL dù H4 vẫn BULLISH và ADX H1 vẫn nghiêng bullish suốt — 15–20 phút sau giá phá ngược trở lại, vô hiệu hoàn toàn setup SELL (whipsaw). Luật mới: lệnh ngược dòng H4 dùng lý do sweep-and-reject phải có **≥2 nến H1 liên tiếp** đóng cửa đúng phía đảo chiều mới được xuất ORDER (cả LIVE CONFIRM lẫn LIMIT-CHỜ-POI); chỉ 1 nến → giữ WATCHLIST. Không áp dụng khi lệnh THUẬN dòng H4. **Lưu ý: prompt crypto (`buildCryptoSystemPrompt`) chưa áp dụng luật này**, theo đúng quy ước hiện tại là các luật đọc H1/dealing-range mới chỉ vá ở prompt vàng trước.
 - Parser lấy `take_profit`/`risk_reward` từ dòng chứa token `TP1` **đầu tiên** trong block ORDER — dòng `TP chốt non` cố ý không chứa token đó nên không bị bắt nhầm. Đổi nhãn TP trong prompt phải kiểm lại `extractPriceFromLine(section, 'tp1')`.
@@ -361,14 +365,21 @@ lấy mẫu theo đồng hồ (15–30 phút) nên gần như không bao giờ r
 prompt phải bù bằng chế độ B (limit tại POI, khớp ngay trong cú quét, trước khi có CHoCH).
 
 Cơ chế: mỗi `SETUP_WATCHER_INTERVAL_MIN` (5) phút, canh theo đồng hồ + `OFFSET_SEC`, trong cùng
-khung giờ/ngày/symbol với `SCHEDULER_*`. Fetch nến `SETUP_WATCHER_TIMEFRAME` (M15) + bias khung
-`SETUP_WATCHER_BIAS_TIMEFRAME` (H1, cache 15 phút), chạy `analyzeTimeframe` (nến đã đóng), rồi
+khung giờ/ngày với `SCHEDULER_*`. Symbol lấy từ `SETUP_WATCHER_SYMBOLS` (thêm 20/10/2026 — hiện
+`XAU/USD,BTC/USD,ETH/USD`; trống → `SCHEDULER_SYMBOLS` → `TRADING_INSTRUMENT`), tách khỏi scheduler
+để dò thêm crypto mà không thêm lượt AI theo đồng hồ. Symbol crypto kích hoạt AI thì
+`SignalOrchestrator` tự dùng prompt + bộ khung crypto. Crypto vẫn chỉ dò trong khung giờ T2–T6 8h–22h.
+Fetch nến `SETUP_WATCHER_TIMEFRAME` (M15) + bias khung
+`SETUP_WATCHER_BIAS_TIMEFRAME` (H1; crypto dùng `SETUP_WATCHER_CRYPTO_BIAS_TIMEFRAME` = H4 cho khớp khung bias của prompt crypto; cache tới lúc nến H1 đang chạy đóng — bias chỉ tính trên nến
+đã đóng nên refetch sớm hơn là thừa; `BIAS_CACHE_MIN` chỉ dùng khi nến cuối không còn chạy), chạy `analyzeTimeframe` (nến đã đóng), rồi
 `detectSetup()` cho từng hướng: `NONE → SWEPT → CONFIRMED → RETEST`. Chỉ khi `RETEST` (+ trùng bias
 nếu `REQUIRE_BIAS`) mới gọi `runAnalysis({ trigger: 'event', triggerNote })` — `triggerNote` mô tả
 chuỗi, được nối vào user prompt dưới dạng "gợi ý cần kiểm chứng độc lập" (chống anchoring).
 
 Chặn quota: mỗi chuỗi (key = hướng + thời điểm sweep + thời điểm cú phá) chỉ kích hoạt 1 lần;
-`COOLDOWN_MIN` giữa hai lần cùng symbol; `MAX_PER_DAY` lần/ngày. Đang có lượt chạy (single-flight)
+`COOLDOWN_MIN` giữa hai lần cùng symbol; `MAX_PER_DAY` lần/ngày — **trần chung cho MỌI symbol**
+(quota Claude là một), không phải mỗi symbol; `0` = không giới hạn (`.env` đang để 0 từ 20/10/2026 —
+khi đó chỉ còn cooldown + mỗi chuỗi 1 lần chặn quota, trần lý thuyết ≈ 28 lần/symbol/ngày). Đang có lượt chạy (single-flight)
 → không đánh dấu, thử lại tick sau.
 
 Lịch sử (`setup_watch_events`, `recordTransitions()`): chỉ ghi khi một hướng ĐỔI bước — so bằng
@@ -384,10 +395,16 @@ Tick đầu chờ chung promise của hydrate. Chuỗi đã kích hoạt mà ret
 restart. Mọi lỗi DB fail-soft (chỉ log) — watcher vẫn dò tiếp.
 Watcher KHÔNG thay scheduler đồng hồ — hai đường chạy song song; nếu watcher đang chạy một lượt
 AI đúng lúc scheduler tới mốc thì scheduler bỏ lượt (AnalysisBusyError, như bấm tay).
-Request dữ liệu: ~1 request/symbol mỗi 5 phút + 1 request bias mỗi 15 phút (≈170 request/ngày
-cho 1 symbol trong khung 8h–22h) — đây là job nền duy nhất còn gọi provider liên tục (SwingScheduler
-đã bị gỡ 17/09 vì đốt quota), chỉ quét `SCHEDULER_SYMBOLS` chứ không quét cả danh sách theo dõi.
-Muốn giảm thì tăng `SETUP_WATCHER_INTERVAL_MIN` hoặc tắt `SETUP_WATCHER_ENABLED`.
+Request dữ liệu: ~1 request/symbol mỗi 5 phút + 1 request bias/giờ (≈182 request/ngày/symbol
+trong khung 8h–22h) — đây là job nền duy nhất còn gọi provider liên tục (SwingScheduler
+đã bị gỡ 17/09 vì đốt quota), chỉ quét `SETUP_WATCHER_SYMBOLS` chứ không quét cả danh sách theo dõi.
+**Ngân sách TwelveData (gói basic: 800/ngày, 8/phút):** 3 symbol watcher ≈ 546 + scheduler 30p
+(~5 request/lượt × 28) ≈ 140 + daily plan ≈ 20 → ~710/ngày, mỗi lượt AI do watcher kích hoạt
+thêm ~5 → còn chỗ cho ~15 lượt/ngày. `MAX_PER_DAY=0` (không trần) nên ngày nhiều setup có thể vượt
+800 — khi đó mọi lượt phân tích sau đó trong ngày (kể cả XAU) lỗi dữ liệu. Thêm symbol thứ 4 hoặc hạ `SCHEDULER_INTERVAL_MIN` là vượt — muốn vậy thì tăng
+`SETUP_WATCHER_INTERVAL_MIN` (10 → ~98 request/symbol/ngày). Trần 8/phút được giữ bởi cửa sổ trượt
+dùng chung trong `TwelveDataProvider` (`TWELVEDATA_MAX_REQUESTS_PER_MIN`): tick :00/:30 của
+scheduler trùng tick watcher thì request thừa CHỜ (≤ ~60s) thay vì ăn lỗi 429.
 
 **Giao diện theo dõi** (`chart.html`): nút **🎯 Watcher** trên header cạnh nút Scheduler — đọc
 `GET /api/setup-watcher` mỗi 60s, hiện bước xa nhất đang có (`chờ` / `đã quét` / `chờ retest` vàng /

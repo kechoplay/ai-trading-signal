@@ -2,8 +2,9 @@ import { config } from '../../config/trading';
 import { prisma } from '../../db';
 import { logger } from '../../logger';
 import { AnalysisBusyError, currentRun, runAnalysis } from '../AnalysisRunner';
+import { isCryptoInstrument } from '../ai/ClaudeAnalystService';
 import { analyzeTimeframe, Bias } from '../ai/ict/IctPreprocessor';
-import { candleOpenInstant, isCandleForming, zonedParts } from '../market/candleTime';
+import { candleOpenInstant, isCandleForming, TF_SECONDS, zonedParts } from '../market/candleTime';
 import { MarketDataProvider } from '../market/MarketDataProvider';
 import { makeMarketDataProvider } from '../market/MarketDataProviderFactory';
 import { DetectedSetup, detectSetup } from './SetupDetector';
@@ -18,7 +19,15 @@ interface SymbolSnapshot {
   at: string;
   price: number;
   bias: Bias | null;
+  /** Khung lấy bias của symbol này (crypto ≠ vàng). */
+  bias_timeframe: string;
   setups: DetectedSetup[];
+}
+
+/** Khung bias theo symbol — crypto dùng khung bias của prompt crypto (H4). */
+function biasTimeframeFor(symbol: string): string {
+  const cfg = config.setupWatcher;
+  return isCryptoInstrument(symbol) ? cfg.cryptoBiasTimeframe : cfg.biasTimeframe;
 }
 
 /** Bản ghi lịch sử gần nhất của một (symbol, hướng) — để chỉ ghi khi ĐỔI bước. */
@@ -79,7 +88,8 @@ export class SetupWatcher {
   private lastError: string | null = null;
   private lastTrigger: { symbol: string; at: string; key: string; action: string | null } | null = null;
   private readonly snapshots = new Map<string, SymbolSnapshot>();
-  private readonly biasCache = new Map<string, { bias: Bias; at: number }>();
+  /** symbol → bias + hạn dùng (ms) — hết hạn khi nến bias đang chạy đóng. */
+  private readonly biasCache = new Map<string, { bias: Bias; until: number }>();
   /** key chuỗi đã kích hoạt → thời điểm kích hoạt (ms) — để ghi lý do khi chuỗi retest lại. */
   private readonly triggered = new Map<string, number>();
   private readonly lastTriggerAt = new Map<string, number>();
@@ -98,7 +108,8 @@ export class SetupWatcher {
   ) {}
 
   static fromConfig(): SetupWatcher {
-    const s = config.scheduler.symbols;
+    const own = config.setupWatcher.symbols;
+    const s = own.length > 0 ? own : config.scheduler.symbols;
     return new SetupWatcher(makeMarketDataProvider, s.length > 0 ? s : [config.instrument]);
   }
 
@@ -150,6 +161,7 @@ export class SetupWatcher {
       interval_min: cfg.intervalMin,
       timeframe: cfg.timeframe,
       bias_timeframe: cfg.biasTimeframe,
+      crypto_bias_timeframe: cfg.cryptoBiasTimeframe,
       require_bias: cfg.requireBias,
       cooldown_min: cfg.cooldownMin,
       max_per_day: cfg.maxPerDay,
@@ -227,17 +239,28 @@ export class SetupWatcher {
     }
   }
 
-  /** Bias khung lớn (cache `biasCacheMin` phút — đổi chậm, không đáng tốn request mỗi tick). */
+  /**
+   * Bias khung lớn. Bias chỉ tính trên nến ĐÃ ĐÓNG nên chỉ đổi khi nến bias đang chạy đóng →
+   * cache tới đúng lúc đó (H1 = 1 request/giờ/symbol, H4 của crypto = 1/4 giờ). Nến cuối không còn chạy
+   * (thị trường nghỉ, timestamp lạ) → cache `biasCacheMin` phút.
+   */
   private async biasFor(symbol: string): Promise<Bias | null> {
     const cfg = config.setupWatcher;
+    const tz = config.marketHours.timezone;
+    const biasTf = biasTimeframeFor(symbol);
     const cached = this.biasCache.get(symbol);
-    if (cached && Date.now() - cached.at < cfg.biasCacheMin * 60_000) return cached.bias;
+    if (cached && Date.now() < cached.until) return cached.bias;
 
-    const candles = await this.market.fetchCandles(symbol, cfg.biasTimeframe, cfg.biasCandles);
+    const candles = await this.market.fetchCandles(symbol, biasTf, cfg.biasCandles);
     if (candles.length < 10) return null;
-    const forming = isCandleForming(candles[candles.length - 1], cfg.biasTimeframe, config.marketHours.timezone);
+    const last = candles[candles.length - 1];
+    const forming = isCandleForming(last, biasTf, tz);
     const { bias } = analyzeTimeframe(candles, { formingLast: forming });
-    this.biasCache.set(symbol, { bias, at: Date.now() });
+    const closesAt = forming
+      ? (candleOpenInstant(last.time, tz)?.getTime() ?? 0) + (TF_SECONDS[biasTf] ?? 0) * 1000
+      : 0;
+    const until = closesAt > Date.now() ? closesAt : Date.now() + cfg.biasCacheMin * 60_000;
+    this.biasCache.set(symbol, { bias, until });
     return bias;
   }
 
@@ -271,14 +294,14 @@ export class SetupWatcher {
     };
     const setups = (['BUY', 'SELL'] as const).map((d) => detectSetup(a, d, live, bias, params));
     Object.assign(tick, { price: live.price, bias, setups });
-    this.snapshots.set(symbol, { at: now.toISOString(), price: live.price, bias, setups });
+    this.snapshots.set(symbol, { at: now.toISOString(), price: live.price, bias, bias_timeframe: biasTimeframeFor(symbol), setups });
     await this.recordTransitions(symbol, cfg.timeframe, live.price, bias, setups);
 
     // RETEST nhưng ngược/chưa rõ bias → ghi lý do vào lịch sử (không kích hoạt).
     if (cfg.requireBias) {
       for (const s of setups) {
         if (s.stage === 'RETEST' && !s.biasOk) {
-          await this.skip(tick, symbol, s.direction, `ngược / chưa rõ bias ${cfg.biasTimeframe} (${bias ?? 'không rõ'})`);
+          await this.skip(tick, symbol, s.direction, `ngược / chưa rõ bias ${biasTimeframeFor(symbol)} (${bias ?? 'không rõ'})`);
         }
       }
     }
@@ -302,7 +325,7 @@ export class SetupWatcher {
     const p = zonedParts(now, tz);
     const today = `${p.year}-${p.month}-${p.day}`;
     if (today !== this.dayKey) { this.dayKey = today; this.dayCount = 0; }
-    if (this.dayCount >= cfg.maxPerDay) {
+    if (cfg.maxPerDay > 0 && this.dayCount >= cfg.maxPerDay) {
       logger.info('Setup watcher: đủ chuỗi nhưng đã chạm trần lần kích hoạt/ngày', { symbol, key: ready.key, max: cfg.maxPerDay });
       await this.skip(tick, symbol, ready.direction, `đã chạm trần ${cfg.maxPerDay} lần kích hoạt/ngày`);
       return;
@@ -321,7 +344,7 @@ export class SetupWatcher {
       return;
     }
 
-    const note = buildTriggerNote(cfg.timeframe, cfg.biasTimeframe, ready, live.price, bias);
+    const note = buildTriggerNote(cfg.timeframe, biasTimeframeFor(symbol), ready, live.price, bias);
     logger.info('Setup watcher: kích hoạt phân tích AI theo sự kiện', { symbol, key: ready.key, direction: ready.direction });
 
     // Bản ghi lịch sử của bước RETEST vừa/đã ghi — đánh dấu kích hoạt ngay TRƯỚC khi chạy

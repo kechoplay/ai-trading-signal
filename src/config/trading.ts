@@ -81,6 +81,9 @@ export const config = {
     // Gộp FVG với OB (nến ngược cuối cùng trước cú đẩy) khi hai vùng cách nhau ≤ N× ATR
     // → một vùng retest dày hơn. Số âm = tắt gộp, chỉ dùng FVG (hoặc OB khi không có FVG).
     retestMergeObGapAtr: parseFloat(process.env.ICT_RETEST_MERGE_OB_GAP_ATR ?? '0.5'),
+    // "ATR nền" = true range trung bình của N nến đã đóng gần nhất; FACTS in tỉ lệ
+    // ATR(14) / ATR nền để prompt xét "biến động cực đoan" bằng số thay vì model ước lượng.
+    atrBaselineBars: parseInt(process.env.ICT_ATR_BASELINE_BARS ?? '96', 10),
   },
 
   // SETUP WATCHER — kích hoạt phân tích AI theo SỰ KIỆN thay vì chỉ theo đồng hồ.
@@ -91,14 +94,25 @@ export const config = {
   // chặn bằng cooldownMin + maxPerDay.
   setupWatcher: {
     enabled: (process.env.SETUP_WATCHER_ENABLED ?? 'true').toLowerCase() !== 'false',
+    // Danh sách riêng của watcher (vd XAU/USD,BTC/USD,ETH/USD) — trống → SCHEDULER_SYMBOLS
+    // → TRADING_INSTRUMENT. Tách khỏi scheduler để dò thêm symbol mà không thêm lượt AI
+    // theo đồng hồ. Mỗi symbol ≈ 1 request/tick + 1 request bias/giờ (xem biasCacheMin).
+    symbols: (process.env.SETUP_WATCHER_SYMBOLS ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
     intervalMin: parseInt(process.env.SETUP_WATCHER_INTERVAL_MIN ?? '5', 10),
     // Lùi vài giây sau mốc để provider kịp chốt nến vừa đóng.
     offsetSec: parseInt(process.env.SETUP_WATCHER_OFFSET_SEC ?? '10', 10),
     timeframe: process.env.SETUP_WATCHER_TIMEFRAME ?? 'M15',
     candles: parseInt(process.env.SETUP_WATCHER_CANDLES ?? '200', 10),
     biasTimeframe: process.env.SETUP_WATCHER_BIAS_TIMEFRAME ?? 'H1',
+    // Crypto lấy bias ở H4 — khớp khung bias của prompt crypto (D/H4/H1/M15). Lọc theo H1
+    // thì watcher kích hoạt cả những chuỗi mà prompt sẽ bác vì ngược bias H4 → phí quota.
+    cryptoBiasTimeframe: process.env.SETUP_WATCHER_CRYPTO_BIAS_TIMEFRAME ?? 'H4',
     biasCandles: parseInt(process.env.SETUP_WATCHER_BIAS_CANDLES ?? '120', 10),
-    // Bias khung lớn đổi chậm → cache để không tốn request mỗi tick.
+    // Bias chỉ tính trên nến ĐÃ ĐÓNG → cache tới lúc nến bias đang chạy đóng (H1 = 1
+    // request/giờ). biasCacheMin chỉ dùng khi nến cuối không còn chạy (thị trường nghỉ).
     biasCacheMin: parseInt(process.env.SETUP_WATCHER_BIAS_CACHE_MIN ?? '15', 10),
     // true = hướng setup phải TRÙNG bias khung lớn (NEUTRAL cũng không kích hoạt).
     requireBias: (process.env.SETUP_WATCHER_REQUIRE_BIAS ?? 'true').toLowerCase() !== 'false',
@@ -108,6 +122,8 @@ export const config = {
     // Giá cách mép gần của vùng retest ≤ N× ATR (khung watcher) là coi như đang retest.
     retestProximityAtr: parseFloat(process.env.SETUP_WATCHER_RETEST_PROXIMITY_ATR ?? '0.3'),
     cooldownMin: parseInt(process.env.SETUP_WATCHER_COOLDOWN_MIN ?? '30', 10),
+    // Trần lần kích hoạt AI/ngày, CHUNG mọi symbol. 0 = không giới hạn (chỉ còn cooldown +
+    // mỗi chuỗi 1 lần chặn quota).
     maxPerDay: parseInt(process.env.SETUP_WATCHER_MAX_PER_DAY ?? '8', 10),
   },
 
@@ -236,6 +252,9 @@ export const config = {
   twelvedata: {
     apiKey: process.env.TWELVEDATA_API_KEY ?? '',
     baseUrl: process.env.TWELVEDATA_BASE_URL ?? 'https://api.twelvedata.com',
+    // Trần request/phút của gói (basic = 8). Mọi request trong process đi qua một cửa
+    // sổ trượt 60s — vượt thì CHỜ thay vì để TwelveData trả lỗi 429. 0 = tắt.
+    maxRequestsPerMin: parseInt(process.env.TWELVEDATA_MAX_REQUESTS_PER_MIN ?? '8', 10),
   },
 
   // Binance Futures (perpetual) — dùng cho funding rate + open interest của cặp crypto.

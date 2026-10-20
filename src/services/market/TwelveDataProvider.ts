@@ -70,11 +70,39 @@ export class TwelveDataProvider implements MarketDataProvider {
   }
 
   private async get(path: string, params: Record<string, unknown>): Promise<Record<string, any>> {
-    const { data } = await withRetry(() =>
-      axios.get(`${this.baseUrl}${path}`, { params, timeout: 20_000 }),
-    );
+    const { data } = await withRetry(async () => {
+      await acquireSlot();
+      return axios.get(`${this.baseUrl}${path}`, { params, timeout: 20_000 });
+    });
     return data;
   }
+}
+
+// Cửa sổ trượt 60s dùng chung MỌI instance trong process (scheduler, SetupWatcher, API
+// mỗi nơi tự tạo provider riêng). Tick :00/:30 của scheduler (~5 request) trùng tick watcher
+// (1 request/symbol + bias) là vượt trần 8/phút của gói basic → TwelveData trả lỗi 429 và
+// lượt đó hỏng. Chờ cho tới khi có chỗ thay vì gửi rồi lỗi. Cửa sổ trượt chặt hơn trần
+// theo phút lịch nên không bao giờ vượt.
+const WINDOW_MS = 61_000;
+const sentAt: number[] = [];
+let queue: Promise<void> = Promise.resolve();
+
+function acquireSlot(): Promise<void> {
+  const limit = config.twelvedata.maxRequestsPerMin;
+  if (limit <= 0) return Promise.resolve();
+  const slot = queue.then(async () => {
+    for (;;) {
+      const now = Date.now();
+      while (sentAt.length > 0 && now - sentAt[0] >= WINDOW_MS) sentAt.shift();
+      if (sentAt.length < limit) break;
+      const waitMs = WINDOW_MS - (now - sentAt[0]);
+      logger.debug('TwelveData: chạm trần request/phút — chờ', { limit, wait_ms: waitMs });
+      await sleep(waitMs);
+    }
+    sentAt.push(Date.now());
+  });
+  queue = slot.catch(() => undefined);
+  return slot;
 }
 
 async function withRetry<T>(fn: () => Promise<T>, retries = 2, delayMs = 500): Promise<T> {

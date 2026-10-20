@@ -208,6 +208,8 @@ export interface TimeframeAnalysis {
   lastPrice: number;
   bias: Bias;
   atr: number;
+  /** ATR(14) so với true range trung bình `bars` nến gần nhất. null = chưa đủ nến. */
+  atrBaseline: AtrBaseline | null;
   range: RangeFib;
   /** null = chưa đủ swing đối nghịch để xác định nhịp đang chạy. */
   activeLeg: ActiveLeg | null;
@@ -443,6 +445,31 @@ function atr(candles: Candle[], period = 14): number {
   }
   const recent = trs.slice(-period);
   return r2(recent.reduce((a, b) => a + b, 0) / recent.length);
+}
+
+export interface AtrBaseline {
+  /** True range trung bình của `bars` nến đã đóng gần nhất. */
+  value: number;
+  bars: number;
+  /** ATR(14) / value — > 2 = biến động bất thường so với nền. */
+  ratio: number;
+}
+
+/**
+ * Nền biến động để so với ATR(14): true range trung bình của `bars` nến gần nhất. Cần ít
+ * nhất 3× period nến, nếu không ATR(14) chiếm gần hết mẫu và tỉ lệ luôn ≈ 1 (vô nghĩa).
+ */
+function atrBaseline(candles: Candle[], atrValue: number, bars: number, period = 14): AtrBaseline | null {
+  const n = Math.min(bars, candles.length - 1);
+  if (n < period * 3 || atrValue <= 0) return null;
+  let sum = 0;
+  for (let i = candles.length - n; i < candles.length; i++) {
+    const { high: h, low: l } = candles[i];
+    const pc = candles[i - 1].close;
+    sum += Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc));
+  }
+  const value = sum / n;
+  return value > 0 ? { value: r2(value), bars: n, ratio: Number((atrValue / value).toFixed(2)) } : null;
 }
 
 // ─── 6b) ADX / DMI (Wilder) — regime filter cho luật vị trí range ────────────
@@ -876,6 +903,7 @@ export function analyzeTimeframe(
     lastPrice: r2(last),
     bias: structureBias(swings),
     atr: atrValue,
+    atrBaseline: atrBaseline(closed, atrValue, config.ict.atrBaselineBars),
     range: rangeAndFib(candles, fibLookback, last),
     // swings tính trên `closed` là tiền tố của `candles` → index vẫn hợp lệ.
     activeLeg: findActiveLeg(candles, swings, atrValue, last),

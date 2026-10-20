@@ -1311,9 +1311,9 @@ function renderWatcherBtn(st) {
   if (best >= 3) btn.classList.add('st-retest');
   else if (best >= 2) btn.classList.add('st-confirmed');
   const label = best >= 3 ? 'RETEST' : best >= 2 ? 'chờ retest' : best >= 1 ? 'đã quét' : 'chờ';
-  btn.textContent = `🎯 Watcher: ${label} · ${st.triggers_today}/${st.max_per_day}`;
-  btn.title = `Dò mỗi ${st.interval_min}p trên ${st.timeframe}, bias ${st.bias_timeframe}. `
-    + `Đã kích hoạt AI ${st.triggers_today}/${st.max_per_day} lần hôm nay. Bấm để xem chi tiết.`;
+  btn.textContent = `🎯 Watcher: ${label} · ${st.triggers_today}/${st.max_per_day > 0 ? st.max_per_day : "∞"}`;
+  btn.title = `Dò mỗi ${st.interval_min}p trên ${st.timeframe}, bias ${st.bias_timeframe}${st.crypto_bias_timeframe && st.crypto_bias_timeframe !== st.bias_timeframe ? " (crypto " + st.crypto_bias_timeframe + ")" : ""}. `
+    + `Đã kích hoạt AI ${st.triggers_today}/${st.max_per_day > 0 ? st.max_per_day : "∞"} lần hôm nay. Bấm để xem chi tiết.`;
 }
 
 function renderWatcher(st) {
@@ -1323,9 +1323,9 @@ function renderWatcher(st) {
   parts.push(`<div class="sig-summary">
     <span>${st.enabled ? '🟢 <b>BẬT</b>' : '⚪ <b>TẮT</b>'}</span>
     <span class="sep"></span>
-    <span>Khung <b>${esc(st.timeframe)}</b> · bias <b>${esc(st.bias_timeframe)}</b>${st.require_bias ? '' : ' (không bắt buộc)'}</span>
+    <span>Khung <b>${esc(st.timeframe)}</b> · bias <b>${esc(st.bias_timeframe)}</b>${st.crypto_bias_timeframe && st.crypto_bias_timeframe !== st.bias_timeframe ? " (crypto <b>" + esc(st.crypto_bias_timeframe) + "</b>)" : ""}${st.require_bias ? '' : ' (không bắt buộc)'}</span>
     <span class="sep"></span>
-    <span>Kích hoạt AI hôm nay <b>${st.triggers_today}/${st.max_per_day}</b></span>
+    <span>Kích hoạt AI hôm nay <b>${st.triggers_today}/${st.max_per_day > 0 ? st.max_per_day : "∞"}</b></span>
     <span>Cooldown <b>${st.cooldown_min}p</b></span>
     <span class="sep"></span>
     <span>Tick gần nhất <b>${esc(vnTime(st.last_tick_at))}</b></span>
@@ -1353,7 +1353,7 @@ function renderWatcher(st) {
       <div class="w-sym-head">
         <b>${esc(symbol)}</b>
         <span>Giá <b style="font-size:13px">${swingNum(snap.price)}</b></span>
-        <span>Bias ${esc(st.bias_timeframe)}: <b style="font-size:13px">${esc(snap.bias || '—')}</b></span>
+        <span>Bias ${esc(snap.bias_timeframe || st.bias_timeframe)}: <b style="font-size:13px">${esc(snap.bias || '—')}</b></span>
         <span class="w-upd">cập nhật ${esc(vnTime(snap.at))}</span>
       </div>
       ${setups.map(wDirBlock).join('')}
