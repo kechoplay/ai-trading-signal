@@ -13,8 +13,8 @@ interface ZonedParts {
 }
 
 /**
- * Lập KẾ HOẠCH NGÀY cho vàng theo các mốc GIỜ cố định: startHour, startHour + intervalHours,
- * … ≤ endHour (mặc định 7h/11h/15h/19h, T2–T6 giờ VN).
+ * Lập KẾ HOẠCH NGÀY (vàng + crypto) theo các mốc GIỜ cố định: startHour, startHour + intervalHours,
+ * … ≤ endHour (mặc định 7h/11h/15h/19h, T2–T6 giờ VN). Mỗi mốc chạy lần lượt từng symbol.
  *
  * Tách khỏi AnalysisScheduler vì scheduler đó canh mốc theo PHÚT (minute % interval) —
  * chu kỳ 4 giờ sẽ không khớp. Ở đây mốc là đầu giờ trong danh sách `hours`.

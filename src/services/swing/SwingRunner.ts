@@ -81,8 +81,9 @@ export async function runSwingAnalysis(opts: SwingRunOptions = {}): Promise<Swin
 
   if (opts.notify) {
     try {
-      const messageId = await notifier.send(setup);
-      if (messageId) await notifier.sendComment(reasoning, messageId);
+      const channel = notifier.forInstrument(symbol);
+      const messageId = await channel.send(setup);
+      if (messageId) await channel.sendComment(reasoning, messageId);
     } catch (err: any) {
       logger.error('Swing analysis: gửi Telegram thất bại', { error: err?.message ?? String(err) });
     }

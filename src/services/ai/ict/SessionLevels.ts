@@ -4,6 +4,7 @@ import { config } from '../../../config/trading';
 
 /**
  * Mức giá theo PHIÊN cho kế hoạch ngày vàng: PDH/PDL, PWH/PWL, range Á, range hôm nay.
+ * Crypto (24/7) dùng computeCryptoSessionLevels — ngày theo UTC, không lọc cuối tuần.
  *
  * Vì sao code tự tính thay vì để model đọc nến D: nến D của TwelveData cho XAU/USD cắt
  * lúc 03:00 VN (không phải rollover 17:00 New York) và có cả nến T7/CN đi ngang (~3 USD)
@@ -35,6 +36,7 @@ export interface SessionLevels {
   prevDay: DayStats | null;
   thisWeek: { weekOf: string; high: number; low: number } | null;
   prevWeek: { weekOf: string; high: number; low: number; complete: boolean } | null;
+  /** null với crypto — thị trường 24/7 không có range Á theo nghĩa ICT vàng. */
   asia: {
     status: 'NOT_STARTED' | 'RUNNING' | 'DONE';
     high: number | null;
@@ -42,7 +44,7 @@ export interface SessionLevels {
     bars: number;
     windowNy: string;               // "20:00–24:00"
     windowVn: string;               // "07:00–11:00"
-  };
+  } | null;
 }
 
 /** true = thị trường vàng đóng cửa tại instant (T6 từ closeFri → CN tới openSun, giờ NY). */
@@ -132,7 +134,7 @@ export function computeSessionLevels(
 
   // ── Range Á ──────────────────────────────────────────────────────────────
   const nowOff = hoursAfterRollover(zonedParts(now, NY).hour, s) + zonedParts(now, NY).minute / 60;
-  const asiaStatus: SessionLevels['asia']['status'] =
+  const asiaStatus: NonNullable<SessionLevels['asia']>['status'] =
     nowOff < asiaStartOff ? 'NOT_STARTED' : nowOff < asiaEndOff ? 'RUNNING' : 'DONE';
   const vnShift = hourShift(now, NY, timeZone);
 
@@ -157,6 +159,55 @@ export function computeSessionLevels(
       windowNy: `${hhmm(s.asiaStartNyHour)}–${s.asiaEndNyHour === 24 ? '24:00' : hhmm(s.asiaEndNyHour)}`,
       windowVn: `${hhmm(s.asiaStartNyHour + vnShift)}–${hhmm(s.asiaEndNyHour + vnShift)}`,
     },
+  };
+}
+
+/**
+ * Mức theo phiên cho CRYPTO (24/7): ngày giao dịch = ngày UTC (nến D Binance đóng lúc
+ * 00:00 UTC = 07:00 VN), tuần bắt đầu T2 00:00 UTC. Không lọc nến cuối tuần (crypto giao
+ * dịch thật cả T7/CN), không có range Á.
+ */
+export function computeCryptoSessionLevels(
+  h1: Candle[],
+  h4: Candle[],
+  now: Date = new Date(),
+  timeZone: string = config.marketHours.timezone,
+): SessionLevels {
+  const utcDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
+  const currentDay = utcDay(now.getTime());
+  const currentWeek = weekOf(currentDay);
+
+  const days = new Map<string, DayStats>();
+  for (const c of h1) {
+    const open = candleOpenInstant(c.time, timeZone);
+    if (!open || open.getTime() > now.getTime()) continue;
+    addToDay(days, utcDay(open.getTime()), c);
+  }
+  const prevKey = [...days.keys()].sort().reverse().find((k) => k < currentDay) ?? null;
+
+  const weeks = new Map<string, { high: number; low: number }>();
+  for (const c of h4) {
+    const open = candleOpenInstant(c.time, timeZone);
+    if (!open || open.getTime() > now.getTime()) continue;
+    const w = weekOf(utcDay(open.getTime()));
+    const cur = weeks.get(w);
+    weeks.set(w, cur ? { high: Math.max(cur.high, c.high), low: Math.min(cur.low, c.low) } : { high: c.high, low: c.low });
+  }
+  const weekKeys = [...weeks.keys()].sort();
+  const prevWeekKey = [...weekKeys].reverse().find((k) => k < currentWeek) ?? null;
+  const thisWeek = weeks.get(currentWeek);
+  const prevWeek = prevWeekKey ? weeks.get(prevWeekKey)! : null;
+
+  return {
+    tradingDay: currentDay,
+    rolloverVn: hhmm(hourShift(now, 'UTC', timeZone)),
+    today: round(days.get(currentDay) ?? null),
+    prevDay: round(prevKey ? days.get(prevKey)! : null),
+    thisWeek: thisWeek ? { weekOf: currentWeek, high: r2(thisWeek.high), low: r2(thisWeek.low) } : null,
+    prevWeek: prevWeek && prevWeekKey
+      ? { weekOf: prevWeekKey, high: r2(prevWeek.high), low: r2(prevWeek.low), complete: weekKeys[0] < prevWeekKey }
+      : null,
+    asia: null,
   };
 }
 

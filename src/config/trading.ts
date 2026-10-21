@@ -178,7 +178,7 @@ export const config = {
     offsetSec: parseInt(process.env.SCHEDULER_OFFSET_SEC ?? '0', 10),
   },
 
-  // KẾ HOẠCH NGÀY VÀNG — lịch riêng, chạy theo GIỜ (không phải phút như `scheduler`):
+  // KẾ HOẠCH NGÀY (vàng + crypto) — lịch riêng, chạy theo GIỜ (không phải phút như `scheduler`):
   // startHour, startHour+intervalHours, … ≤ endHour (mặc định 7h/11h/15h/19h, T2–T6).
   // Mỗi lượt Claude lập plan cho phần còn lại của ngày (bias D/H4/H1, bản đồ mức giá,
   // kịch bản BUY/SELL, lịch phiên) — KHÔNG ra lệnh. Lưu analysis_type='daily_plan' nên
@@ -192,8 +192,9 @@ export const config = {
       .split(',')
       .map((s) => parseInt(s.trim(), 10))
       .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6),
-    // Prompt plan viết cho vàng — symbol crypto bị từ chối ở SignalOrchestrator.
-    symbols: (process.env.DAILY_PLAN_SYMBOLS ?? 'XAU/USD')
+    // Vàng dùng prompt plan vàng; symbol crypto (BTC/ETH…) tự dùng prompt plan crypto
+    // (LONG/SHORT, ngày UTC, funding/OI). Mỗi mốc chạy lần lượt từng symbol (~3 phút/symbol).
+    symbols: (process.env.DAILY_PLAN_SYMBOLS ?? 'XAU/USD,BTC/USD,ETH/USD')
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean),
@@ -311,6 +312,17 @@ export const config = {
     chatId: process.env.TELEGRAM_CHAT_ID ?? '',
     discussionId: process.env.TELEGRAM_DISCUSSION_ID ?? '',
     baseUrl: 'https://api.telegram.org',
+    // Kênh riêng theo symbol: "BTC/USD:-100…,ETH/USD:-100…[:discussionId]". Symbol không
+    // có trong map → kênh mặc định (TELEGRAM_CHAT_ID). Không ghi discussionId → tự dò nhóm
+    // discussion gắn với kênh đó (KHÔNG dùng TELEGRAM_DISCUSSION_ID — nhóm đó của kênh mặc định).
+    channelsBySymbol: (process.env.TELEGRAM_CHANNELS_BY_SYMBOL ?? '')
+      .split(',')
+      .map((s) => s.trim().split(':').map((x) => x.trim()))
+      .filter(([symbol, chatId]) => symbol && chatId)
+      .reduce<Record<string, { chatId: string; discussionId: string }>>((acc, [symbol, chatId, discussionId]) => {
+        acc[symbol.toUpperCase()] = { chatId, discussionId: discussionId ?? '' };
+        return acc;
+      }, {}),
   },
 
   server: {

@@ -6,7 +6,7 @@
 
 ## Tổng quan
 
-**AI Trading Signal** là hệ thống phân tích kỹ thuật và phát tín hiệu giao dịch cho **XAU/USD (vàng)** và các cặp **crypto (BTC/USD, ETH/USD…)** sử dụng Claude AI (Anthropic). Hệ thống lấy dữ liệu nến từ API thị trường, gửi qua Claude để phân tích đa khung thời gian, lưu kết quả vào SQLite và gửi thông báo qua Telegram. Phân tích được trigger theo ba đường: **scheduler nội bộ** theo đồng hồ (`SCHEDULER_INTERVAL_MIN`, 8h–22h, T2–T6 giờ VN), **SetupWatcher** theo sự kiện (chuỗi sweep → CHoCH có displacement → retest, dò cơ học mỗi 5 phút) và **thủ công** qua REST API / dashboard. Ngoài tín hiệu intraday còn có **kế hoạch ngày vàng** (`DailyPlanScheduler`, 7h/11h/15h/19h T2–T6) — plan bias + kịch bản, không ra lệnh. Không dùng cron của OS — scheduler chạy trong process server.
+**AI Trading Signal** là hệ thống phân tích kỹ thuật và phát tín hiệu giao dịch cho **XAU/USD (vàng)** và các cặp **crypto (BTC/USD, ETH/USD…)** sử dụng Claude AI (Anthropic). Hệ thống lấy dữ liệu nến từ API thị trường, gửi qua Claude để phân tích đa khung thời gian, lưu kết quả vào SQLite và gửi thông báo qua Telegram. Phân tích được trigger theo ba đường: **scheduler nội bộ** theo đồng hồ (`SCHEDULER_INTERVAL_MIN`, 8h–22h, T2–T6 giờ VN), **SetupWatcher** theo sự kiện (chuỗi sweep → CHoCH có displacement → retest, dò cơ học mỗi 5 phút) và **thủ công** qua REST API / dashboard. Ngoài tín hiệu intraday còn có **kế hoạch ngày** cho vàng + BTC/ETH (`DailyPlanScheduler`, 7h/11h/15h/19h T2–T6) — plan bias + kịch bản, không ra lệnh. Không dùng cron của OS — scheduler chạy trong process server.
 
 - **Ngôn ngữ phân tích AI**: Tiếng Việt
 - **Khung thời gian phân tích**: Vàng dùng H4 (context), H1 (bias), M15 (POI), M5 (entry). Crypto dùng bộ khung riêng từ M15: D (context), H4 (bias), H1 (POI), M15 (entry) — cấu hình qua `TRADING_CRYPTO_TIMEFRAMES`, áp dụng khi instrument là crypto và request không truyền timeframes.
@@ -46,7 +46,7 @@ D:/ai-trading-signal/
         ├── SignalOrchestrator.ts      ← pipeline chính (fetch→AI→Telegram)
         ├── AnalysisRunner.ts          ← orchestrator + lưu DB + single-flight lock
         ├── AnalysisScheduler.ts       ← tự chạy theo chu kỳ (15p, 8h–22h, T2–T6)
-        ├── DailyPlanScheduler.ts      ← kế hoạch ngày vàng theo mốc giờ (7h/11h/15h/19h, T2–T6)
+        ├── DailyPlanScheduler.ts      ← kế hoạch ngày (vàng + crypto) theo mốc giờ (7h/11h/15h/19h, T2–T6)
         ├── MarketHoursService.ts      ← kiểm tra giờ giao dịch
         ├── ai/
         │   ├── ClaudeAnalystService.ts  ← gọi Claude (build prompt vàng/crypto, parse text)
@@ -323,7 +323,7 @@ thêm `CLAUDE_RAW_CANDLES_CRYPTO_H4` (12) nến thô H4 để model đếm khi m
 
 ---
 
-## Kế hoạch ngày vàng (Daily Plan)
+## Kế hoạch ngày (Daily Plan) — vàng + crypto
 
 **File:** `src/services/DailyPlanScheduler.ts` (lịch) + `SignalOrchestrator.runDailyPlan()` +
 `ClaudeAnalystService.analyzeDailyPlan()` / `buildGoldDailyPlanSystemPrompt()` +
@@ -340,7 +340,15 @@ thêm `CLAUDE_RAW_CANDLES_CRYPTO_H4` (12) nến thô H4 để model đếm khi m
   `dailyPlan.candlesByTf`), output cố định: `Bias Overall:` + `#### KỊCH BẢN BUY — CHÍNH/PHỤ` +
   `#### KỊCH BẢN SELL — …`. `parseDailyPlanResult()` luôn trả `WATCHLIST`, kịch bản vào
   `conditionalSetups`. Đổi nhãn trong prompt phải sửa parser + `formatPlanCard` cùng lúc.
-  Chỉ vàng — symbol crypto bị từ chối.
+- **Crypto dùng chung lịch** (thêm 21/10/2026): `DAILY_PLAN_SYMBOLS` mặc định
+  `XAU/USD,BTC/USD,ETH/USD`, mỗi mốc chạy lần lượt từng symbol (~3 phút/symbol → 12 lượt AI/ngày).
+  Symbol crypto → `buildCryptoDailyPlanSystemPrompt()`: cùng khung + bố cục, nhưng tiêu đề
+  `#### KỊCH BẢN LONG/SHORT` (parser map LONG→BUY, SHORT→SELL; `formatPlanCard` hiện nhãn LONG/SHORT),
+  SL/TP theo % + ATR H1, giờ thanh khoản crypto thay kill zone vàng, luật ≥2 nến H4 cho kịch bản
+  ngược dòng D dựa trên sweep-and-reject, kèm FUTURES SENTIMENT + BTC CONTEXT (altcoin) qua
+  `fetchCryptoExtras`. Nến crypto KHÔNG qua `dropClosedMarketBars` (giao dịch thật T7/CN); mức theo
+  phiên dùng `computeCryptoSessionLevels()` — ngày theo UTC (00:00 UTC = 07:00 VN, như nến D Binance),
+  tuần từ T2 00:00 UTC, `asia = null` (không range Á).
 - **Plan lượt trước** (cùng symbol, ≤ `DAILY_PLAN_PREVIOUS_MAX_AGE_MIN` = 300 phút) được nhét
   vào prompt để model ghi kịch bản cũ ĐÃ KÍCH HOẠT / ĐÃ VÔ HIỆU / VẪN CHỜ. Lượt 7h không đọc
   plan 19h hôm trước.
@@ -403,8 +411,8 @@ Request dữ liệu: ~1 request/symbol mỗi 5 phút + 1 request bias/giờ (≈
 trong khung 8h–22h) — đây là job nền duy nhất còn gọi provider liên tục (SwingScheduler
 đã bị gỡ 17/09 vì đốt quota), chỉ quét `SETUP_WATCHER_SYMBOLS` chứ không quét cả danh sách theo dõi.
 **Ngân sách TwelveData (gói basic: 800/ngày, 8/phút):** 3 symbol watcher ≈ 546 + scheduler 30p
-(~5 request/lượt × 28) ≈ 140 + daily plan ≈ 20 → ~710/ngày, mỗi lượt AI do watcher kích hoạt
-thêm ~5 → còn chỗ cho ~15 lượt/ngày. `MAX_PER_DAY=0` (không trần) nên ngày nhiều setup có thể vượt
+(~5 request/lượt × 28) ≈ 140 + daily plan 3 symbol ≈ 68 (XAU/BTC 4×5, ETH 4×7 vì thêm BTC context) →
+~754/ngày, mỗi lượt AI do watcher kích hoạt thêm ~5 → chỉ còn chỗ cho ~9 lượt/ngày. `MAX_PER_DAY=0` (không trần) nên ngày nhiều setup có thể vượt
 800 — khi đó mọi lượt phân tích sau đó trong ngày (kể cả XAU) lỗi dữ liệu. Thêm symbol thứ 4 hoặc hạ `SCHEDULER_INTERVAL_MIN` là vượt — muốn vậy thì tăng
 `SETUP_WATCHER_INTERVAL_MIN` (10 → ~98 request/symbol/ngày). Trần 8/phút được giữ bởi cửa sổ trượt
 dùng chung trong `TwelveDataProvider` (`TWELVEDATA_MAX_REQUESTS_PER_MIN`): tick :00/:30 của
@@ -633,6 +641,16 @@ trên từng bản ghi + dải tổng token trong ngày.
 - Gửi signal card dạng HTML (không dùng Markdown)
 - Badge action: 🟢 MUA / 🔴 BÁN / 👁 ĐANG CANH (WATCHLIST) / ⚪ KHÔNG VÀO LỆNH
 - **Dòng nguồn** `🔔 Nguồn: 🎯 Watcher / ⏱ Theo lịch / 👆 Bấm tay / 🤖 MCP` ngay dưới dòng giờ (`TRIGGER_LABEL`), trên cả kênh chính lẫn comment, kể cả thẻ kế hoạch ngày. `trigger` đi `runAnalysis` → `SignalOrchestrator.run(…, trigger)` → `notify`. Thẻ `setup` lưu `analysis_logs` KHÔNG kèm dòng này (dashboard có badge riêng).
+- **Kênh riêng theo symbol** (thêm 21/10/2026): `TELEGRAM_CHANNELS_BY_SYMBOL=BTC/USD:-100…,ETH/USD:-100…[:discussionId]`
+  → `notifier.forInstrument(symbol)` trả notifier của kênh đó (cache theo chatId); symbol không liệt kê
+  → kênh mặc định `TELEGRAM_CHAT_ID`. Mọi đường gửi (intraday `notify`, daily plan, swing `notify=true`)
+  đều đi qua `forInstrument`. Kênh riêng KHÔNG dùng `TELEGRAM_DISCUSSION_ID` (nhóm của kênh mặc định) —
+  tự dò `linked_chat_id`; kênh chưa gắn nhóm discussion thì bỏ qua comment phân tích đầy đủ (chỉ log warn).
+  Hiện `.env` cho BTC + ETH dùng CHUNG nhóm discussion `-1003825713286` (phần thứ 3). Nhóm đó đang gắn
+  với kênh ETH → bài ETH được Telegram tự chuyển sang như vàng; kênh BTC không gắn nhóm (Telegram chỉ cho
+  1 nhóm gắn 1 kênh) → `findForwardedMessageId` thấy nhóm ≠ `linked_chat_id` nên `forwardMessage` bài
+  BTC sang làm mốc rồi trả lời dưới đó (không chờ getUpdates 12s). Hệ quả: bài BTC trên kênh không có nút
+  Comments — phân tích BTC chỉ thấy trong nhóm chung.
 - Auto-split tin nhắn >4000 ký tự
 - Discussion thread: tự resolve DISCUSSION_ID nếu chưa set
 - Chuyển đổi markdown AI → HTML Telegram (bảng, bold, italic, bullet)

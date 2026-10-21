@@ -26,7 +26,7 @@ const app = express();
 const scheduler = AnalysisScheduler.fromConfig();
 // Kích hoạt phân tích theo sự kiện (sweep → BOS/CHoCH → retest) — xem SetupWatcher.ts.
 const setupWatcher = SetupWatcher.fromConfig();
-// Kế hoạch ngày vàng theo mốc giờ (mặc định 7h/11h/15h/19h T2–T6) — xem DailyPlanScheduler.ts.
+// Kế hoạch ngày (vàng + BTC/ETH) theo mốc giờ (mặc định 7h/11h/15h/19h T2–T6) — xem DailyPlanScheduler.ts.
 const dailyPlanScheduler = DailyPlanScheduler.fromConfig();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));

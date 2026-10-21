@@ -6,6 +6,9 @@ import { logger } from '../../logger';
 
 const MAX_LENGTH = 4000;
 
+/** Notifier theo kênh riêng (TELEGRAM_CHANNELS_BY_SYMBOL), giữ lại để không resolve discussion mỗi lần. */
+const channelNotifiers = new Map<string, TelegramNotifier>();
+
 export class TelegramNotifier {
   private resolvedDiscussionId: string | null | undefined = undefined;
   private resolvedChannelNumericId: string | null | undefined = undefined;
@@ -27,6 +30,21 @@ export class TelegramNotifier {
       config.telegram.baseUrl,
       config.telegram.discussionId,
     );
+  }
+
+  /**
+   * Notifier gửi vào kênh của symbol (TELEGRAM_CHANNELS_BY_SYMBOL, vd BTC/ETH mỗi coin một
+   * kênh). Symbol không có kênh riêng → chính notifier này (kênh mặc định).
+   */
+  forInstrument(instrument: string): TelegramNotifier {
+    const route = config.telegram.channelsBySymbol[instrument.trim().toUpperCase()];
+    if (!route || route.chatId === this.chatId) return this;
+    let notifier = channelNotifiers.get(route.chatId);
+    if (!notifier) {
+      notifier = new TelegramNotifier(this.botToken, route.chatId, this.baseUrl, route.discussionId);
+      channelNotifiers.set(route.chatId, notifier);
+    }
+    return notifier;
   }
 
   /** Send message (auto-split if > 4000 chars). Returns first message_id. */
@@ -79,6 +97,14 @@ export class TelegramNotifier {
     discussionId: string,
   ): Promise<string | null> {
     const channelNumericId = await this.getChannelNumericId();
+    // Nhóm discussion không phải nhóm gắn với kênh (vd ETH dùng chung nhóm của BTC) → Telegram
+    // không tự chuyển bài sang, chờ getUpdates là vô ích: forward luôn làm mốc trả lời.
+    if (channelNumericId !== null && this.resolvedDiscussionId !== discussionId) {
+      logger.info('Discussion group is not linked to this channel — forwarding post as anchor', {
+        channel: this.chatId, discussionId, linked: this.resolvedDiscussionId,
+      });
+      return this.forwardToDiscussion(channelMessageId, discussionId);
+    }
     const since = Math.floor(Date.now() / 1000) - 60;
     const maxAttempts = 8;
 
@@ -491,9 +517,11 @@ export class TelegramNotifier {
 
     for (const s of result.conditionalSetups) {
       lines.push('');
-      // Tiêu đề "#### KỊCH BẢN BUY — CHÍNH" → nhãn riêng, giữ phần CHÍNH/PHỤ.
-      const rank = s.rawText.match(/^####[^\n]*?(?:BUY|SELL)\s*[—–-]?\s*([^\n]*)/i)?.[1]?.replace(/[[\]*]/g, '').trim();
-      const label = s.direction === 'BUY' ? '🟢 <b>KỊCH BẢN MUA' : '🔴 <b>KỊCH BẢN BÁN';
+      // Tiêu đề "#### KỊCH BẢN BUY — CHÍNH" (crypto: LONG/SHORT) → nhãn riêng, giữ phần CHÍNH/PHỤ.
+      const rank = s.rawText.match(/^####[^\n]*?(?:BUY|SELL|LONG|SHORT)\s*[—–-]?\s*([^\n]*)/i)?.[1]?.replace(/[[\]*]/g, '').trim();
+      const label = s.direction === 'BUY'
+        ? (/^####[^\n]*\bLONG\b/i.test(s.rawText) ? '🟢 <b>KỊCH BẢN LONG' : '🟢 <b>KỊCH BẢN MUA')
+        : (/^####[^\n]*\bSHORT\b/i.test(s.rawText) ? '🔴 <b>KỊCH BẢN SHORT' : '🔴 <b>KỊCH BẢN BÁN');
       lines.push(`${label}${rank ? ` — ${htmlEscape(rank)}` : ''}</b>`);
       lines.push(markdownToHtml(s.rawText.replace(/^####[^\n]*\n?/, '')));
     }

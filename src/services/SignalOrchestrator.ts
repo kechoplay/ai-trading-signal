@@ -79,8 +79,9 @@ export class SignalOrchestrator {
   }
 
   /**
-   * Kế hoạch ngày (vàng): khung D/H4/H1/M15 với số nến riêng, prompt plan, không
-   * carry-forward lệnh — thay vào đó đọc plan lượt trước để cập nhật kịch bản.
+   * Kế hoạch ngày (vàng + crypto): khung D/H4/H1/M15 với số nến riêng, prompt plan, không
+   * carry-forward lệnh — thay vào đó đọc plan lượt trước để cập nhật kịch bản. Crypto
+   * dùng prompt plan riêng + funding/OI + BTC context (altcoin).
    */
   private async runDailyPlan(instrument: string, timeframes?: string[], trigger?: string): Promise<{
     result: AnalysisResult;
@@ -90,19 +91,18 @@ export class SignalOrchestrator {
     usage: TokenUsage | null;
     rateLimit: RateLimitSnapshot | null;
   }> {
-    if (isCryptoInstrument(instrument)) {
-      throw new Error(`Kế hoạch ngày chỉ hỗ trợ vàng — ${instrument} là crypto`);
-    }
     const { candlesByTf, currentPrice } = await this.fetchDailyPlanData(instrument, timeframes);
     const previous = await this.loadPreviousPlan(instrument);
+    const extras = await this.fetchCryptoExtras(instrument, config.dailyPlan.candlesByTf, config.candlesCount);
 
     const { result, rawText, usage, rateLimit } =
-      await this.claude.analyzeDailyPlan(instrument, candlesByTf, currentPrice, previous);
+      await this.claude.analyzeDailyPlan(instrument, candlesByTf, currentPrice, previous, extras);
 
     try {
-      const messageId = await this.telegram.send(this.telegram.formatPlanCard(result, instrument, currentPrice, trigger));
+      const telegram = this.telegram.forInstrument(instrument);
+      const messageId = await telegram.send(telegram.formatPlanCard(result, instrument, currentPrice, trigger));
       logger.info('Telegram daily plan sent', { message_id: messageId });
-      if (messageId) await this.telegram.sendComment(this.telegram.formatAnalysis(rawText), messageId);
+      if (messageId) await telegram.sendComment(telegram.formatAnalysis(rawText), messageId);
     } catch (err: any) {
       logger.error('Failed to send Telegram daily plan', { error: err.message });
     }
@@ -111,14 +111,16 @@ export class SignalOrchestrator {
   }
 
   /**
-   * Nến + giá cho kế hoạch ngày. Bỏ nến cuối tuần đi ngang (provider vẫn trả nến T7/CN ở
-   * giá đóng cửa T6 cho XAU/USD — xem dropClosedMarketBars). Public để dry-run dùng chung.
+   * Nến + giá cho kế hoạch ngày. Vàng: bỏ nến cuối tuần đi ngang (provider vẫn trả nến
+   * T7/CN ở giá đóng cửa T6 cho XAU/USD — xem dropClosedMarketBars). Crypto giao dịch thật
+   * 24/7 nên giữ nguyên. Public để dry-run dùng chung.
    */
   async fetchDailyPlanData(instrument: string, timeframes?: string[]): Promise<{
     candlesByTf: Record<string, Candle[]>;
     currentPrice: number;
   }> {
     const plan = config.dailyPlan;
+    const isCrypto = isCryptoInstrument(instrument);
     const resolvedTimeframes = (timeframes && timeframes.length > 0) ? timeframes : plan.timeframes;
     logger.info('Daily plan analysis started', { instrument, timeframes: resolvedTimeframes });
 
@@ -126,7 +128,7 @@ export class SignalOrchestrator {
     for (const tf of resolvedTimeframes) {
       const count = plan.candlesByTf[tf] ?? config.candlesCount;
       const raw = await this.market.fetchCandles(instrument, tf, count);
-      candlesByTf[tf] = dropClosedMarketBars(raw, tf);
+      candlesByTf[tf] = isCrypto ? raw : dropClosedMarketBars(raw, tf);
       logger.info('Daily plan candles', { tf, fetched: raw.length, kept: candlesByTf[tf].length });
     }
     const currentPrice = await this.market.fetchCurrentPrice(instrument);
@@ -261,16 +263,18 @@ export class SignalOrchestrator {
     trigger?: string,
   ): Promise<void> {
     try {
+      // Kênh theo symbol (BTC/ETH có kênh riêng — TELEGRAM_CHANNELS_BY_SYMBOL).
+      const telegram = this.telegram.forInstrument(instrument);
       // 1. Gửi bản gọn (chỉ entry/SL/TP) lên channel
-      const summary = this.telegram.formatSignalSummary(result, instrument, trigger);
-      const messageId = await this.telegram.send(summary);
+      const summary = telegram.formatSignalSummary(result, instrument, trigger);
+      const messageId = await telegram.send(summary);
       logger.info('Telegram signal sent', { message_id: messageId, action: result.action });
 
       if (messageId) {
         // 2. Gửi bản đầy đủ (giá/xu hướng/confidence/kịch bản + phân tích chi tiết) vào discussion thread
-        const signalCard = this.telegram.formatSignalCard(result, instrument, currentPrice, trigger);
-        const analysisHtml = this.telegram.formatAnalysis(rawText);
-        await this.telegram.sendComment(`${signalCard}\n\n${analysisHtml}`, messageId);
+        const signalCard = telegram.formatSignalCard(result, instrument, currentPrice, trigger);
+        const analysisHtml = telegram.formatAnalysis(rawText);
+        await telegram.sendComment(`${signalCard}\n\n${analysisHtml}`, messageId);
         logger.info('Telegram analysis thread sent', { reply_to: messageId });
 
       }
