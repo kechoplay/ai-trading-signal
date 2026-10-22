@@ -251,7 +251,9 @@ export const config = {
   },
 
   twelvedata: {
-    apiKey: process.env.TWELVEDATA_API_KEY ?? '',
+    // Nhiều key phân cách phẩy, theo thứ tự ưu tiên: key đầu hết credit ngày (hoặc sai
+    // key) thì TwelveDataProvider tự chuyển sang key kế tiếp, tới 00:00 UTC quay lại key đầu.
+    apiKeys: (process.env.TWELVEDATA_API_KEY ?? '').split(',').map((k) => k.trim()).filter(Boolean),
     baseUrl: process.env.TWELVEDATA_BASE_URL ?? 'https://api.twelvedata.com',
     // Trần request/phút của gói (basic = 8). Mọi request trong process đi qua một cửa
     // sổ trượt 60s — vượt thì CHỜ thay vì để TwelveData trả lỗi 429. 0 = tắt.

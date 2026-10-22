@@ -705,6 +705,13 @@ GET https://api.twelvedata.com/price?symbol=XAU/USD&apikey=...
 ```
 Retry: 2 lần, delay 500ms. `exchange` chỉ gửi khi instrument là crypto (vàng KHÔNG kèm exchange).
 
+**Nhiều API key** (thêm 22/10/2026): `TWELVEDATA_API_KEY=key1,key2` → `config.twelvedata.apiKeys`.
+Luôn dùng key đầu còn dùng được; TwelveData trả `code 429` "for the day" → khoá key tới 00:00 UTC
+(07:00 VN, lúc reset credit), 429 theo phút → khoá 61s, 401/403 → khoá 1 giờ, rồi thử ngay key kế
+trong cùng request. Trạng thái khoá nằm trong RAM (dùng chung mọi instance), log `warn` chỉ in
+`#n (…4 ký tự cuối)`. Cửa sổ trượt 8/phút vẫn là MỘT cho cả process (mỗi lúc chỉ dùng một key).
+Hai key gói basic = 1600 request/ngày — ngân sách ở phần SetupWatcher tính cho 1 key.
+
 ### OANDA (thay thế)
 ```
 GET https://api-fxpractice.oanda.com/v3/instruments/XAU_USD/candles
