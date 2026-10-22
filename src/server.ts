@@ -211,6 +211,19 @@ app.post('/api/daily-plan/run', requireApiKey, async (req, res) => {
   }
 });
 
+// Lập kế hoạch ngày cho MỌI symbol của DAILY_PLAN_SYMBOLS, lần lượt, chạy nền (~3 phút/symbol).
+// Trả 202 ngay; tiến độ đọc ở GET /api/daily-plan (`running`, `current_symbol`, `last_batch`).
+// 409 khi một lượt plan khác (theo mốc hoặc bấm trước đó) chưa xong.
+app.post('/api/daily-plan/run-all', requireApiKey, (_req, res) => {
+  const symbols = dailyPlanScheduler.runAllNow();
+  if (!symbols) {
+    res.status(409).json({ error: 'Đang có lượt lập kế hoạch ngày khác chạy' });
+    return;
+  }
+  logger.info('POST /api/daily-plan/run-all triggered', { symbols });
+  res.status(202).json({ ok: true, symbols });
+});
+
 const SCHEDULER_ENABLED_KEY = 'scheduler_enabled';
 
 app.post('/api/scheduler/toggle', requireApiKey, async (req, res) => {

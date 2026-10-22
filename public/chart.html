@@ -542,7 +542,7 @@
   <div class="header-actions">
     <button id="schedulerToggleBtn" class="nav-btn" onclick="toggleScheduler()" disabled>⏱ …</button>
     <button id="watcherBtn" class="nav-btn watch-btn" onclick="openWatcher()" title="Theo dõi chuỗi sweep → CHoCH → retest">🎯 Watcher</button>
-    <button id="planBtn" class="nav-btn plan-btn" onclick="runAnalyze('planBtn', '/api/daily-plan/run', 'Lập kế hoạch ngày')" title="Lập kế hoạch ngày (bias + kịch bản BUY/SELL) cho symbol đang chọn">🗺 Kế hoạch ngày</button>
+    <button id="planBtn" class="nav-btn plan-btn" onclick="runDailyPlanAll()" title="Lập kế hoạch ngày (bias + kịch bản BUY/SELL) cho mọi symbol của DAILY_PLAN_SYMBOLS, lần lượt">🗺 Kế hoạch ngày</button>
     <button id="analyzeBtn" class="nav-btn analyze-btn" onclick="runAnalyze()">⚡ Phân tích</button>
     <a href="/" class="nav-btn">🏠 Tín hiệu</a>
     <a href="/docs" target="_blank" class="nav-btn">📖 Docs</a>
@@ -1073,17 +1073,16 @@ function showToast(msg, type = '') {
   toastTimer = setTimeout(() => { t.className = 'toast'; }, 4500);
 }
 
-// Phân tích symbol đang chọn trên chart (endpoint tùy chọn, mặc định intraday;
-// '/api/daily-plan/run' = kế hoạch ngày)
-async function runAnalyze(btnId = 'analyzeBtn', endpoint = '/api/analyze', label = 'Phân tích') {
+// Phân tích symbol đang chọn trên chart (endpoint tùy chọn, mặc định intraday)
+async function runAnalyze(btnId = 'analyzeBtn', endpoint = '/api/analyze') {
   const btn = document.getElementById(btnId);
   if (btn.disabled) return;
   if (!activeSymbol) { showToast('Chưa chọn symbol nào', 'error'); return; }
 
   const original = btn.innerHTML;
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span>Đang chạy...';
-  showToast(`Đang ${label.toLowerCase()} ${activeSymbol}, vui lòng đợi...`);
+  btn.innerHTML = '<span class="spinner"></span>Đang phân tích...';
+  showToast(`Đang phân tích ${activeSymbol}, vui lòng đợi...`);
 
   try {
     const res = await apiFetch(endpoint, {
@@ -1092,18 +1091,83 @@ async function runAnalyze(btnId = 'analyzeBtn', endpoint = '/api/analyze', label
       body: JSON.stringify({ symbol: activeSymbol }),
     });
     const data = await res.json();
-    if (!res.ok || data.error) throw new Error(data.error || `${label} thất bại`);
+    if (!res.ok || data.error) throw new Error(data.error || 'Phân tích thất bại');
     const tok = data.usage
       ? ` · ${fmtTok(data.usage.total_input_tokens)}↓ / ${fmtTok(data.usage.output_tokens)}↑`
       : '';
     const secs = data.duration_ms != null ? ` (${(data.duration_ms / 1000).toFixed(1)}s${tok})` : '';
-    showToast(`✓ ${label} ${activeSymbol} hoàn tất${secs} — xem ở trang Tín hiệu`, 'success');
+    showToast(`✓ Phân tích ${activeSymbol} hoàn tất${secs} — xem ở trang Tín hiệu`, 'success');
   } catch (e) {
-    showToast('✗ ' + (e.message || `${label} thất bại`), 'error');
+    showToast('✗ ' + (e.message || 'Phân tích thất bại'), 'error');
   } finally {
     btn.disabled = false;
     btn.innerHTML = original;
   }
+}
+
+// ── Kế hoạch ngày cho MỌI symbol của DAILY_PLAN_SYMBOLS ──
+// Server chạy nền lần lượt từng symbol (~3 phút/symbol) và trả 202 ngay; tiến độ đọc từ
+// GET /api/daily-plan (running / current_symbol / last_batch), hiện thẳng trên nút.
+const PLAN_BTN_LABEL = '🗺 Kế hoạch ngày';
+let planPollTimer = null;
+
+async function runDailyPlanAll() {
+  const btn = document.getElementById('planBtn');
+  if (btn.disabled) return;
+  btn.disabled = true;
+  try {
+    const res = await apiFetch('/api/daily-plan/run-all', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Lập kế hoạch ngày thất bại');
+    showToast(`Đang lập kế hoạch ngày cho ${data.symbols.join(', ')} (~${data.symbols.length * 3} phút)...`);
+    renderPlanProgress({ running: true, current_symbol: data.symbols[0], last_batch: { symbols: data.symbols, results: [] } });
+    startPlanPoll();
+  } catch (e) {
+    showToast('✗ ' + (e.message || 'Lập kế hoạch ngày thất bại'), 'error');
+    btn.disabled = false;
+  }
+}
+
+function renderPlanProgress(st) {
+  const btn = document.getElementById('planBtn');
+  const b = st.last_batch;
+  if (!st.running || !b) {
+    btn.disabled = false;
+    btn.innerHTML = PLAN_BTN_LABEL;
+    return;
+  }
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spinner"></span>Plan ${b.results.length + 1}/${b.symbols.length} · ${st.current_symbol ?? ''}`;
+}
+
+function startPlanPoll() {
+  clearInterval(planPollTimer);
+  planPollTimer = setInterval(pollPlanStatus, 10_000);
+}
+
+// silent = lần đọc lúc tải trang: không prompt API key, không báo kết quả lượt cũ.
+async function pollPlanStatus(silent = false) {
+  try {
+    const headers = getApiKey() ? { 'x-api-key': getApiKey() } : {};
+    const res = await fetch('/api/daily-plan', { headers });
+    if (!res.ok) return;
+    const st = await res.json();
+    renderPlanProgress(st);
+    if (st.running) {
+      if (!planPollTimer) startPlanPoll();
+      return;
+    }
+    clearInterval(planPollTimer);
+    planPollTimer = null;
+    if (silent || !st.last_batch) return;
+    const results = st.last_batch.results;
+    const failed = results.filter(r => !r.ok);
+    if (failed.length === 0) {
+      showToast(`✓ Đã lập kế hoạch ngày: ${results.map(r => `${r.symbol} (${r.duration_sec}s)`).join(', ')}`, 'success');
+    } else {
+      showToast(`✗ Kế hoạch ngày lỗi: ${failed.map(r => `${r.symbol}: ${r.error}`).join(' · ')}`, 'error');
+    }
+  } catch { /* mạng chập chờn — đợi lần poll sau */ }
 }
 
 // ── Thêm coin từ TradingView ──
@@ -1651,6 +1715,7 @@ function closeWatcher() {
 loadSymbols();
 loadSchedulerStatus();
 loadWatcherStatus();
+pollPlanStatus(true); // tải lại trang giữa lượt plan → nút vẫn hiện tiến độ
 tickClock();
 setInterval(loadSchedulerStatus, 60_000);
 setInterval(loadWatcherStatus, 60_000);

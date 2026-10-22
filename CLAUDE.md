@@ -574,8 +574,14 @@ Lịch sử watcher trong một ngày giờ VN, mới nhất trước. Query: `?
 ### GET /api/daily-plan / POST /api/daily-plan/run
 
 `GET`: trạng thái `DailyPlanScheduler` (`hours`, `next_run_at`, `last_result`, `last_error`,
-`running`…). `POST` (body `{ symbol? }`, mặc định symbol đầu của `DAILY_PLAN_SYMBOLS`): lập plan
+`running`, `current_symbol`, `last_batch` = kết quả từng symbol của lượt gần nhất…). `POST` (body `{ symbol? }`, mặc định symbol đầu của `DAILY_PLAN_SYMBOLS`): lập plan
 ngay, trả `setup`/`reasoning` HTML như `/api/analyze`; 409 khi đang có lượt khác. Cả hai yêu cầu API key.
+
+`POST /api/daily-plan/run-all` (thêm 22/10/2026, nút **🗺 Kế hoạch ngày** trên header `/chart`): lập plan cho
+MỌI symbol của `DAILY_PLAN_SYMBOLS`, lần lượt, CHẠY NỀN trong `DailyPlanScheduler.runAllNow()` (cùng vòng
+`runBatch` với mốc theo lịch, `trigger: 'api'`) → trả 202 ngay vì ~3 phút/symbol dễ bị proxy cắt request.
+Đụng single-flight intraday thì chờ như mốc theo lịch; 409 khi một lượt plan khác chưa xong (và ngược lại,
+mốc theo lịch tới giữa lượt bấm tay thì bỏ mốc). Nút poll `GET /api/daily-plan` mỗi 10s để hiện tiến độ.
 
 ### GET /api/scheduler
 

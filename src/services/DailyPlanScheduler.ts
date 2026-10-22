@@ -12,6 +12,24 @@ interface ZonedParts {
   second: number;
 }
 
+type PlanTrigger = 'scheduler' | 'api';
+
+interface PlanBatchResult {
+  symbol: string;
+  ok: boolean;
+  duration_sec: number | null;
+  error: string | null;
+}
+
+/** Một lượt chạy lần lượt mọi symbol (theo mốc giờ hoặc bấm tay). */
+interface PlanBatch {
+  trigger: PlanTrigger;
+  symbols: string[];
+  started_at: string;
+  finished_at: string | null;
+  results: PlanBatchResult[];
+}
+
 /**
  * Lập KẾ HOẠCH NGÀY (vàng + crypto) theo các mốc GIỜ cố định: startHour, startHour + intervalHours,
  * … ≤ endHour (mặc định 7h/11h/15h/19h, T2–T6 giờ VN). Mỗi mốc chạy lần lượt từng symbol.
@@ -34,6 +52,9 @@ export class DailyPlanScheduler {
   private runCount = 0;
   private skipCount = 0;
   private running = false;
+  /** Symbol đang lập plan trong lượt đang chạy (null khi rảnh) — client theo dõi tiến độ. */
+  private currentSymbol: string | null = null;
+  private lastBatch: PlanBatch | null = null;
   private readonly hours: number[];
 
   constructor(
@@ -107,8 +128,21 @@ export class DailyPlanScheduler {
       run_count:    this.runCount,
       skip_count:   this.skipCount,
       running:      this.running,
+      current_symbol: this.currentSymbol,
+      last_batch:   this.lastBatch,
       now:          this.fmt(new Date()),
     };
+  }
+
+  /**
+   * Bấm tay: lập plan cho MỌI symbol ngay, chạy nền (~3 phút/symbol) — caller không chờ.
+   * Đụng lượt plan khác (theo mốc hoặc bấm trước đó) → trả null. Chạy được cả khi
+   * scheduler tắt. Đụng single-flight intraday thì chờ như mốc theo lịch.
+   */
+  runAllNow(): string[] | null {
+    if (this.running || this.symbols.length === 0) return null;
+    void this.runBatch('api');
+    return this.symbols;
   }
 
   private arm(): void {
@@ -134,27 +168,42 @@ export class DailyPlanScheduler {
       return;
     }
 
+    await this.runBatch('scheduler');
+  }
+
+  /** Lần lượt từng symbol; `running` chặn lượt thứ hai (mốc giờ / bấm tay) chồng lên. */
+  private async runBatch(trigger: PlanTrigger): Promise<void> {
     this.running = true;
     this.lastRunAt = new Date();
+    const batch: PlanBatch = {
+      trigger, symbols: [...this.symbols], started_at: this.fmt(this.lastRunAt), finished_at: null, results: [],
+    };
+    this.lastBatch = batch;
     try {
-      for (const symbol of this.symbols) await this.runOne(symbol);
+      for (const symbol of this.symbols) {
+        this.currentSymbol = symbol;
+        batch.results.push(await this.runOne(symbol, trigger));
+      }
     } finally {
       this.running = false;
+      this.currentSymbol = null;
+      batch.finished_at = this.fmt(new Date());
     }
   }
 
   /** Chạy một symbol; đụng single-flight thì chờ rồi thử lại tới busyMaxWaitMin. */
-  private async runOne(symbol: string): Promise<void> {
+  private async runOne(symbol: string, trigger: PlanTrigger): Promise<PlanBatchResult> {
     const deadline = Date.now() + this.busyMaxWaitMin * 60_000;
     for (;;) {
       try {
         const r = await runAnalysis({
-          symbol, analysisType: DAILY_PLAN, timeframes: config.dailyPlan.timeframes, trigger: 'scheduler',
+          symbol, analysisType: DAILY_PLAN, timeframes: config.dailyPlan.timeframes, trigger,
         });
         this.runCount++;
-        this.lastResult = `${r.symbol} — ${this.fmt(new Date())} (${Math.round(r.durationMs / 1000)}s)`;
+        const sec = Math.round(r.durationMs / 1000);
+        this.lastResult = `${r.symbol} — ${this.fmt(new Date())} (${sec}s)`;
         this.lastError = null;
-        return;
+        return { symbol, ok: true, duration_sec: sec, error: null };
       } catch (err: unknown) {
         if (err instanceof AnalysisBusyError && Date.now() + this.busyRetrySec * 1000 < deadline) {
           logger.info('Daily plan: đang có phân tích khác chạy — chờ rồi thử lại', {
@@ -167,7 +216,7 @@ export class DailyPlanScheduler {
         const message = err instanceof Error ? err.message : String(err);
         this.lastError = `${this.fmt(new Date())} — ${symbol}: ${message}`;
         logger.error('Daily plan: lập plan thất bại — chờ mốc sau', { symbol, error: message });
-        return;
+        return { symbol, ok: false, duration_sec: null, error: message };
       }
     }
   }
