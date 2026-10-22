@@ -68,6 +68,15 @@
     .analyze-btn:hover { background: linear-gradient(90deg, #4f46e5, #7c3aed); }
     .analyze-btn:disabled { opacity: .6; cursor: not-allowed; }
 
+    .plan-btn {
+      background: linear-gradient(90deg, #0d9488, #0891b2);
+      color: #fff;
+      border: 1px solid transparent;
+      font-weight: 600;
+    }
+    .plan-btn:hover { background: linear-gradient(90deg, #0f766e, #0e7490); }
+    .plan-btn:disabled { opacity: .6; cursor: not-allowed; }
+
     .spinner {
       display: inline-block;
       width: 12px; height: 12px;
@@ -532,6 +541,7 @@
   <div class="header-actions">
     <button id="schedulerToggleBtn" class="nav-btn" onclick="toggleScheduler()" disabled>⏱ …</button>
     <button id="watcherBtn" class="nav-btn watch-btn" onclick="openWatcher()" title="Theo dõi chuỗi sweep → CHoCH → retest">🎯 Watcher</button>
+    <button id="planBtn" class="nav-btn plan-btn" onclick="runAnalyze('planBtn', '/api/daily-plan/run', 'Lập kế hoạch ngày')" title="Lập kế hoạch ngày (bias + kịch bản BUY/SELL) cho symbol đang chọn">🗺 Kế hoạch ngày</button>
     <button id="analyzeBtn" class="nav-btn analyze-btn" onclick="runAnalyze()">⚡ Phân tích</button>
     <a href="/" class="nav-btn">🏠 Tín hiệu</a>
     <a href="/docs" target="_blank" class="nav-btn">📖 Docs</a>
@@ -1062,16 +1072,17 @@ function showToast(msg, type = '') {
   toastTimer = setTimeout(() => { t.className = 'toast'; }, 4500);
 }
 
-// Phân tích symbol đang chọn trên chart (endpoint tùy chọn, mặc định intraday)
-async function runAnalyze(btnId = 'analyzeBtn', endpoint = '/api/analyze') {
+// Phân tích symbol đang chọn trên chart (endpoint tùy chọn, mặc định intraday;
+// '/api/daily-plan/run' = kế hoạch ngày)
+async function runAnalyze(btnId = 'analyzeBtn', endpoint = '/api/analyze', label = 'Phân tích') {
   const btn = document.getElementById(btnId);
   if (btn.disabled) return;
   if (!activeSymbol) { showToast('Chưa chọn symbol nào', 'error'); return; }
 
   const original = btn.innerHTML;
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span>Đang phân tích...';
-  showToast(`Đang phân tích ${activeSymbol}, vui lòng đợi...`);
+  btn.innerHTML = '<span class="spinner"></span>Đang chạy...';
+  showToast(`Đang ${label.toLowerCase()} ${activeSymbol}, vui lòng đợi...`);
 
   try {
     const res = await apiFetch(endpoint, {
@@ -1080,14 +1091,14 @@ async function runAnalyze(btnId = 'analyzeBtn', endpoint = '/api/analyze') {
       body: JSON.stringify({ symbol: activeSymbol }),
     });
     const data = await res.json();
-    if (!res.ok || data.error) throw new Error(data.error || 'Phân tích thất bại');
+    if (!res.ok || data.error) throw new Error(data.error || `${label} thất bại`);
     const tok = data.usage
       ? ` · ${fmtTok(data.usage.total_input_tokens)}↓ / ${fmtTok(data.usage.output_tokens)}↑`
       : '';
     const secs = data.duration_ms != null ? ` (${(data.duration_ms / 1000).toFixed(1)}s${tok})` : '';
-    showToast(`✓ Phân tích ${activeSymbol} hoàn tất${secs} — xem ở trang Tín hiệu`, 'success');
+    showToast(`✓ ${label} ${activeSymbol} hoàn tất${secs} — xem ở trang Tín hiệu`, 'success');
   } catch (e) {
-    showToast('✗ ' + (e.message || 'Phân tích thất bại'), 'error');
+    showToast('✗ ' + (e.message || `${label} thất bại`), 'error');
   } finally {
     btn.disabled = false;
     btn.innerHTML = original;
