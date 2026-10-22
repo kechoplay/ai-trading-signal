@@ -1,6 +1,7 @@
 import { DAILY_PLAN, SignalOrchestrator } from './SignalOrchestrator';
 import { TelegramNotifier } from './telegram/TelegramNotifier';
 import { RateLimitSnapshot, TokenUsage } from './ai/transport/LlmTransport';
+import { AnalysisResult } from './ai/dto/AnalysisResult';
 import { recordUsage } from './ai/UsageTracker';
 import { config } from '../config/trading';
 import { logger } from '../logger';
@@ -14,6 +15,10 @@ export interface AnalysisRunResult {
   reasoning: string;
   usage: TokenUsage | null;
   rateLimit: RateLimitSnapshot | null;
+  /** Kết quả đã parse + text gốc — MCP trả về dạng JSON thay vì HTML. */
+  result: AnalysisResult;
+  rawText: string;
+  currentPrice: number;
 }
 
 export interface AnalysisRunOptions {
@@ -120,7 +125,10 @@ export async function runAnalysis(opts: AnalysisRunOptions): Promise<AnalysisRun
           ? { input_remaining: rateLimit.inputTokensRemaining, output_remaining: rateLimit.outputTokensRemaining }
           : { window: rateLimit.windowType, used_pct: rateLimit.utilizationPct, resets_at: rateLimit.resetsAt },
     });
-    return { symbol: sym, action: result.action, durationMs, setup, reasoning, usage, rateLimit };
+    return {
+      symbol: sym, action: result.action, durationMs, setup, reasoning, usage, rateLimit,
+      result, rawText, currentPrice,
+    };
   } finally {
     inFlight = null;
   }

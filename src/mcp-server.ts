@@ -1,9 +1,13 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { makeMarketDataProvider } from './services/market/MarketDataProviderFactory';
-import { SignalOrchestrator } from './services/SignalOrchestrator';
+import { AnalysisBusyError, runAnalysis } from './services/AnalysisRunner';
 import { config } from './config/trading';
 import { prisma } from './db';
+
+// Phải trùng tên khung mà provider hiểu (TIMEFRAME_MAP: khung ngày là 'D', không phải 'D1').
+const MCP_TIMEFRAMES = ['M5', 'M15', 'H1', 'H4', 'D'] as const;
+type McpTimeframe = typeof MCP_TIMEFRAMES[number];
 
 export function createMcpServer(): McpServer {
   const server = new McpServer({
@@ -17,14 +21,14 @@ export function createMcpServer(): McpServer {
     'Lấy dữ liệu nến OHLCV cho cặp tiền tệ theo nhiều khung thời gian. Dùng tool này để lấy dữ liệu thô rồi tự phân tích mà không cần API key.',
     {
       symbol:     z.string().optional().describe('Cặp tiền tệ, vd: "XAU/USD". Mặc định theo cấu hình server.'),
-      timeframes: z.array(z.enum(['M5', 'M15', 'H1', 'H4', 'D1'])).optional()
+      timeframes: z.array(z.enum(MCP_TIMEFRAMES)).optional()
                     .describe('Danh sách khung thời gian. Mặc định: ["M5","M15","H1"].'),
       count:      z.number().int().min(10).max(500).optional()
                     .describe('Số nến mỗi khung. Mặc định: 100.'),
     },
     async ({ symbol, timeframes, count }) => {
       const instrument  = symbol     ?? config.instrument;
-      const tfs         = timeframes ?? (config.timeframes as ('M5' | 'M15' | 'H1' | 'H4' | 'D1')[]);
+      const tfs         = timeframes ?? (config.timeframes as McpTimeframe[]);
       const candleCount = count      ?? 100;
 
       const provider = makeMarketDataProvider();
@@ -112,25 +116,33 @@ export function createMcpServer(): McpServer {
   // ── Tool: run_full_analysis ─────────────────────────────────────────────────
   server.tool(
     'run_full_analysis',
-    'Chạy phân tích kỹ thuật đầy đủ bằng AI server (cần CLAUDE_API_KEY). Kết quả được lưu DB và gửi Telegram.',
+    'Chạy phân tích kỹ thuật đầy đủ bằng AI server (~3 phút). Kết quả được lưu DB và gửi Telegram. '
+      + 'Chỉ chạy một lượt mỗi lúc — đang có lượt khác (scheduler/watcher/bấm tay) thì trả lỗi, thử lại sau.',
     {
       symbol:     z.string().optional().describe('Cặp tiền tệ. Mặc định: XAU/USD.'),
-      timeframes: z.array(z.enum(['M5', 'M15', 'H1', 'H4', 'D1'])).optional()
+      timeframes: z.array(z.enum(MCP_TIMEFRAMES)).optional()
                     .describe('Khung thời gian phân tích. Mặc định theo cấu hình server.'),
     },
     async ({ symbol, timeframes }) => {
-      if (!config.claude.apiKey) {
+      // Qua runAnalysis() như mọi đường trigger khác: lưu DB (carry-forward + dashboard)
+      // và single-flight. Thiếu credential (API key hay subscription tùy AI_AUTH_MODE)
+      // thì transport tự ném lỗi rõ ràng — không tự kiểm tra ở đây.
+      let run;
+      try {
+        run = await runAnalysis({ symbol, timeframes: timeframes as string[] | undefined, trigger: 'mcp' });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
         return {
           content: [{
             type: 'text' as const,
-            text: JSON.stringify({ error: 'CLAUDE_API_KEY chưa được cấu hình. Dùng get_market_data để lấy dữ liệu và tự phân tích.' }),
+            text: JSON.stringify(err instanceof AnalysisBusyError
+              ? { error: message, busy: true }
+              : { error: message, hint: 'Có thể dùng get_market_data để lấy dữ liệu và tự phân tích.' }),
           }],
           isError: true,
         };
       }
-
-      const { result, rawText, instrument: sym, currentPrice } =
-        await SignalOrchestrator.fromConfig().run(symbol, timeframes as string[] | undefined);
+      const { result, rawText, symbol: sym, currentPrice } = run;
 
       return {
         content: [{

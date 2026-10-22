@@ -743,5 +743,5 @@ GET https://api-fxpractice.oanda.com/v3/instruments/XAU_USD/candles
 4. **Telegram**: Dùng HTML parse_mode — không dùng MarkdownV2
 5. **Config**: Mọi giá trị cứng phải lấy từ `src/config/trading.ts`, không hardcode
 6. **Logging**: Dùng `logger` từ `src/logger.ts`, không dùng `console.log`
-7. **Chạy phân tích**: Mọi đường trigger mới PHẢI gọi `runAnalysis()` trong `AnalysisRunner.ts`, không gọi thẳng `SignalOrchestrator.run()` — nếu không sẽ gửi Telegram mà không lưu DB, làm carry-forward và dashboard mất dữ liệu (lỗi này còn tồn tại ở `mcp-server.ts:133`).
+7. **Chạy phân tích**: Mọi đường trigger mới PHẢI gọi `runAnalysis()` trong `AnalysisRunner.ts`, không gọi thẳng `SignalOrchestrator.run()` — nếu không sẽ gửi Telegram mà không lưu DB, làm carry-forward và dashboard mất dữ liệu. (Tool MCP `run_full_analysis` từng gọi thẳng — đã chuyển sang `runAnalysis({ trigger: 'mcp' })` ngày 22/10/2026, trả lỗi `busy` khi đụng single-flight.)
 8. **Quota subscription**: Một lượt phân tích tiêu ~50k input + ~12k output token và mất ~3 phút (Opus 5, effort=high), dùng CHUNG hạn mức với session Claude Code. Trước khi hạ `SCHEDULER_INTERVAL_MIN` xuống dưới 15 hoặc mở rộng khung giờ, tính lại số lượt/ngày (`runs_per_day` trong `/api/scheduler`) và kiểm `/usage`.
