@@ -299,11 +299,11 @@ export class SetupWatcher {
     this.snapshots.set(symbol, { at: now.toISOString(), price: live.price, bias, bias_timeframe: biasTimeframeFor(symbol), setups });
     await this.recordTransitions(symbol, cfg.timeframe, live.price, bias, setups);
 
-    // RETEST nhưng ngược/chưa rõ bias → ghi lý do vào lịch sử (không kích hoạt).
+    // RETEST nhưng NGƯỢC bias rõ ràng → ghi lý do vào lịch sử (không kích hoạt). NEUTRAL vẫn cho qua.
     if (cfg.requireBias) {
       for (const s of setups) {
         if (s.stage === 'RETEST' && !s.biasOk) {
-          await this.skip(tick, symbol, s.direction, `ngược / chưa rõ bias ${biasTimeframeFor(symbol)} (${bias ?? 'không rõ'})`);
+          await this.skip(tick, symbol, s.direction, `ngược bias ${biasTimeframeFor(symbol)} (${bias})`);
         }
       }
     }

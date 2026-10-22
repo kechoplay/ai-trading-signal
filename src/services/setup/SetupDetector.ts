@@ -20,7 +20,12 @@ export interface DetectedSetup {
   sweep: SweepEvent | null;
   structure: StructureEvent | null;
   zone: RetestZone | null;
-  /** Hướng setup có trùng bias khung lớn không (null bias = không biết → false). */
+  /**
+   * Bias khung lớn có cho phép hướng này không: chỉ false khi NGƯỢC bias rõ ràng
+   * (BUY khi BEARISH, SELL khi BULLISH). NEUTRAL / không rõ → true — bias cơ học bằng
+   * pivot H1 chậm ~2 giờ nên chuỗi đảo chiều ngay đáy/đỉnh gần như luôn rơi vào NEUTRAL;
+   * Claude tự đánh giá lại bias trên dữ liệu đầy đủ.
+   */
   biasOk: boolean;
   /** Lý do dừng ở stage hiện tại — để soi qua /api/setup-watcher. */
   note: string;
@@ -50,7 +55,8 @@ export function detectSetup(
   p: DetectParams,
 ): DetectedSetup {
   const buy = direction === 'BUY';
-  const biasOk = higherBias === (buy ? 'BULLISH' : 'BEARISH');
+  const biasOk = higherBias !== (buy ? 'BEARISH' : 'BULLISH');
+  const biasAligned = higherBias === (buy ? 'BULLISH' : 'BEARISH');
   const base: DetectedSetup = {
     direction, stage: 'NONE', sweep: null, structure: null, zone: null, biasOk, note: '', key: null,
   };
@@ -108,7 +114,9 @@ export function detectSetup(
   if (insideNow || wickTouched) {
     return {
       ...base, stage: 'RETEST', sweep, structure, zone, key,
-      note: biasOk ? 'đủ chuỗi sweep → BOS/CHoCH → retest' : `đủ chuỗi nhưng NGƯỢC bias khung lớn (${higherBias ?? 'không rõ'})`,
+      note: biasAligned ? 'đủ chuỗi sweep → BOS/CHoCH → retest'
+        : biasOk ? `đủ chuỗi sweep → BOS/CHoCH → retest (bias khung lớn ${higherBias ?? 'không rõ'} — không chặn)`
+        : `đủ chuỗi nhưng NGƯỢC bias khung lớn (${higherBias})`,
     };
   }
   return {

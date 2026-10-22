@@ -384,9 +384,18 @@ khung giờ/ngày với `SCHEDULER_*`. Symbol lấy từ `SETUP_WATCHER_SYMBOLS`
 Fetch nến `SETUP_WATCHER_TIMEFRAME` (M15) + bias khung
 `SETUP_WATCHER_BIAS_TIMEFRAME` (H1; crypto dùng `SETUP_WATCHER_CRYPTO_BIAS_TIMEFRAME` = H4 cho khớp khung bias của prompt crypto; cache tới lúc nến H1 đang chạy đóng — bias chỉ tính trên nến
 đã đóng nên refetch sớm hơn là thừa; `BIAS_CACHE_MIN` chỉ dùng khi nến cuối không còn chạy), chạy `analyzeTimeframe` (nến đã đóng), rồi
-`detectSetup()` cho từng hướng: `NONE → SWEPT → CONFIRMED → RETEST`. Chỉ khi `RETEST` (+ trùng bias
-nếu `REQUIRE_BIAS`) mới gọi `runAnalysis({ trigger: 'event', triggerNote })` — `triggerNote` mô tả
+`detectSetup()` cho từng hướng: `NONE → SWEPT → CONFIRMED → RETEST`. Chỉ khi `RETEST` (+ KHÔNG ngược
+bias nếu `REQUIRE_BIAS`) mới gọi `runAnalysis({ trigger: 'event', triggerNote })` — `triggerNote` mô tả
 chuỗi, được nối vào user prompt dưới dạng "gợi ý cần kiểm chứng độc lập" (chống anchoring).
+
+**Luật bias (đổi 22/10/2026):** `biasOk` = "không NGƯỢC bias rõ ràng" — chỉ chặn BUY khi bias
+`BEARISH`, SELL khi `BULLISH`; `NEUTRAL` (và bias `null`) vẫn gọi AI. Trước đó `biasOk` đòi TRÙNG
+bias nên `NEUTRAL` cũng bị chặn. Lý do: bias cơ học (`structureBias`: 2 swing high + 2 swing low gần
+nhất, pivot 2 nến mỗi bên trên nến đã đóng) chậm ~2 giờ, nên chuỗi đảo chiều ngay đáy/đỉnh — đúng
+loại setup watcher săn — gần như luôn rơi vào lúc H1 còn `NEUTRAL` (vd 22/10: đỉnh cao dần + đáy thấp
+dần). Claude tự đánh giá lại bias trên dữ liệu đầy đủ. Cột `bias_ok` trong `setup_watch_events` /
+`detail` của `setup_watch_ticks` đổi nghĩa từ ngày này (bản ghi cũ: `false` khi NEUTRAL) — UI suy
+nhãn 3 trạng thái (trùng / trung tính / ngược) từ `bias` + hướng, không đọc `bias_ok`.
 
 Chặn quota: mỗi chuỗi (key = hướng + thời điểm sweep + thời điểm cú phá) chỉ kích hoạt 1 lần;
 `COOLDOWN_MIN` giữa hai lần cùng symbol; `MAX_PER_DAY` lần/ngày — **trần chung cho MỌI symbol**
@@ -423,7 +432,7 @@ scheduler trùng tick watcher thì request thừa CHỜ (≤ ~60s) thay vì ăn 
 `RETEST` xanh) + số lần kích hoạt AI hôm nay. Bấm mở modal: dải tóm tắt (khung, cooldown, tick
 gần nhất/kế tiếp), cảnh báo ngoài khung giờ (`in_window_now`), lần kích hoạt gần nhất + lỗi gần
 nhất, rồi từng symbol × BUY/SELL với thanh 3 bước ① Quét → ② BOS/CHoCH + displacement → ③ Hồi
-về FVG/OB, nhãn trùng/ngược bias, `note` và các mức sweep/cú phá/vùng retest. Modal mở thì tự làm
+về FVG/OB, nhãn trùng / trung tính / ngược bias, `note` và các mức sweep/cú phá/vùng retest. Modal mở thì tự làm
 mới mỗi 30s. Watcher chỉ cập nhật snapshot trong khung giờ — ngoài giờ modal hiện số liệu lần dò cuối.
 Tab **Lịch sử** trong modal (chọn ngày, giờ VN) đọc `GET /api/setup-watcher/history`: dòng thời gian
 MỌI lần dò (`ticks` — giá, bias, bước BUY/SELL, kết quả), các lần đổi bước ("bước trước → bước sau",

@@ -462,6 +462,7 @@
     .w-arrow { color: #d1d5db; font-size: 11px; }
     .w-tag { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 10px; text-transform: uppercase; letter-spacing: .3px; }
     .w-tag.bias-ok { background: #dcfce7; color: #15803d; }
+    .w-tag.bias-neutral { background: #fef3c7; color: #b45309; }
     .w-tag.bias-no { background: #fee2e2; color: #b91c1c; }
     .w-note { color: var(--text); margin-bottom: 6px; }
     .w-facts { list-style: none; font-size: 12px; color: var(--muted); line-height: 1.7; }
@@ -1263,7 +1264,7 @@ async function toggleScheduler() {
 // ── Theo dõi SetupWatcher: chuỗi sweep → BOS/CHoCH → retest của từng symbol ──
 // Đọc GET /api/setup-watcher. Nút trên header tóm tắt bước xa nhất đang có; modal hiện
 // chi tiết từng hướng BUY/SELL. Watcher dò cơ học mỗi vài phút, KHÔNG gọi AI — chỉ khi
-// một hướng tới RETEST (và trùng bias) mới kích hoạt phân tích Claude.
+// một hướng tới RETEST (và không ngược bias khung lớn) mới kích hoạt phân tích Claude.
 
 const W_STEPS = [
   { stage: 'SWEPT', label: '① Quét thanh khoản' },
@@ -1309,11 +1310,23 @@ function wFacts(s) {
   return facts.length ? '<ul class="w-facts">' + facts.map(f => `<li>${f}</li>`).join('') + '</ul>' : '';
 }
 
-function wDirBlock(s) {
+// Quan hệ hướng ↔ bias khung lớn. Chỉ 'no' (ngược rõ ràng) mới chặn gọi AI; 'neutral' vẫn cho qua.
+// Suy từ bias thay vì bias_ok để bản ghi trước khi đổi luật (bias_ok=false khi NEUTRAL) vẫn hiện đúng.
+const BIAS_TAG = {
+  ok:      ['bias-ok', 'trùng bias'],
+  neutral: ['bias-neutral', 'bias trung tính'],
+  no:      ['bias-no', 'ngược bias'],
+};
+function biasRel(direction, bias) {
+  if (bias === (direction === 'BUY' ? 'BULLISH' : 'BEARISH')) return 'ok';
+  if (bias === (direction === 'BUY' ? 'BEARISH' : 'BULLISH')) return 'no';
+  return 'neutral';
+}
+
+function wDirBlock(s, bias) {
   const buy = s.direction === 'BUY';
-  const biasTag = s.biasOk
-    ? '<span class="w-tag bias-ok">trùng bias</span>'
-    : '<span class="w-tag bias-no">ngược / chưa rõ bias</span>';
+  const [biasCls, biasLabel] = BIAS_TAG[biasRel(s.direction, bias)];
+  const biasTag = `<span class="w-tag ${biasCls}">${biasLabel}</span>`;
   return `<div class="w-dir">
     <div class="w-dir-top">
       <span class="w-dir-name ${buy ? 'buy' : 'sell'}">${buy ? '🟢 BUY' : '🔴 SELL'}</span>
@@ -1433,7 +1446,7 @@ function renderWatcher(st) {
         <span>Bias ${esc(snap.bias_timeframe || st.bias_timeframe)}: <b style="font-size:13px">${esc(snap.bias || '—')}</b></span>
         <span class="w-upd">cập nhật ${esc(vnTime(snap.at))}</span>
       </div>
-      ${setups.map(wDirBlock).join('')}
+      ${setups.map(s => wDirBlock(s, snap.bias)).join('')}
     </div>`);
   }
 
@@ -1508,7 +1521,7 @@ function wTickRow(t, evs) {
     ? ' → ' + (t.analysis_action ? '<b>' + esc(t.analysis_action) + '</b>' : 'đang chạy…') : '';
   const idle = t.outcome === 'IDLE' && !evs.length;
   const notes = Object.entries(t.setups || {})
-    .map(([dir, x]) => `<div><b>${esc(dir)}</b>: ${esc(x.note || '—')}${x.bias_ok ? '' : ' <i>(ngược / chưa rõ bias)</i>'}</div>`)
+    .map(([dir, x]) => `<div><b>${esc(dir)}</b>: ${esc(x.note || '—')}${biasRel(dir, t.bias) === 'ok' ? '' : ' <i>(' + BIAS_TAG[biasRel(dir, t.bias)][1] + ')</i>'}</div>`)
     .join('');
   return `<div class="w-tick o-${esc(t.outcome)}${idle ? ' idle' : ''}${evs.length ? ' has-ev' : ''}">
     <div class="w-tick-top">
