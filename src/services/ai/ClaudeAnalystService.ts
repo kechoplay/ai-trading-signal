@@ -286,7 +286,7 @@ export class ClaudeAnalystService {
     }
 
     const section    = this.extractSection(text, action);
-    const entry      = extractEntryPrice(section);
+    const entry      = extractEntryPrice(section, action);
     const stopLoss   = extractPriceFromLine(section, 'sl');
     const takeProfit = extractPriceFromLine(section, 'tp1');
     const riskReward = this.extractRRFromLine(section, 'tp1') ?? this.extractRR(section);
@@ -745,7 +745,7 @@ Viết phần này theo kiểu KỊCH BẢN HÀNH ĐỘNG, dễ đọc: "giá v�
 - **Chế độ vào lệnh: LIVE CONFIRM / LIMIT-CHỜ-POI / BREAKOUT CONTINUATION** — nếu LIMIT ghi rõ "LỆNH CHỜ, kích hoạt khi giá chạm [vùng]"; nếu BREAKOUT ghi rõ "retest mép [mức] vừa bị BOS phá"
 - Nhãn dòng H4: THUẬN dòng / NGƯỢC dòng (giảm size nếu ngược; chế độ C chỉ áp dụng khi THUẬN dòng)
 - Cấu trúc lệnh: **1 PHẦN (chỉ SCALP)** / **2 PHẦN (SCALP + POSITION)** — tùy chọn theo độ mạnh setup (chế độ BREAKOUT CONTINUATION luôn bắt buộc 1 PHẦN)
-- Entry zone: [giá] (chung cho cả 2 phần nếu chia) — nếu LIMIT/BREAKOUT: cách giá hiện tại [X] USD (= [Y]× ATR H1, phải ≤ ngưỡng cho phép: 1× mặc định / 1.5× nếu STRONG_TREND thuận ADX)
+- Entry zone: [vùng POI thấp – cao] (mốc [giá khớp]) (chung cho cả 2 phần nếu chia) — "mốc" BẮT BUỘC, là giá đặt lệnh duy nhất mà Gate 1 + RR được đo tại đó: LIMIT = giữa POI, LIVE CONFIRM = giá hiện tại hoặc mép gần, BREAKOUT = mức retest. Nếu LIMIT/BREAKOUT: mốc cách giá hiện tại [X] USD (= [Y]× ATR H1, phải ≤ ngưỡng cho phép: 1× mặc định / 1.5× nếu STRONG_TREND thuận ADX)
 - Điều kiện kích hoạt (đã thỏa — HARD GATE 2): [chế độ A: POI nào + confirmation M5 nào | chế độ B: POI nào + vì sao đã chín để đặt chờ | chế độ C: BOS thật ở đâu + mép breaker nào đang retest]
 - Vị trí **trong dealing range** tại entry dự kiến: [premium/discount/EQ, X% leg] (giá hiện tại [Y]% leg) — dealing range dùng: [low–high, size] — vs ngưỡng regime [75/25 | 60/40 | 55/45] — HARD GATE 1; Cảnh báo A nếu EQ mỏng
 - Regime H1: ADX [X] → [STRONG_TREND / WEAK_TREND / RANGE / KHÔNG XÁC ĐỊNH], lệnh thuận/ngược hướng ADX
@@ -978,7 +978,7 @@ Khởi điểm mọi lệnh đã qua 4 cổng = **Medium**. Các CẢNH BÁO h�
 #### [LONG / SHORT]
 - Chế độ vào lệnh: LIVE CONFIRM / LIMIT-CHỜ-POI
 - Nhãn context: THUẬN/NGƯỢC dòng ${tfContext} | THUẬN/NGƯỢC hướng BTC (giảm size nếu ngược)
-- Entry zone: [giá] (cách giá hiện tại [X]% = [Y]× ATR ${tfPoi}) — nếu LIMIT: ghi rõ "lệnh chờ, kích hoạt khi chạm" + ngưỡng khoảng cách đã dùng (1× / 1.5×)
+- Entry zone: [vùng POI thấp – cao] (mốc [giá khớp]) (mốc cách giá hiện tại [X]% = [Y]× ATR ${tfPoi}) — "mốc" BẮT BUỘC, là giá đặt lệnh duy nhất mà Cổng 1 + RR được đo tại đó: LIMIT = giữa POI, LIVE CONFIRM = giá hiện tại hoặc mép gần. Nếu LIMIT: ghi rõ "lệnh chờ, kích hoạt khi chạm" + ngưỡng khoảng cách đã dùng (1× / 1.5×)
 - Điều kiện kích hoạt: [POI nào (${tfPoi} hay vùng retest chuỗi chuẩn ${tfEntry}) + sweep gì + confirmation ${tfEntry} nào (LIVE) / điều kiện đặt-trước (LIMIT)]
 - Vị trí trong dealing range ${tfBias}: tại entry [X]% leg (giá hiện tại [Y]%) — leg dùng [low–high] — ngưỡng regime [75/25 | 60/40 | 55/45] → Cổng 1 PASS
 - Draw on Liquidity: [lên/xuống] — xác nhận không ngược (hoặc đã hạ bậc)
@@ -1630,14 +1630,28 @@ function extractPriceFromLine(text: string, keyword: string): number | null {
   return null;
 }
 
+/** "4389.50 – 4391.50", "4389.5-4391.5", "4389.5 đến 4391.5" — hai giá của một vùng. */
+const PRICE_RANGE = /(\d{3,}(?:[.,]\d+)?)\s*(?:–|—|-|~|đến|to)\s*(\d{3,}(?:[.,]\d+)?)/i;
+
 /**
- * Entry: ưu tiên "mốc [giá]" — điểm khớp AI chỉ định trong vùng entry.
+ * Entry: ưu tiên "mốc [giá]" — điểm khớp AI chỉ định trong vùng entry (prompt bắt buộc).
  * Lấy số đầu dòng sẽ ra mép vùng (VD "Entry zone: 4389.50 – 4391.50 (mốc 4390.30)"
  * → 4389.50), khiến entry/SL/TP lưu vào DB không khớp với RR do AI tự tính.
+ * Thiếu mốc mà dòng là một vùng → lấy MÉP GẦN (BUY = mép trên, SELL = mép dưới), mức giá
+ * chạm trước; số đầu dòng luôn là mép dưới, tức mép XA nhất với BUY.
  */
-function extractEntryPrice(text: string): number | null {
-  const value  = findLabelValue(text, 'entry');
-  const anchor = value?.match(/mốc\s*:?\s*(\d{3,}(?:[.,]\d+)?)/i);
+function extractEntryPrice(text: string, action: 'BUY' | 'SELL'): number | null {
+  // Bỏ ** quanh số ("**4075.50** – **4079.00**").
+  const value  = findLabelValue(text, 'entry')?.replace(/\*/g, '');
+  // Model đôi khi viết "anchor" thay vì "mốc" (gặp trong DB, 10/2026).
+  const anchor = value?.match(/(?:mốc|anchor)\s*:?\s*(\d{3,}(?:[.,]\d+)?)/i);
   if (anchor) return parseFloat(anchor[1].replace(',', ''));
+
+  const range = value?.match(PRICE_RANGE);
+  if (range) {
+    const a = parseFloat(range[1].replace(',', ''));
+    const b = parseFloat(range[2].replace(',', ''));
+    return action === 'BUY' ? Math.max(a, b) : Math.min(a, b);
+  }
   return extractPriceFromLine(text, 'entry');
 }

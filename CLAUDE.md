@@ -268,6 +268,14 @@ cần ≥2 nến **H4** đã đóng xác nhận (kể cả khi căn cứ là chu
 số nến xác nhận do code đếm: `SweepEvent.holdCloses` (nến đã đóng liên tiếp tính từ nến mới nhất ngược về
 nến từ chối, đóng đúng phía đảo chiều) in trong dòng "Liquidity sweep gần nhất" của mọi khung (cả vàng);
 thêm `CLAUDE_RAW_CANDLES_CRYPTO_H4` (12) nến thô H4 để model đếm khi mức bị quét chỉ là swing khung nhỏ.
+- **Lệnh chờ (LIMIT-CHỜ-POI) giữ entry GIỮA POI — đừng kéo về mép gần khi chưa có số liệu.** Đo 22/10/2026
+  trên 202 lệnh XAU (18/09–22/10, nến M5 thật, lệnh chờ 3h, TP1/SL trong 24h): khớp 67%, 59/67 lệnh không
+  khớp vẫn chạy tới TP1 — nhưng dời entry về phía giá làm tổng R GIẢM (entry hiện tại +10.5R; 75% quãng
+  +4.5R; 50% −8.4R; vào ngay −20.7R) vì RR tụt nhanh hơn winrate tăng. Lợi thế mỏng (+0.08R/lệnh khớp,
+  winrate 38%). Thử mép gần chỉ khi có bộ theo dõi kết quả lệnh thật.
+  Dòng `Entry zone: [thấp – cao] (mốc [giá khớp])` — "mốc" bắt buộc (LIMIT = giữa POI). `extractEntryPrice(section,
+  action)` đọc `mốc` hoặc `anchor` (model hay viết tiếng Anh), thiếu cả hai mà là vùng thì lấy mép gần theo hướng
+  (trước đây lấy số đầu = mép dưới, tức mép XA với BUY).
 - Parser lấy `take_profit`/`risk_reward` từ dòng chứa token `TP1` **đầu tiên** trong block ORDER — dòng `TP chốt non` cố ý không chứa token đó nên không bị bắt nhầm. Đổi nhãn TP trong prompt phải kiểm lại `extractPriceFromLine(section, 'tp1')`.
 
 **Output là TEXT markdown (KHÔNG phải JSON)** — parse bằng regex, không dùng `JSON.parse`:
