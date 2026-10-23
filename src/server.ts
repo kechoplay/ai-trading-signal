@@ -606,8 +606,14 @@ app.all('/mcp', requireBearerAuth({ verifier: mcpOAuth }), async (req: Request, 
 
     if (req.method === 'POST' && !sessionId) {
       // Khởi tạo session mới
+      // sessionId chỉ được sinh khi xử lý request `initialize` (trong handleRequest), không phải
+      // lúc connect() — phải lưu qua onsessioninitialized, nếu không request sau sẽ bị 404.
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
+        onsessioninitialized: (id) => {
+          mcpTransports.set(id, transport);
+          logger.info('MCP session created', { sessionId: id });
+        },
       });
       const mcpServer = createMcpServer();
 
@@ -619,12 +625,6 @@ app.all('/mcp', requireBearerAuth({ verifier: mcpOAuth }), async (req: Request, 
       };
 
       await mcpServer.connect(transport);
-
-      if (transport.sessionId) {
-        mcpTransports.set(transport.sessionId, transport);
-        logger.info('MCP session created', { sessionId: transport.sessionId });
-      }
-
       await transport.handleRequest(req, res, req.body);
       return;
     }
