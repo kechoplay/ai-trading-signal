@@ -710,6 +710,25 @@ function tvSymbol(symbol) {
   return `OANDA:${base}${quote}`;
 }
 
+// EMA 34 / 89 / 200, bật sẵn trên chart.
+// Widget embed công khai BỎ QUA màu theo từng study (`override`) lẫn `studies_overrides`, nên
+// 3 study "Moving Average Exponential" ra cùng một màu. "MA Ribbon" (STD;MA%Ribbon) thì nhận
+// màu qua inputs: mỗi đường 5 input liên tiếp in_{5n}..in_{5n+4} = bật, loại MA, nguồn, độ dài,
+// màu (4 đường, n = 0..3) — đường không dùng thì tắt bằng in_{5n} = false.
+function ribbonLine(n, type, source, length, color) {
+  const i = n * 5;
+  return { ['in_' + i]: true, ['in_' + (i + 1)]: type, ['in_' + (i + 2)]: source,
+           ['in_' + (i + 3)]: length, ['in_' + (i + 4)]: color };
+}
+const EMA_STUDIES = [
+  { id: 'STD;MA%Ribbon', inputs: {
+    ...ribbonLine(0, 'EMA', 'close', 34, '#2962ff'),
+    ...ribbonLine(1, 'EMA', 'close', 89, '#00897b'),
+    ...ribbonLine(2, 'EMA', 'close', 200, '#e91e63'),
+    in_15: false,
+  } },
+];
+
 function loadChart(symbol) {
   activeSymbol = symbol;
   localStorage.setItem('chartSymbol', symbol); // nhớ symbol đang xem
@@ -728,6 +747,7 @@ function loadChart(symbol) {
     allow_symbol_change: true,
     withdateranges: true,
     hide_side_toolbar: false,
+    studies: EMA_STUDIES,
     container_id: 'tv_chart',
   });
   // Widget embed công khai (tv.js) không có activeChart()/onIntervalChanged() — chỉ

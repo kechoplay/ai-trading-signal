@@ -654,6 +654,12 @@ trên từng bản ghi + dải tổng token trong ngày.
 - `renderUsage()` (thanh `#usageRow` dưới header) hiển thị token in/out trong ngày + hạn mức còn lại — đọc `GET /api/usage`. Tô cam khi còn ≤30%, đỏ khi ≤10%.
 - Tự refresh mỗi 60s.
 
+**Chart `/chart` (`public/chart.html`)** là widget nhúng TradingView (`tv.js`), KHÔNG phải Charting Library:
+không vẽ được dữ liệu của hệ thống lên chart, không chạy Pine/script cộng đồng (script SonicR gốc là
+protected, không lấy được). **EMA 34 / 89 / 200 bật sẵn** (thêm 23/10/2026, `EMA_STUDIES`), dựng bằng
+1 study `STD;MA%Ribbon` (đường thứ 4 tắt). Không dùng 3 study `MAExp@tv-basicstudies` vì widget bỏ qua màu theo study (`override`) lẫn `studies_overrides` → mọi EMA cùng
+màu; Ribbon nhận màu qua inputs: đường n (0..3) = `in_{5n}`..`in_{5n+4}` (bật, loại, nguồn, độ dài, màu).
+
 ---
 
 ## TelegramNotifier — Chi tiết quan trọng
