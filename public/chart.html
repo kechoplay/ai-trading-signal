@@ -265,21 +265,45 @@
       padding: 12px 14px;
     }
 
-    /* ── Mobile: xếp chồng, nhịp nhỏ xuống dưới chart ── */
+    .menu-btn, .swing-chevron { display: none; }
+
+    /* ── Mobile: chart chiếm gần hết màn hình ──
+       Header 1 dòng (nút hành động nằm sau ☰), thanh symbol 1 dòng, chart tràn viền,
+       nhịp nhỏ thu thành thanh ở đáy — chạm vào để mở ra. */
     @media (max-width: 820px) {
-      .page-header { padding: 10px 14px; gap: 8px; }
-      .page-title { font-size: 16px; }
-      .page-title span { display: block; margin-left: 0; margin-top: 2px; }
+      .page-header { padding: 6px 10px; gap: 6px; flex-wrap: wrap; }
+      .page-title { font-size: 15px; min-width: 0; }
+      .page-title span { display: inline; margin-left: 6px; font-size: 12px; }
       .nav-btn { padding: 7px 11px; font-size: 12px; }
 
-      .symbols-bar-controls input { width: 120px; }
+      .menu-btn { display: inline-block; padding: 4px 10px; font-size: 16px; line-height: 1.2; }
+      .header-actions { display: none; flex-basis: 100%; padding-bottom: 4px; }
+      .page-header.menu-open .header-actions { display: flex; }
+
+      /* Tiêu đề + ô lọc + "Thêm coin" chỉ hiện khi mở ☰; thanh pill luôn hiện. */
+      .symbols-bar-top { display: none; padding: 8px 10px 4px; }
+      .page-header.menu-open ~ .symbols-bar-wrap .symbols-bar-top { display: flex; }
+      .symbols-bar-controls { flex: 1; }
+      .symbols-bar-controls input { width: auto; flex: 1; min-width: 0; }
+      .symbols-bar { padding: 5px 10px 6px; gap: 6px; }
+      .symbols-bar::-webkit-scrollbar { display: none; }
+      .symbol-pill { padding: 4px 6px 4px 10px; }
+      .symbol-code { font-size: 12px; }
 
       .layout {
         grid-template-columns: 1fr;
-        grid-template-rows: minmax(260px, 1fr) minmax(220px, 40vh);
-        gap: 10px;
-        padding: 10px;
+        grid-template-rows: minmax(0, 1fr) auto;
+        gap: 0;
+        padding: 0;
       }
+      .chart-card { border: none; border-radius: 0; box-shadow: none; }
+
+      .swing-card { border: none; border-top: 1px solid var(--border); border-radius: 0; box-shadow: 0 -2px 6px rgba(0,0,0,.06); }
+      .swing-header { padding: 8px 12px; cursor: pointer; }
+      .swing-chevron { display: inline-block; margin-left: 6px; color: var(--muted); transition: transform .15s; }
+      .swing-card.open .swing-chevron { transform: rotate(90deg); }
+      .swing-body { display: none; flex: none; max-height: 45dvh; }
+      .swing-card.open .swing-body { display: block; }
     }
 
     .empty { text-align: center; padding: 40px 20px; color: var(--muted); font-size: 13px; }
@@ -539,6 +563,7 @@
     📈 Biểu đồ
     <span id="currentSymbol"></span>
   </div>
+  <button class="nav-btn menu-btn" onclick="toggleMenu()" aria-label="Menu" style="margin-left:auto">☰</button>
   <div class="header-actions">
     <button id="schedulerToggleBtn" class="nav-btn" onclick="toggleScheduler()" disabled>⏱ …</button>
     <button id="watcherBtn" class="nav-btn watch-btn" onclick="openWatcher()" title="Theo dõi chuỗi sweep → CHoCH → retest">🎯 Watcher</button>
@@ -614,9 +639,9 @@
     <div id="tv_chart"></div>
   </div>
 
-  <div class="swing-card">
-    <div class="swing-header">
-      <span>🔁 Nhịp nhỏ <span id="swingSymbol" style="font-weight:400;color:var(--muted)"></span></span>
+  <div class="swing-card" id="swingCard">
+    <div class="swing-header" onclick="toggleSwing(event)">
+      <span>🔁 Nhịp nhỏ <span id="swingSymbol" style="font-weight:400;color:var(--muted)"></span><span class="swing-chevron">▸</span></span>
       <div style="display:flex;align-items:center;gap:8px">
         <span id="liveClock" class="live-clock">--:--:--</span>
         <button class="nav-btn" id="swingBtn" onclick="runSwing()" title="Dò lại nhịp nhỏ" style="padding:5px 9px;font-size:12px">🔄</button>
@@ -748,6 +773,8 @@ function loadChart(symbol) {
     withdateranges: true,
     hide_side_toolbar: false,
     studies: EMA_STUDIES,
+    // Thanh chọn khung (nhất là trên mobile) chỉ hiện các khung yêu thích — bỏ 30p, giữ bộ khung hệ thống dùng.
+    favorites: { intervals: ['1', '5', '15', '60', '240', '1D'] },
     container_id: 'tv_chart',
   });
   // Widget embed công khai (tv.js) không có activeChart()/onIntervalChanged() — chỉ
@@ -959,10 +986,21 @@ async function loadSwingPanel() {
   }
 }
 
+// Mobile: ☰ mở/đóng nút hành động + ô lọc symbol; chạm thanh Nhịp nhỏ để mở/thu panel.
+// Trên desktop các class này không có tác dụng (CSS chỉ áp trong media query).
+function toggleMenu() {
+  document.querySelector('.page-header').classList.toggle('menu-open');
+}
+function toggleSwing(ev) {
+  if (ev && ev.target.closest('button')) return; // bấm 🔄 không đóng/mở
+  document.getElementById('swingCard').classList.toggle('open');
+}
+
 async function runSwing() {
   const btn = document.getElementById('swingBtn');
   if (btn.disabled) return;
   if (!activeSymbol) { showToast('Chưa chọn symbol nào', 'error'); return; }
+  document.getElementById('swingCard').classList.add('open'); // mobile: mở panel để thấy kết quả
 
   const original = btn.innerHTML;
   btn.disabled = true;

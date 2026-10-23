@@ -677,6 +677,7 @@ không vẽ được dữ liệu của hệ thống lên chart, không chạy Pi
 protected, không lấy được). **EMA 34 / 89 / 200 bật sẵn** (thêm 23/10/2026, `EMA_STUDIES`), dựng bằng
 1 study `STD;MA%Ribbon` (đường thứ 4 tắt). Không dùng 3 study `MAExp@tv-basicstudies` vì widget bỏ qua màu theo study (`override`) lẫn `studies_overrides` → mọi EMA cùng
 màu; Ribbon nhận màu qua inputs: đường n (0..3) = `in_{5n}`..`in_{5n+4}` (bật, loại, nguồn, độ dài, màu).
+Thanh chọn khung chỉ hiện `favorites.intervals` (1/5/15/60/240/1D — bỏ 30p).
 
 ---
 
