@@ -70,19 +70,51 @@ export function dropClosedMarketBars(
 ): Candle[] {
   const seconds = TF_SECONDS[timeframe];
   if (!seconds) return candles;
-  // Giờ đóng/mở cửa là giờ chẵn → lấy mẫu mỗi giờ là đủ chính xác (khung < 1h lấy 1 mẫu).
-  const stepMs = Math.min(seconds * 1000, HOUR_MS);
   return candles.filter((c) => {
     const open = candleOpenInstant(c.time, timeZone);
-    if (!open) return true;
-    let closed = 0;
-    let total = 0;
-    for (let t = open.getTime(); t < open.getTime() + seconds * 1000; t += stepMs) {
-      total++;
-      if (isGoldMarketClosed(t, s)) closed++;
-    }
-    return closed * 2 <= total;
+    return !open || !isBarMostlyClosed(open.getTime(), seconds, s);
   });
+}
+
+/**
+ * Số nến cần lấy THÊM để sau dropClosedMarketBars vẫn còn `count` nến: đếm số ô nến cuối
+ * tuần nằm xen trong `count` ô giao dịch gần nhất tính từ `now`. Chỉ khác 0 khi cửa sổ
+ * chạm cuối tuần (vd M5 180 nến = 15 giờ → chỉ sáng thứ Hai; H1 214 nến → luôn ≥ 1 tuần
+ * nghỉ = 49 nến). Provider không trả nến cuối tuần thì số dư chỉ là nến cũ hơn, bị cắt
+ * bởi `.slice(-count)` phía gọi. Khung lạ → 0.
+ */
+export function closedMarketPadding(
+  count: number,
+  timeframe: string,
+  now: Date = new Date(),
+  s: SessionConfig = config.dailyPlan.session,
+): number {
+  const seconds = TF_SECONDS[timeframe];
+  if (!seconds || count <= 0) return 0;
+  const tfMs = seconds * 1000;
+  // Ô nến căn theo UTC — chỉ để đếm, lệch biên vài giờ với H4/D không đáng kể.
+  let open = Math.floor(now.getTime() / tfMs) * tfMs;
+  let trading = 0;
+  let pad = 0;
+  while (trading < count) {
+    if (isBarMostlyClosed(open, seconds, s)) pad++;
+    else trading++;
+    open -= tfMs;
+  }
+  return pad;
+}
+
+/** Quá nửa thời gian của nến (mở lúc openMs) rơi vào giờ đóng cửa cuối tuần. */
+function isBarMostlyClosed(openMs: number, seconds: number, s: SessionConfig): boolean {
+  // Giờ đóng/mở cửa là giờ chẵn → lấy mẫu mỗi giờ là đủ chính xác (khung < 1h lấy 1 mẫu).
+  const stepMs = Math.min(seconds * 1000, HOUR_MS);
+  let closed = 0;
+  let total = 0;
+  for (let t = openMs; t < openMs + seconds * 1000; t += stepMs) {
+    total++;
+    if (isGoldMarketClosed(t, s)) closed++;
+  }
+  return closed * 2 > total;
 }
 
 /**

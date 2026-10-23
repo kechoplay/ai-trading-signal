@@ -4,7 +4,9 @@ import { logger } from '../../logger';
 import { AnalysisBusyError, currentRun, runAnalysis } from '../AnalysisRunner';
 import { isCryptoInstrument } from '../ai/ClaudeAnalystService';
 import { analyzeTimeframe, Bias } from '../ai/ict/IctPreprocessor';
+import { closedMarketPadding, dropClosedMarketBars } from '../ai/ict/SessionLevels';
 import { candleOpenInstant, isCandleForming, TF_SECONDS, zonedParts } from '../market/candleTime';
+import { Candle } from '../market/Candle';
 import { MarketDataProvider } from '../market/MarketDataProvider';
 import { makeMarketDataProvider } from '../market/MarketDataProviderFactory';
 import { DetectedSetup, detectSetup } from './SetupDetector';
@@ -242,6 +244,17 @@ export class SetupWatcher {
   }
 
   /**
+   * Nến cho watcher. Vàng: bỏ nến T7/CN đi ngang mà provider vẫn trả (equal highs/lows giả,
+   * ATR bị kéo xuống) — lấy dư đúng số ô cuối tuần trong cửa sổ rồi cắt lại `count` nến, để
+   * sáng thứ Hai vẫn đủ nến dò chuỗi. Crypto 24/7 giữ nguyên.
+   */
+  private async fetchCandles(symbol: string, timeframe: string, count: number): Promise<Candle[]> {
+    if (isCryptoInstrument(symbol)) return this.market.fetchCandles(symbol, timeframe, count);
+    const raw = await this.market.fetchCandles(symbol, timeframe, count + closedMarketPadding(count, timeframe));
+    return dropClosedMarketBars(raw, timeframe).slice(-count);
+  }
+
+  /**
    * Bias khung lớn. Bias chỉ tính trên nến ĐÃ ĐÓNG nên chỉ đổi khi nến bias đang chạy đóng →
    * cache tới đúng lúc đó (H1 = 1 request/giờ/symbol, H4 của crypto = 1/4 giờ). Nến cuối không còn chạy
    * (thị trường nghỉ, timestamp lạ) → cache `biasCacheMin` phút.
@@ -253,7 +266,7 @@ export class SetupWatcher {
     const cached = this.biasCache.get(symbol);
     if (cached && Date.now() < cached.until) return cached.bias;
 
-    const candles = await this.market.fetchCandles(symbol, biasTf, cfg.biasCandles);
+    const candles = await this.fetchCandles(symbol, biasTf, cfg.biasCandles);
     if (candles.length < 10) return null;
     const last = candles[candles.length - 1];
     const forming = isCandleForming(last, biasTf, tz);
@@ -269,7 +282,7 @@ export class SetupWatcher {
   private async checkSymbol(symbol: string, tick: TickLog): Promise<void> {
     const cfg = config.setupWatcher;
     const tz = config.marketHours.timezone;
-    const candles = await this.market.fetchCandles(symbol, cfg.timeframe, cfg.candles);
+    const candles = await this.fetchCandles(symbol, cfg.timeframe, cfg.candles);
     if (candles.length < 30) {
       logger.warn('Setup watcher: quá ít nến để dò chuỗi', { symbol, timeframe: cfg.timeframe, count: candles.length });
       tick.outcome = 'ERROR';

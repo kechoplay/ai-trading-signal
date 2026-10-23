@@ -1,4 +1,6 @@
+import { isCryptoInstrument } from '../ai/ClaudeAnalystService';
 import { AnalysisResult } from '../ai/dto/AnalysisResult';
+import { closedMarketPadding, dropClosedMarketBars } from '../ai/ict/SessionLevels';
 import { makeMarketDataProvider } from '../market/MarketDataProviderFactory';
 import { TelegramNotifier } from '../telegram/TelegramNotifier';
 import {
@@ -53,8 +55,16 @@ export async function runSwingAnalysis(opts: SwingRunOptions = {}): Promise<Swin
   const timeframe = opts.timeframe?.trim() || config.swing.timeframe;
   const limit = opts.limit ?? 15;
 
+  // Vàng: bỏ nến T7/CN đi ngang (pivot/ATR giả, forward-test chạy qua cả cuối tuần) — lấy dư
+  // đúng số ô cuối tuần trong cửa sổ rồi cắt lại `count` nến. Crypto 24/7 giữ nguyên.
   const market = makeMarketDataProvider();
-  const candles = await market.fetchCandles(symbol, timeframe, config.swing.candles);
+  const count = config.swing.candles;
+  const candles = isCryptoInstrument(symbol)
+    ? await market.fetchCandles(symbol, timeframe, count)
+    : dropClosedMarketBars(
+      await market.fetchCandles(symbol, timeframe, count + closedMarketPadding(count, timeframe)),
+      timeframe,
+    ).slice(-count);
   const currentPrice = await market.fetchCurrentPrice(symbol);
 
   const report = analyzeSwings(candles, timeframe, currentPrice, {

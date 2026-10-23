@@ -326,6 +326,19 @@ thêm `CLAUDE_RAW_CANDLES_CRYPTO_H4` (12) nến thô H4 để model đếm khi m
 - **Kill zone tính theo thời điểm phân tích + giờ London/New York thật** (`Intl`, tự xử lý DST).
   Bản cũ cố định 14–17h / 19:30–22h VN (giờ mùa hè) nên từ cuối tháng 10 gắn nhãn sai. Prompt
   vàng giờ bảo model dùng nhãn trong FACTS thay vì tự suy DST từ timestamp.
+- **Nến cuối tuần bị lọc khỏi intraday vàng + SetupWatcher** (thêm 23/10/2026). TwelveData trả nến
+  T7/CN đi ngang cho XAU/USD ở mọi khung (xem Kế hoạch ngày). `SignalOrchestrator.run` và
+  `SetupWatcher.fetchCandles` (cả khung dò lẫn khung bias) lấy `count + closedMarketPadding(count, tf)`
+  nến, `dropClosedMarketBars()` rồi `.slice(-count)` → số nến gửi đi không đổi, chỉ nến cũ hơn (T6)
+  nối tiếp như chart MT4. `closedMarketPadding` đếm số ô cuối tuần nằm xen trong `count` ô giao dịch
+  tính từ bây giờ — chỉ khác 0 khi cửa sổ chạm cuối tuần (M5 180 → chỉ sáng thứ Hai, pad 588; H1 214
+  → luôn 49–98). Lấy dư không tốn credit (TwelveData tính theo request, không theo `outputsize`).
+  Không lấy dư thì sáng thứ Hai M15 240 chỉ còn 44 nến, M5 180 còn 24, watcher M15 200 còn 8.
+  Số liệu thật thứ Hai 19/10/2026 07:00 VN trước khi lọc: 196/240 nến M15 và 156/180 nến M5 là nến
+  cuối tuần → ATR H1 2.91 (thật 14.9), ADX M15 70 STRONG_TREND (thật 18.6 RANGE), hàng chục equal
+  highs/lows giả ở 4164.86/4164.61 và một SELLSIDE sweep giả mà watcher đọc thành chuỗi BUY; bias H1
+  watcher NEUTRAL (thật BULLISH). Giữa tuần (T4 15:00) M5/M15 không đổi, H1 chỉ bỏ equal H/L giả +
+  `atrBaseline`. Crypto (`isCryptoInstrument`) KHÔNG lọc. `SwingRunner` (nhịp nhỏ) lọc theo cùng cách.
 - Những thay đổi này KHÔNG đổi 3 HARD GATE / chế độ A-B-C — chỉ làm dữ liệu đúng hơn. Kỳ vọng
   ít CHoCH hơn (các cú phá không displacement không còn được coi là CHoCH).
 
@@ -370,7 +383,8 @@ thêm `CLAUDE_RAW_CANDLES_CRYPTO_H4` (12) nến thô H4 để model đếm khi m
   dữ liệu đầu tuần). Block "MỨC GIÁ THEO PHIÊN" nối vào user prompt, prompt cấm tự đọc PDH/PDL từ
   nến D; (3) range premium/discount D/H4 dùng `DAILY_PLAN_RANGE_LOOKBACK_*` (120) qua
   `preprocess({ fibLookbackByTf })` — bảng `FIB_LOOKBACK_BY_TF` dùng chung với crypto nên không sửa.
-  **Lưu ý: intraday + SetupWatcher CHƯA lọc nến cuối tuần** — thứ Hai/Ba H1 214 nến vẫn chứa nến đi ngang.
+  Intraday + SetupWatcher cũng lọc từ 23/10/2026 (xem FACTS), nhưng lấy dư theo `closedMarketPadding`
+  thay vì dư cố định như plan.
 - `analysis_type='daily_plan'` → không lẫn vào carry-forward intraday (`loadPendingSetup` lọc
   theo analysis_type); `/api/signals/latest` bỏ qua plan. Telegram: kênh chính nhận
   `formatPlanCard` (bias + 2 kịch bản), comment nhận phân tích đầy đủ.
@@ -491,6 +505,10 @@ Ba điểm phải nhớ trước khi sửa:
   `provisional` đánh dấu trường hợp này. Mọi tín hiệu trước đó đã cố định.
 - **Nến chạm cả SL lẫn TP trong cùng một cây → tính SL** (không có dữ liệu tick). Chọn phía
   bi quan để winrate không bị thổi phồng.
+- **Vàng bỏ nến cuối tuần** (thêm 23/10/2026, như intraday — xem FACTS): `runSwingAnalysis` lấy
+  `SWING_CANDLES + closedMarketPadding`, `dropClosedMarketBars` rồi cắt lại. Sáng thứ Hai 19/10 07:00
+  VN, 276/300 nến M5 là nến cuối tuần → chỉ 2 tín hiệu (1 SELL giả lúc 02:35 VN khi thị trường đóng);
+  sau lọc 14 tín hiệu nối tiếp từ thứ Sáu. Crypto không lọc.
 
 Kết quả **KHÔNG ghi `trading_signals`**: đây là số liệu tính lại được từ nến bất cứ lúc nào,
 lưu vào đó sẽ trộn với tín hiệu AI trên dashboard và làm hỏng carry-forward

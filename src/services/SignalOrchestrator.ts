@@ -1,7 +1,7 @@
 import { ClaudeAnalystService, CryptoExtras, PendingSetup, PreviousPlan, isCryptoInstrument } from './ai/ClaudeAnalystService';
 import { AnalysisResult } from './ai/dto/AnalysisResult';
 import { Candle } from './market/Candle';
-import { dropClosedMarketBars } from './ai/ict/SessionLevels';
+import { closedMarketPadding, dropClosedMarketBars } from './ai/ict/SessionLevels';
 import { makeMarketDataProvider } from './market/MarketDataProviderFactory';
 import { BinanceFuturesService } from './market/BinanceFuturesService';
 import { RateLimitSnapshot, TokenUsage } from './ai/transport/LlmTransport';
@@ -55,10 +55,17 @@ export class SignalOrchestrator {
 
     logger.info('Signal analysis started', { instrument, timeframes: resolvedTimeframes });
 
+    // Vàng: provider trả cả nến T7/CN đi ngang (xem dropClosedMarketBars) → lấy dư đúng số ô
+    // cuối tuần nằm trong cửa sổ, lọc bỏ rồi cắt lại `count` nến. Crypto 24/7 giữ nguyên.
     const candlesByTf: Record<string, Candle[]> = {};
     for (const tf of resolvedTimeframes) {
       const count = candleCounts[tf] ?? candlesCount;
-      candlesByTf[tf] = await this.market.fetchCandles(instrument, tf, count);
+      if (isCrypto) {
+        candlesByTf[tf] = await this.market.fetchCandles(instrument, tf, count);
+        continue;
+      }
+      const raw = await this.market.fetchCandles(instrument, tf, count + closedMarketPadding(count, tf));
+      candlesByTf[tf] = dropClosedMarketBars(raw, tf).slice(-count);
     }
 
     const currentPrice = await this.market.fetchCurrentPrice(instrument);
