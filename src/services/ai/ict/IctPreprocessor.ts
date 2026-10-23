@@ -155,6 +155,13 @@ export interface StructureEvent {
   bodyAtr: number;
   /** FVG/OB do cú phá này tạo ra — vùng chờ retest (null nếu không có). */
   retestZone: RetestZone | null;
+  /**
+   * Volume cú phá: volume lớn nhất trong (nến phá, nến liền trước cùng chiều) chia trung bình
+   * `ict.volumeSmaBars` nến trước cú đẩy. null = khung không có volume (vàng).
+   */
+  breakVolRatio: number | null;
+  /** Volume trung bình các nến SAU cú phá (tối đa `volumeSmaBars` nến), cùng mẫu số. null = chưa có nến nào / không có volume. */
+  pullbackVolRatio: number | null;
 }
 
 /** Cú quét thanh khoản (đã được xác nhận bằng body close quay lại bên trong). */
@@ -174,6 +181,8 @@ export interface SweepEvent {
    * đóng lại bên kia mức (đảo chiều thất bại). Dùng cho luật "≥2 nến xác nhận".
    */
   holdCloses: number;
+  /** Volume lớn nhất trong các nến của cú quét (wick vượt → nến đóng quay lại) / trung bình trước đó. null = không có volume. */
+  volRatio: number | null;
 }
 
 /**
@@ -232,6 +241,17 @@ export interface TimeframeAnalysis {
   sweeps: SweepEvent[];
   /** null = khung không đủ nến để ADX hội tụ (xem MIN_ADX_CANDLES). */
   adx: AdxReading | null;
+  /** Volume tương đối của nến đã đóng gần nhất. null = provider không có volume (vàng). */
+  volume: VolumeReading | null;
+}
+
+export interface VolumeReading {
+  /** Số nến làm mẫu số (trung bình volume liền trước). */
+  bars: number;
+  /** Volume nến đã đóng gần nhất / trung bình `bars` nến trước nó. */
+  lastRatio: number;
+  /** Trung bình volume 3 nến đã đóng gần nhất / trung bình `bars` nến trước 3 nến đó. */
+  recent3Ratio: number;
 }
 
 export interface IctFacts {
@@ -478,6 +498,38 @@ function atrBaseline(candles: Candle[], atrValue: number, bars: number, period =
   return value > 0 ? { value: r2(value), bars: n, ratio: Number((atrValue / value).toFixed(2)) } : null;
 }
 
+// ─── 6a) VOLUME tương đối (chỉ crypto — vàng không có volume) ────────────────
+//   Mọi tỉ lệ đều chia cho trung bình volume các nến đã đóng LIỀN TRƯỚC đoạn được đo,
+//   để chính cú phá/cú quét không tự kéo mẫu số lên.
+
+/** Trung bình volume `bars` nến ngay trước `start`. null = thiếu volume hoặc < 5 nến làm mẫu. */
+function volumeBaseline(candles: Candle[], start: number, bars = config.ict.volumeSmaBars): number | null {
+  const from = Math.max(0, start - bars);
+  const window = candles.slice(from, start);
+  if (window.length < 5 || window.some((c) => c.volume == null)) return null;
+  const avg = window.reduce((s, c) => s + (c.volume as number), 0) / window.length;
+  return avg > 0 ? avg : null;
+}
+
+/** Volume trung bình của candles[from..to] (gồm cả hai đầu) / mẫu số trước `from`. */
+function volumeRatio(candles: Candle[], from: number, to: number, reduce: 'max' | 'avg' = 'avg'): number | null {
+  if (from < 0 || to < from || to >= candles.length) return null;
+  const base = volumeBaseline(candles, from);
+  const span = candles.slice(from, to + 1);
+  if (base == null || span.some((c) => c.volume == null)) return null;
+  const vols = span.map((c) => c.volume as number);
+  const v = reduce === 'max' ? Math.max(...vols) : vols.reduce((a, b) => a + b, 0) / vols.length;
+  return Number((v / base).toFixed(2));
+}
+
+function volumeReading(candles: Candle[]): VolumeReading | null {
+  const n = candles.length;
+  const lastRatio = volumeRatio(candles, n - 1, n - 1);
+  const recent3Ratio = volumeRatio(candles, n - 3, n - 1);
+  if (lastRatio == null || recent3Ratio == null) return null;
+  return { bars: Math.min(config.ict.volumeSmaBars, n - 3), lastRatio, recent3Ratio };
+}
+
 // ─── 6b) ADX / DMI (Wilder) — regime filter cho luật vị trí range ────────────
 //   ADX chỉ nói xu hướng MẠNH hay YẾU. Hướng lấy từ +DI vs −DI.
 //   Dùng để nới/siết ngưỡng "premium sâu / discount sâu" trong prompt: cùng một
@@ -670,6 +722,11 @@ function findSweeps(
     const chk = checkLevel(candles, level, side, from, sweepRejectBars);
     if (chk.status !== 'SWEPT' || chk.eventIndex == null || chk.extreme == null) return;
     if (chk.eventIndex < minIndex) return;
+    // Nến đầu của cú quét: lùi từ nến đóng quay lại qua các nến còn đóng cửa bên ngoài mức
+    // (tối đa sweepRejectBars cây — đúng cửa sổ checkLevel đã dùng).
+    const closeBeyond = (c: Candle): boolean => (side === 'HIGH' ? c.close > level : c.close < level);
+    let start = chk.eventIndex;
+    while (start - 1 >= Math.max(0, chk.eventIndex - sweepRejectBars) && closeBeyond(candles[start - 1])) start--;
     raw.push({
       side: side === 'HIGH' ? 'BUYSIDE' : 'SELLSIDE',
       levelType,
@@ -678,6 +735,7 @@ function findSweeps(
       index: chk.eventIndex,
       time: candles[chk.eventIndex].time,
       holdCloses: holdCloses(candles, level, side, chk.eventIndex),
+      volRatio: volumeRatio(candles, start, chk.eventIndex, 'max'),
     });
   };
 
@@ -756,7 +814,7 @@ function describeBreak(
   atrValue: number,
   fvgs: Fvg[],
   obs: OrderBlock[],
-): Pick<StructureEvent, 'displacement' | 'bodyAtr' | 'retestZone'> {
+): Pick<StructureEvent, 'displacement' | 'bodyAtr' | 'retestZone' | 'breakVolRatio' | 'pullbackVolRatio'> {
   const bullish = direction === 'BULLISH';
   const sameDir = (c: Candle): boolean => (bullish ? c.close > c.open : c.close < c.open);
 
@@ -766,6 +824,16 @@ function describeBreak(
     if (k >= 0 && sameDir(candles[k])) maxBody = Math.max(maxBody, body(candles[k]));
   }
   const bodyAtr = atrValue > 0 ? Number((maxBody / atrValue).toFixed(2)) : 0;
+
+  // Volume: cú đẩy = nến phá (+ nến liền trước nếu cùng chiều); nhịp sau phá đo cùng mẫu số
+  // (trung bình trước cú đẩy) để hai số so được với nhau.
+  const pushStart = i - 1 >= 0 && sameDir(candles[i - 1]) ? i - 1 : i;
+  const breakVolRatio = volumeRatio(candles, pushStart, i, 'max');
+  const base = volumeBaseline(candles, pushStart);
+  const after = candles.slice(i + 1, i + 1 + config.ict.volumeSmaBars);
+  const pullbackVolRatio = base != null && after.length && after.every((c) => c.volume != null)
+    ? Number((after.reduce((s, c) => s + (c.volume as number), 0) / after.length / base).toFixed(2))
+    : null;
 
   // FVG cùng chiều sinh ra quanh cú phá (nến giữa của FVG nằm trong [i-2, i+1]).
   const fvg = fvgs.filter((f) => f.type === direction && f.index >= i - 2 && f.index <= i + 1).pop();
@@ -800,7 +868,7 @@ function describeBreak(
     retestZone = zoneOf('OB', ob);
   }
 
-  return { displacement, bodyAtr, retestZone };
+  return { displacement, bodyAtr, retestZone, breakVolRatio, pullbackVolRatio };
 }
 
 /**
@@ -934,6 +1002,7 @@ export function analyzeTimeframe(
     structureEvents,
     sweeps: findSweeps(closed, swings, liquidity),
     adx: adx(closed),
+    volume: volumeReading(closed),
   };
 }
 

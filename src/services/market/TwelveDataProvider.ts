@@ -49,6 +49,8 @@ export class TwelveDataProvider implements MarketDataProvider {
 
     logger.info(JSON.stringify(data));
 
+    // Không có volume: XAU/USD là giá OTC tổng hợp, crypto exchange=Binance cũng chỉ trả
+    // OHLC — volume crypto lấy từ BinanceKlinesProvider.
     const candles = values.map((row) => new Candle(
       row.datetime ?? '',
       parseFloat(row.open ?? '0'),

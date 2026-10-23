@@ -10,7 +10,7 @@
 
 - **Ngôn ngữ phân tích AI**: Tiếng Việt
 - **Khung thời gian phân tích**: Vàng dùng H4 (context), H1 (bias), M15 (POI), M5 (entry). Crypto dùng bộ khung riêng từ M15: D (context), H4 (bias), H1 (POI), M15 (entry) — cấu hình qua `TRADING_CRYPTO_TIMEFRAMES`, áp dụng khi instrument là crypto và request không truyền timeframes.
-- **Tài sản hỗ trợ**: Vàng (prompt scalp ICT/SMC, từ vựng BUY/SELL) và crypto (prompt riêng, từ vựng LONG/SHORT → map về BUY/SELL). Provider tự động chọn `exchange=Binance` cho cặp crypto.
+- **Tài sản hỗ trợ**: Vàng (prompt scalp ICT/SMC, từ vựng BUY/SELL) và crypto (prompt riêng, từ vựng LONG/SHORT → map về BUY/SELL). Nến + giá crypto lấy từ Binance Futures klines (perpetual USDT-M, có volume); vàng vẫn TwelveData.
 - **Múi giờ hoạt động**: Asia/Ho_Chi_Minh (6:00 – 22:00)
 - **Môi trường**: Node.js + TypeScript, SQLite, chạy trên Windows
 
@@ -60,8 +60,10 @@ D:/ai-trading-signal/
         ├── market/
         │   ├── Candle.ts              ← kiểu dữ liệu nến (OHLCV)
         │   ├── MarketDataProvider.ts  ← interface
-        │   ├── MarketDataProviderFactory.ts  ← chọn provider theo config
-        │   ├── TwelveDataProvider.ts  ← provider mặc định
+        │   ├── MarketDataProviderFactory.ts  ← chọn provider theo config (+ route crypto sang Binance)
+        │   ├── TwelveDataProvider.ts  ← provider mặc định (vàng)
+        │   ├── BinanceKlinesProvider.ts ← nến/giá crypto từ /fapi/v1/klines (có volume) + CryptoRoutingProvider
+        │   ├── BinanceFuturesService.ts ← funding rate + open interest (crypto)
         │   ├── OandaProvider.ts       ← provider thay thế
         │   └── candleTime.ts          ← nhận diện nến ĐANG CHẠY (chưa đóng) + giờ theo múi IANA
         ├── setup/
@@ -339,6 +341,16 @@ thêm `CLAUDE_RAW_CANDLES_CRYPTO_H4` (12) nến thô H4 để model đếm khi m
   highs/lows giả ở 4164.86/4164.61 và một SELLSIDE sweep giả mà watcher đọc thành chuỗi BUY; bias H1
   watcher NEUTRAL (thật BULLISH). Giữa tuần (T4 15:00) M5/M15 không đổi, H1 chỉ bỏ equal H/L giả +
   `atrBaseline`. Crypto (`isCryptoInstrument`) KHÔNG lọc. `SwingRunner` (nhịp nhỏ) lọc theo cùng cách.
+- **Volume tương đối — chỉ crypto** (thêm 23/10/2026). `Candle.volume` (null mặc định). TwelveData
+  KHÔNG trả volume (cả XAU/USD lẫn BTC/USD exchange=Binance — đã gọi thử), nên nến crypto chuyển sang
+  `BinanceKlinesProvider` (volume hợp đồng perpetual, xem Market Data Providers); vàng giữ null nên
+  FACTS/prompt vàng KHÔNG đổi. Binance lỗi → rơi về TwelveData, mất volume, mọi dòng volume tự ẩn. Mọi tỉ lệ "× TB" chia cho trung bình
+  volume `ICT_VOLUME_SMA_BARS` (20) nến đã đóng LIỀN TRƯỚC đoạn đo (để cú phá không tự kéo mẫu số):
+  `TimeframeAnalysis.volume` (nến đóng gần nhất + TB 3 nến), `StructureEvent.breakVolRatio` (max của
+  nến phá + nến liền trước cùng chiều) và `pullbackVolRatio` (TB tối đa 20 nến sau cú phá, cùng mẫu số),
+  `SweepEvent.volRatio` (max các nến của cú quét). Nến thô crypto có thêm cột `volume`. Prompt crypto
+  (intraday + plan) dùng volume CHỈ để chỉnh confidence: cú phá < 1× TB hoặc volume sau cú phá ≥ volume
+  cú phá → hạ 1 bậc; không phải cổng cứng. SUMMARY crypto thêm dòng `Volume:`.
 - Những thay đổi này KHÔNG đổi 3 HARD GATE / chế độ A-B-C — chỉ làm dữ liệu đúng hơn. Kỳ vọng
   ít CHoCH hơn (các cú phá không displacement không còn được coi là CHoCH).
 
@@ -441,11 +453,11 @@ AI đúng lúc scheduler tới mốc thì scheduler bỏ lượt (AnalysisBusyEr
 Request dữ liệu: ~1 request/symbol mỗi 5 phút + 1 request bias/giờ (≈182 request/ngày/symbol
 trong khung 8h–22h) — đây là job nền duy nhất còn gọi provider liên tục (SwingScheduler
 đã bị gỡ 17/09 vì đốt quota), chỉ quét `SETUP_WATCHER_SYMBOLS` chứ không quét cả danh sách theo dõi.
-**Ngân sách TwelveData (gói basic: 800/ngày, 8/phút):** 3 symbol watcher ≈ 546 + scheduler 30p
-(~5 request/lượt × 28) ≈ 140 + daily plan 3 symbol ≈ 68 (XAU/BTC 4×5, ETH 4×7 vì thêm BTC context) →
-~754/ngày, mỗi lượt AI do watcher kích hoạt thêm ~5 → chỉ còn chỗ cho ~9 lượt/ngày. `MAX_PER_DAY=0` (không trần) nên ngày nhiều setup có thể vượt
-800 — khi đó mọi lượt phân tích sau đó trong ngày (kể cả XAU) lỗi dữ liệu. Thêm symbol thứ 4 hoặc hạ `SCHEDULER_INTERVAL_MIN` là vượt — muốn vậy thì tăng
-`SETUP_WATCHER_INTERVAL_MIN` (10 → ~98 request/symbol/ngày). Trần 8/phút được giữ bởi cửa sổ trượt
+**Ngân sách TwelveData (gói basic: 800/ngày, 8/phút):** từ 23/10/2026 crypto lấy nến/giá từ Binance
+(không tốn credit), nên chỉ còn vàng: watcher XAU ≈ 182 + scheduler 30p (~5 request/lượt × 28) ≈ 140 +
+daily plan XAU 4×5 = 20 → ~342/ngày, mỗi lượt AI vàng do watcher kích hoạt thêm ~5. (Trước đó 3 symbol
+≈ 754/ngày, sát trần.) Binance lỗi thì crypto rơi về TwelveData và lại tốn credit như cũ — nếu Binance
+bị chặn lâu dài thì đặt `CRYPTO_CANDLE_SOURCE=provider` và tính lại ngân sách. Trần 8/phút được giữ bởi cửa sổ trượt
 dùng chung trong `TwelveDataProvider` (`TWELVEDATA_MAX_REQUESTS_PER_MIN`): tick :00/:30 của
 scheduler trùng tick watcher thì request thừa CHỜ (≤ ~60s) thay vì ăn lỗi 429.
 
@@ -725,18 +737,31 @@ Thanh chọn khung chỉ hiện `favorites.intervals` (1/5/15/60/240/1D — bỏ
 
 ## Market Data Providers
 
-### TwelveData (default)
+### Binance Futures klines (crypto — thêm 23/10/2026)
+```
+GET https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=15m&limit=240
+GET https://fapi.binance.com/fapi/v1/ticker/price?symbol=BTCUSDT
+```
+`makeMarketDataProvider()` bọc provider chính trong `CryptoRoutingProvider`: symbol crypto
+(`toFuturesSymbol`: BTC/ETH/BNB/SOL/XRP/ADA/DOGE/LTC → `<BASE>USDT`) → `BinanceKlinesProvider`, còn lại →
+TwelveData/OANDA. Áp cho MỌI đường gọi (intraday, daily plan, BTC context, watcher, swing, MCP). Public,
+không key, không tốn credit TwelveData, `limit` tối đa 1500. Lỗi (geo-block/timeout) → log warn rồi
+gọi provider chính (không volume). `CRYPTO_CANDLE_SOURCE=provider` = tắt, dùng TwelveData như cũ.
+- **Có volume** (cột 5 của kline = volume theo coin cơ sở) — lý do chuyển nguồn, xem FACTS "Volume tương đối".
+- **Giá là BTCUSDT perpetual**, lệch vài USD so với BTC/USD spot trên chart TradingView.
+- Timestamp xuất cùng định dạng TwelveData: `"YYYY-MM-DD HH:mm:ss"` giờ treo tường `MARKET_HOURS_TIMEZONE`
+  (nến D/H4 mở lúc 00:00 UTC = 07:00 VN, H4 lệch 03/07/11/15/19/23h VN) → `candleTime`, `SessionLevels`,
+  prompt đọc như cũ. Nến cuối là nến đang chạy, như TwelveData.
+
+### TwelveData (default — vàng)
 ```
 GET https://api.twelvedata.com/time_series
   ?symbol=XAU/USD&interval=5min&outputsize=100&order=ASC&apikey=...
 
-# Cặp crypto tự thêm exchange=Binance (cryptoExchange() trong TwelveDataProvider)
-GET https://api.twelvedata.com/time_series
-  ?symbol=BTC/USD&interval=5min&order=ASC&exchange=Binance&apikey=...
-
 GET https://api.twelvedata.com/price?symbol=XAU/USD&apikey=...
 ```
-Retry: 2 lần, delay 500ms. `exchange` chỉ gửi khi instrument là crypto (vàng KHÔNG kèm exchange).
+Retry: 2 lần, delay 500ms. Crypto chỉ còn tới đây khi Binance lỗi hoặc `CRYPTO_CANDLE_SOURCE=provider` —
+khi đó tự thêm `exchange=Binance` (`cryptoExchange()`), KHÔNG có volume.
 
 **Nhiều API key** (thêm 22/10/2026): `TWELVEDATA_API_KEY=key1,key2` → `config.twelvedata.apiKeys`.
 Luôn dùng key đầu còn dùng được; TwelveData trả `code 429` "for the day" → khoá key tới 00:00 UTC

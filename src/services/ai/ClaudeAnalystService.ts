@@ -836,7 +836,7 @@ Bạn là trader futures/perpetual chuyên nghiệp thị trường crypto với
 
 ## DỮ LIỆU
 Tôi cung cấp dữ liệu ${instrument} (hợp đồng perpetual) trên các khung: ${tfContext} (context), ${tfBias} (bias), ${tfPoi} (POI), ${tfEntry} (entry/confirmation).
-QUAN TRỌNG — code đã TÍNH SẴN "ICT/SMC FACTS" cho mọi khung: bias, ATR, **tỉ lệ biến động ATR(14)/ATR nền**, **ADX/DMI (regime)**, range mở rộng + **DEALING RANGE (leg đang chạy)**, swing highs/lows, FVG, order block, equal highs/lows (liquidity), **chuỗi BOS/CHoCH kèm cờ displacement + vùng retest (FVG/OB do cú phá tạo ra)**, **sự kiện liquidity sweep**. DÙNG TRỰC TIẾP các con số này, KHÔNG tính lại, KHÔNG tự vẽ range — nhiệm vụ của bạn là DIỄN GIẢI và ra quyết định, không phải bấm máy.
+QUAN TRỌNG — code đã TÍNH SẴN "ICT/SMC FACTS" cho mọi khung: bias, ATR, **tỉ lệ biến động ATR(14)/ATR nền**, **volume tương đối (× TB) của nến gần nhất / cú phá / cú quét**, **ADX/DMI (regime)**, range mở rộng + **DEALING RANGE (leg đang chạy)**, swing highs/lows, FVG, order block, equal highs/lows (liquidity), **chuỗi BOS/CHoCH kèm cờ displacement + vùng retest (FVG/OB do cú phá tạo ra)**, **sự kiện liquidity sweep**. DÙNG TRỰC TIẾP các con số này, KHÔNG tính lại, KHÔNG tự vẽ range — nhiệm vụ của bạn là DIỄN GIẢI và ra quyết định, không phải bấm máy.
 Khung ${tfEntry} (entry) kèm nến OHLC thô để đọc confirmation; khung ${tfBias} kèm vài nến thô cuối để đếm nến xác nhận (luật sweep-and-reject bên dưới); các khung còn lại chỉ có facts đã tính sẵn — coi đó là đủ context.
 FACTS và nến thô chỉ gồm nến ĐÃ ĐÓNG; nến chưa đóng ghi riêng ở dòng "Nến ĐANG CHẠY" — không dùng "close" tạm của nó làm body close. Nhãn mức thanh khoản: \`[unswept]\` pool còn nguyên; \`[swept]\` wick vượt rồi body close quay lại (sweep thật); \`[broken]\` phá thật, KHÔNG phải sweep (đọc theo hướng tiếp diễn); \`[breaking]\` chưa kết luận. Sự kiện BOS/CHoCH ghi "YẾU — KHÔNG displacement" thì không phải CHoCH hợp lệ. "Vùng retest" ghi "hỏng" = đã bị body close xuyên mép xa quá ngưỡng chịu lệch, không còn là POI.
 Dòng "Kill zone London/New York" ở đầu FACTS là của vàng — với crypto dùng mục giờ thanh khoản bên dưới.
@@ -865,6 +865,12 @@ Phân tích THUẦN TÚY từ price action + sentiment futures. Bỏ qua mọi b
 - **Liquidation / squeeze**: các cú wick dài đột ngột thường là liquidation cascade quét stop. Đặt SL phải tính tới các vùng này (xem mục SL).
 - **Số tròn tâm lý** (100000, 4000...) là vùng liquidity — đánh dấu nếu giá gần, coi như một pool thanh khoản khi xét Cổng 2.
 - **Regime biến động**: đọc dòng \`Biến động: ATR(14)/ATR nền\` của khung ${tfEntry} trong FACTS — KHÔNG tự ước lượng từ nến. Tỉ lệ **≥ 2×** → thị trường "điên" → **NO TRADE** (fail Cổng 4). **1.5–2×** → hạ 1 bậc confidence. FACTS ghi "KHÔNG XÁC ĐỊNH" → bỏ qua mục này (không fail).
+- **Volume** (volume hợp đồng perpetual Binance — cùng thị trường với funding/OI; code đã quy ra bội số "× TB" = so với trung bình các nến đã đóng liền trước — đọc số trong FACTS, KHÔNG tự cộng từ cột volume nến thô): volume CHỈ điều chỉnh confidence, KHÔNG phải cổng cứng, KHÔNG được dùng để chặn một setup qua đủ 4 cổng.
+  - **Cú phá (BOS/CHoCH)**: "volume cú phá ≥ 1.5× TB" kèm displacement = lực thật → củng cố. Có displacement nhưng volume cú phá **< 1× TB** = phá thiếu người tham gia, dễ fakeout → nếu đó là căn cứ chính của lệnh thì **hạ 1 bậc confidence**.
+  - **Cú quét (sweep)**: "volume cú quét ≥ 1.5× TB" = stop bị lấy thật, sweep chất lượng. Sweep volume thấp (< 1× TB) yếu hơn — chỉ ghi nhận, không tự hạ bậc.
+  - **Nhịp sau cú phá / nhịp hồi về vùng retest**: "các nến sau cú phá" thấp hơn rõ volume cú phá (và ≤ 1× TB) = hồi lành mạnh, phe ngược chưa vào. Volume các nến sau cú phá **≥ volume cú phá** = phe ngược đang hấp thụ → cảnh giác, **hạ 1 bậc confidence** cho lệnh retest theo cú phá đó.
+  - **Volume nến gần nhất** (dòng \`Volume\` khung ${tfEntry}): nến rejection/engulfing tại POI có volume ≥ 1.5× TB = confirmation mạnh hơn; nến confirm volume < 0.7× TB = confirmation mỏng.
+  - Không thấy dòng/cụm "volume" trong FACTS → coi như không có dữ liệu volume, bỏ qua mục này.
 
 ## QUY TRÌNH PHÂN TÍCH (tuần tự, không bỏ bước)
 
@@ -1007,6 +1013,7 @@ Khởi điểm mọi lệnh đã qua 4 cổng = **Medium**. Các CẢNH BÁO h�
 - Funding rate: dương / âm / trung tính + mức độ
 - Open interest: tăng / giảm + đọc gì
 - Biến động: ATR/ATR nền ${tfEntry} = [X]× → Bình thường / Cao / Cực đoan
+- Volume: cú phá [X]× TB / sau cú phá [Y]× TB / nến confirm [Z]× TB → xác nhận / thiếu lực / bị hấp thụ (hoặc "không có dữ liệu")
 - TP1 sau Cổng 3 — RR: [X:1] — **Cổng 4: PASS / FAIL**
 - Trong vùng thanh khoản cao: Có / Không
 - Cảnh báo đang kích hoạt: [liệt kê] → confidence [mức]
@@ -1081,10 +1088,12 @@ Khởi điểm mọi lệnh đã qua 4 cổng = **Medium**. Các CẢNH BÁO h�
         const closedCandles = forming ? candles.slice(0, -1) : candles;
         const slice = closedCandles.slice(-rawCount);
         const purpose = tf === entryTf ? 'đọc confirmation/entry' : 'đọc hình dạng nến';
+        // Cột volume chỉ có khi provider trả volume (crypto).
+        const withVol = slice.every((c) => c.volume != null);
         lines.push(`Nến thô ĐÃ ĐÓNG (${slice.length} nến cuối — ${purpose}):`);
-        lines.push('timestamp,open,high,low,close');
+        lines.push(withVol ? 'timestamp,open,high,low,close,volume' : 'timestamp,open,high,low,close');
         lines.push(...slice.map((c) =>
-          `${toUnixTimestamp(c.time)},${c.open},${c.high},${c.low},${c.close}`,
+          `${toUnixTimestamp(c.time)},${c.open},${c.high},${c.low},${c.close}` + (withVol ? `,${c.volume}` : ''),
         ));
       }
       if (forming) {
@@ -1131,13 +1140,19 @@ function formatTimeframeFacts(a: TimeframeAnalysis): string {
     const zone = z
       ? ` → vùng retest ${z.source} ${z.bottom}–${z.top} [${zoneState}]`
       : ' → không có FVG/OB để retest';
-    return `${s.kind} ${s.direction} phá ${s.level} (${s.time}) — ${disp}${zone}`;
+    // Volume chỉ có với crypto; vàng (null) giữ nguyên dòng cũ.
+    const vol = s.breakVolRatio != null
+      ? ` | volume cú phá ${s.breakVolRatio}× TB`
+        + (s.pullbackVolRatio != null ? `, các nến sau cú phá ${s.pullbackVolRatio}× TB` : '')
+      : '';
+    return `${s.kind} ${s.direction} phá ${s.level} (${s.time}) — ${disp}${vol}${zone}`;
   };
   const fmtSweeps = (list: SweepEvent[]) =>
     list.length
       ? list.map((e) =>
         `${e.side === 'BUYSIDE' ? 'quét ĐỈNH (buyside)' : 'quét ĐÁY (sellside)'} ${e.levelType === 'EQUAL' ? 'equal level' : 'swing'} ${e.level}`
         + ` — râu tới ${e.extreme}, đóng cửa quay lại lúc ${e.time}`
+        + (e.volRatio != null ? `, volume cú quét ${e.volRatio}× TB` : '')
         + (e.holdCloses > 0
           ? `, giữ phía đảo chiều ${e.holdCloses} nến đã đóng liên tiếp tới nay`
           : ', nến đóng gần nhất ĐÃ quay lại bên kia mức (đảo chiều chưa giữ được)')).join(' | ')
@@ -1174,9 +1189,16 @@ function formatTimeframeFacts(a: TimeframeAnalysis): string {
       + (vol.ratio >= 2 ? ' → ⚠️ CỰC ĐOAN (≥2×)' : vol.ratio >= 1.5 ? ' → cao' : ' → bình thường')
     : 'Biến động: ATR(14)/ATR nền — (không đủ nến, coi như KHÔNG XÁC ĐỊNH)';
 
+  // Volume tương đối — chỉ crypto. "TB" = trung bình volume N nến đã đóng liền trước đoạn đo.
+  const vr = a.volume;
+  const volumeLine = vr
+    ? `Volume (× TB ${vr.bars} nến đã đóng liền trước): nến đóng gần nhất ${vr.lastRatio}× | TB 3 nến gần nhất ${vr.recent3Ratio}×`
+    : null;
+
   return [
     `Bias: ${a.bias} | ATR: ${a.atr} | Giá: ${a.lastPrice}`,
     volLine,
+    ...(volumeLine ? [volumeLine] : []),
     adxLine,
     `Cấu trúc BOS/CHoCH (cũ → mới, body close nến đã đóng):`,
     ...structLines,
@@ -1419,6 +1441,7 @@ Kế hoạch được chạy nhiều lần trong ngày (sáng giờ VN, trước
 - **Funding rate / Open interest** (block FUTURES SENTIMENT nếu có): funding dương cao = đám đông long quá đông → rủi ro long squeeze; âm cao = ngược lại. OI tăng mạnh kèm giá đi một chiều = vị thế mới chất đống → dễ liquidation cascade ngược lại. Không có block → không bịa.
 - **BTC context** (block BTC CONTEXT, chỉ khi instrument là altcoin): alt gần như đi theo BTC — kịch bản ngược hướng BTC không được gắn CHÍNH.
 - **Số tròn tâm lý** (100000, 4000…) là pool thanh khoản — đưa vào bản đồ mức giá nếu giá gần.
+- **Volume** (FACTS ghi "× TB" = so với trung bình các nến đã đóng liền trước): BOS/CHoCH có volume cú phá ≥ 1.5× TB = cấu trúc đáng tin hơn; cú phá < 1× TB = dễ fakeout. Volume các nến sau cú phá ≥ volume cú phá = phe ngược đang hấp thụ. Dùng để xếp kịch bản CHÍNH/PHỤ và confidence plan — không phải luật cứng; không có số volume → bỏ qua.
 
 ## QUY TẮC
 1. Dùng TRỰC TIẾP ICT FACTS code đã tính sẵn (swing, range + DEALING RANGE, FVG/OB [fresh/mitigated], thanh khoản [unswept/swept/broken/breaking], BOS/CHoCH kèm displacement, ATR, ADX). KHÔNG tự tính lại.

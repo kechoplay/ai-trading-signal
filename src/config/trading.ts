@@ -84,6 +84,9 @@ export const config = {
     // "ATR nền" = true range trung bình của N nến đã đóng gần nhất; FACTS in tỉ lệ
     // ATR(14) / ATR nền để prompt xét "biến động cực đoan" bằng số thay vì model ước lượng.
     atrBaselineBars: parseInt(process.env.ICT_ATR_BASELINE_BARS ?? '96', 10),
+    // Volume tương đối = volume nến / trung bình N nến đã đóng liền TRƯỚC nó. Chỉ có với
+    // crypto (provider trả volume); vàng không có volume → FACTS không in dòng nào.
+    volumeSmaBars: parseInt(process.env.ICT_VOLUME_SMA_BARS ?? '20', 10),
   },
 
   // SETUP WATCHER — kích hoạt phân tích AI theo SỰ KIỆN thay vì chỉ theo đồng hồ.
@@ -266,6 +269,10 @@ export const config = {
     futuresBaseUrl: process.env.BINANCE_FAPI_BASE_URL ?? 'https://fapi.binance.com',
     // Bật/tắt lấy futures sentiment (funding/OI/BTC context) cho phân tích crypto.
     sentimentEnabled: (process.env.CRYPTO_FUTURES_SENTIMENT ?? 'true').toLowerCase() !== 'false',
+    // Nguồn nến crypto: 'binance' (mặc định — /fapi/v1/klines, có volume, không tốn credit
+    // TwelveData; lỗi thì tự rơi về provider chính) hoặc 'provider' (TwelveData/OANDA như cũ,
+    // không có volume).
+    cryptoCandles: (process.env.CRYPTO_CANDLE_SOURCE ?? 'binance').toLowerCase() === 'provider' ? 'provider' : 'binance',
   },
 
   oanda: {
