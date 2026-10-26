@@ -21,6 +21,8 @@ import { DAILY_PLAN } from './services/SignalOrchestrator';
 import { createMcpServer } from './mcp-server';
 import { McpOAuthProvider, createAuthCode } from './services/auth/McpOAuthProvider';
 import { FailureLimiter, safeEqual } from './services/auth/security';
+import { SignalOutcomeTracker } from './services/outcome/SignalOutcomeTracker';
+import { confidenceBand, groupBy, summarize } from './services/outcome/outcomeStats';
 
 const app = express();
 // Khởi tạo sớm để route /api/scheduler tham chiếu được; chỉ .start() sau khi listen.
@@ -29,6 +31,8 @@ const scheduler = AnalysisScheduler.fromConfig();
 const setupWatcher = SetupWatcher.fromConfig();
 // Kế hoạch ngày (vàng + BTC/ETH) theo mốc giờ (mặc định 7h/11h/15h/19h T2–T6) — xem DailyPlanScheduler.ts.
 const dailyPlanScheduler = DailyPlanScheduler.fromConfig();
+// Chấm kết quả thật của tín hiệu BUY/SELL (khớp entry? TP1 hay SL trước?) — xem SignalOutcomeTracker.ts.
+const outcomeTracker = SignalOutcomeTracker.fromConfig();
 // Sau reverse proxy thì req.ip mới là IP client thật (rate-limit /authorize/submit dựa vào đó).
 if (config.server.trustProxy !== undefined) app.set('trust proxy', config.server.trustProxy);
 const authorizeLimiter = new FailureLimiter(
@@ -549,7 +553,7 @@ app.get('/api/signals/latest', requireApiKey, async (_req, res) => {
       res.status(404).json({ error: 'No signals found' });
       return;
     }
-    res.json(parseSignal(signal));
+    res.json((await attachOutcomes([parseSignal(signal)]))[0]);
   } catch (err: any) {
     logger.error('GET /api/signals/latest failed', { error: err.message });
     res.status(500).json({ error: 'Internal server error' });
@@ -566,9 +570,71 @@ app.get('/api/signals', requireApiKey, async (req, res) => {
       orderBy: { created_at: 'desc' },
       take:    limit,
     });
-    res.json(signals.map(parseSignal));
+    res.json(await attachOutcomes(signals.map(parseSignal)));
   } catch (err: any) {
     logger.error('GET /api/signals failed', { error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * Gắn `outcome` (kết quả thật, null nếu chưa chấm) vào từng tín hiệu. Fail-soft: bảng
+ * signal_outcomes chưa được tạo (chưa `db push`) hoặc lỗi DB thì trả tín hiệu như cũ, để việc
+ * triển khai code trước schema không làm hỏng dashboard.
+ */
+async function attachOutcomes<T extends { id: number }>(signals: T[]): Promise<(T & { outcome: unknown })[]> {
+  if (signals.length === 0) return [];
+  try {
+    const rows = await prisma.signalOutcome.findMany({ where: { signal_id: { in: signals.map((s) => s.id) } } });
+    const byId = new Map(rows.map((r) => [r.signal_id, r]));
+    return signals.map((s) => ({ ...s, outcome: byId.get(s.id) ?? null }));
+  } catch (err: any) {
+    logger.warn('Gắn outcome vào tín hiệu thất bại — trả tín hiệu không kèm outcome', { error: err.message });
+    return signals.map((s) => ({ ...s, outcome: null }));
+  }
+}
+
+// ─── Kết quả thật của tín hiệu ────────────────────────────────────────────────
+
+// Thống kê winrate / tổng R / kỳ vọng mỗi lệnh theo nguồn kích hoạt, symbol, hướng, nhóm confidence.
+// ?days=30 (1–365) ?symbol=XAU/USD. R tính ở TP1/SL gốc: TP1 = +planned_rr, SL = −1, EXPIRED = theo giá chốt.
+app.get('/api/outcomes/stats', requireApiKey, async (req, res) => {
+  try {
+    const days = Math.min(Math.max(parseInt(String(req.query.days ?? '30'), 10) || 30, 1), 365);
+    const symbol = typeof req.query.symbol === 'string' && req.query.symbol ? req.query.symbol : undefined;
+    const since = new Date(Date.now() - days * 86_400_000);
+    const rows = await prisma.signalOutcome.findMany({
+      where: { signal_at: { gte: since }, ...(symbol ? { instrument: symbol } : {}) },
+    });
+    res.json({
+      days, since: since.toISOString(), symbol: symbol ?? null,
+      tracker:       outcomeTracker.status(),
+      overall:       summarize(rows),
+      by_trigger:    groupBy(rows, (r) => r.trigger ?? 'unknown'),
+      by_symbol:     groupBy(rows, (r) => r.instrument),
+      by_direction:  groupBy(rows, (r) => r.direction),
+      by_confidence: groupBy(rows, (r) => confidenceBand(r.confidence)),
+    });
+  } catch (err: any) {
+    logger.error('GET /api/outcomes/stats failed', { error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Danh sách kết quả gần nhất. ?limit=50 (tối đa 200) ?status=SL ?symbol=BTC/USD
+app.get('/api/outcomes', requireApiKey, async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(String(req.query.limit ?? '50'), 10) || 50, 1), 200);
+    const status = typeof req.query.status === 'string' && req.query.status ? req.query.status.toUpperCase() : undefined;
+    const symbol = typeof req.query.symbol === 'string' && req.query.symbol ? req.query.symbol : undefined;
+    const rows = await prisma.signalOutcome.findMany({
+      where: { ...(status ? { status } : {}), ...(symbol ? { instrument: symbol } : {}) },
+      orderBy: { signal_at: 'desc' },
+      take: limit,
+    });
+    res.json(rows);
+  } catch (err: any) {
+    logger.error('GET /api/outcomes failed', { error: err.message });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -705,4 +771,5 @@ app.listen(port, async () => {
 
   setupWatcher.start();
   dailyPlanScheduler.start();
+  outcomeTracker.start();
 });

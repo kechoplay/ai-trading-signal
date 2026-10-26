@@ -108,6 +108,43 @@ model TradingSignal {
   @@map("trading_signals")
 }
 
+// Kết quả thật của một tín hiệu BUY/SELL (1-1 với trading_signals qua signal_id, không khoá ngoại để
+// bảng này thuần cộng thêm). Do SignalOutcomeTracker chấm bằng nến M5 — xem services/outcome/.
+// status: PENDING (chờ giá chạm entry) | OPEN (đã khớp, chưa chạm TP1/SL) — hai trạng thái này còn
+// được chấm lại; TP1 | SL | EXPIRED (quá holdMaxHours) | NO_FILL (quá fillWindow chưa khớp) |
+// NO_DATA (không có nến phủ thời điểm ra tín hiệu) là trạng thái chốt, không chấm lại.
+model SignalOutcome {
+  id          Int       @id @default(autoincrement())
+  signal_id   Int       @unique
+  instrument  String
+  direction   String                  // BUY | SELL
+  trigger     String?                 // sao chép từ tín hiệu để thống kê theo nguồn kích hoạt
+  confidence  Int?
+  signal_at   DateTime                // created_at của tín hiệu
+  entry       Float
+  stop_loss   Float
+  signal_price Float?                 // giá thị trường lúc phân tích — nhận diện lệnh thị trường
+  take_profit Float                   // TP1 — mức Cổng 3 đo RR
+  planned_rr  Float                   // |TP1 − entry| / |entry − SL|
+
+  status      String    @default("PENDING")
+  filled_at   DateTime?
+  exit_at     DateTime?
+  exit_price  Float?
+  result_r    Float?                  // R thực nhận (TP1 = +planned_rr, SL = −1, EXPIRED = theo giá chốt)
+  mfe_r       Float?                  // đi xa nhất theo hướng lệnh, quy ra R (sau khi khớp)
+  mae_r       Float?                  // thụt lùi sâu nhất, quy ra R (≥ 0)
+  missed_tp   Boolean   @default(false) // giá chạm TP1 khi CHƯA khớp entry (lệnh chờ bị bỏ lỡ)
+  checked_at  DateTime?
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
+
+  @@index([status])
+  @@index([instrument, signal_at])
+  @@index([trigger, signal_at])
+  @@map("signal_outcomes")
+}
+
 // Lịch sử SetupWatcher: mỗi bản ghi = một lần một hướng ĐỔI BƯỚC trong chuỗi
 // sweep → BOS/CHoCH → retest (không ghi mỗi tick). Xem SetupWatcher.recordTransitions().
 model SetupWatchEvent {

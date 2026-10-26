@@ -149,6 +149,26 @@ export const config = {
     staleBars: parseInt(process.env.SWING_STALE_BARS ?? '6', 10),
   },
 
+  // THEO DÕI KẾT QUẢ LỆNH — job nền (KHÔNG gọi AI) chấm từng tín hiệu BUY/SELL intraday bằng nến M5
+  // thật: có khớp entry không, chạm TP1 hay SL trước, đi xa nhất bao nhiêu R. Ghi bảng
+  // `signal_outcomes`. Xem services/outcome/. Nến vàng tốn credit TwelveData (1 request/lượt
+  // khi còn lệnh chưa chốt); crypto lấy từ Binance, miễn phí.
+  outcome: {
+    enabled: (process.env.OUTCOME_TRACKER_ENABLED ?? 'true').toLowerCase() !== 'false',
+    intervalMin: parseInt(process.env.OUTCOME_TRACKER_INTERVAL_MIN ?? '15', 10),
+    timeframe: process.env.OUTCOME_TRACKER_TIMEFRAME ?? 'M5',
+    // Lệnh chờ quá ngần này phút mà giá chưa chạm entry → NO_FILL (đo thực nghiệm 22/10 dùng 3h).
+    fillWindowMin: parseInt(process.env.OUTCOME_FILL_WINDOW_MIN ?? '180', 10),
+    // Đã khớp mà quá ngần này giờ vẫn chưa chạm TP1/SL → EXPIRED, chốt theo giá nến cuối.
+    holdMaxHours: parseInt(process.env.OUTCOME_HOLD_MAX_HOURS ?? '24', 10),
+    // |entry − giá lúc phân tích| ≤ N × (khoảng SL) thì coi là lệnh thị trường: khớp ngay lúc ra tín hiệu.
+    marketFillTolR: parseFloat(process.env.OUTCOME_MARKET_FILL_TOL_R ?? '0.1'),
+    // Tín hiệu cũ hơn ngần này ngày không đăng ký chấm (một request nến không phủ tới).
+    backfillDays: parseInt(process.env.OUTCOME_BACKFILL_DAYS ?? '3', 10),
+    // Trần số nến M5 mỗi request (Binance giới hạn 1500).
+    maxCandles: parseInt(process.env.OUTCOME_MAX_CANDLES ?? '1500', 10),
+  },
+
   marketHours: {
     open: parseInt(process.env.MARKET_HOURS_OPEN ?? '6', 10),
     close: parseInt(process.env.MARKET_HOURS_CLOSE ?? '22', 10),

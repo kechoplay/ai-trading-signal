@@ -176,6 +176,41 @@ không có gì đổi (~170 dòng/symbol/ngày): `price`, `bias`, `buy_stage`/`s
 `reason`, `detail` (JSON note từng hướng), `duration_ms`. `created_at` = lúc BẮT ĐẦU dò (ghi tường minh) —
 UI dựa vào đó để lồng các bản ghi `setup_watch_events` vào đúng lần dò sinh ra chúng. Index `(symbol, created_at)`.
 
+**Bảng `signal_outcomes`** (thêm 26/10/2026): kết quả THẬT của tín hiệu BUY/SELL intraday, 1-1 với
+`trading_signals` qua `signal_id` (không khoá ngoại — bảng thuần cộng thêm). `status`: `PENDING` (chờ giá
+chạm entry) / `OPEN` (đã khớp) là trạng thái còn được chấm lại; `TP1` / `SL` / `EXPIRED` / `NO_FILL` /
+`NO_DATA` là trạng thái chốt. Có `filled_at`, `exit_at`, `exit_price`, `result_r`, `mfe_r`/`mae_r`,
+`missed_tp`, và `trigger`/`confidence` sao chép từ tín hiệu để thống kê. **Tạo bảng bằng `npx prisma db push`
+(hoặc migrate) trên server** — DATABASE_URL ở máy dev trỏ thẳng vào DB production, đừng push từ đó.
+
+---
+
+## Theo dõi kết quả lệnh (Outcome tracker)
+
+**File:** `src/services/outcome/` — `OutcomeEvaluator.ts` (hàm thuần chấm 1 lệnh trên dãy nến),
+`outcomeStats.ts` (gộp winrate / R), `SignalOutcomeTracker.ts` (job nền).
+
+Job nền KHÔNG gọi AI, mỗi `OUTCOME_TRACKER_INTERVAL_MIN` (15) phút: (1) đăng ký tín hiệu intraday BUY/SELL
+mới (≤ `OUTCOME_BACKFILL_DAYS` = 3 ngày) vào `signal_outcomes`; (2) với các lệnh PENDING/OPEN lấy nến M5 MỘT
+lần cho mỗi symbol rồi chấm lại từ đầu (không giữ state → restart/lỡ lượt không sao). Đo trên **TP1** — mức
+Cổng 3 đo RR; TP chốt non và TP2/3 không được theo dõi. Vàng tốn ~1 request TwelveData/lượt khi còn lệnh chưa
+chốt (≤ ~96/ngày), crypto lấy Binance (miễn phí). Dùng nến vàng đã `dropClosedMarketBars` như intraday.
+
+Quy ước chấm — cố ý bi quan vì không có dữ liệu tick (đổi phải sửa test + CLAUDE.md này):
+- Khớp khi range nến chứa entry, khớp đúng giá entry, không trượt giá. Lệnh chờ quá `OUTCOME_FILL_WINDOW_MIN`
+  (180) chưa khớp → `NO_FILL`; nếu giá chạy tới TP1 mà chưa chạm entry → `missed_tp = true` (đo "bỏ lỡ lệnh thắng").
+- Nến VỪA khớp chỉ xét SL, không xét TP và không tính MFE (không biết thứ tự trong nến). Nến chạm cả SL lẫn TP1 → SL.
+- Tín hiệu ra giữa cây nến → bỏ cây đó, chấm từ nến mở SAU `created_at`. Lệnh thị trường
+  (`|entry − current_price| ≤ OUTCOME_MARKET_FILL_TOL_R × khoảng SL`, 0.1) coi như khớp ngay lúc ra tín hiệu.
+- Đã khớp quá `OUTCOME_HOLD_MAX_HOURS` (24) mà chưa chạm TP1/SL → `EXPIRED`, R theo giá đóng nến cuối.
+- `result_r`: TP1 = +`planned_rr`, SL = −1. `NO_DATA` = nến lấy về không phủ tới lúc ra tín hiệu (hoặc mức giá sai phía).
+
+`GET /api/outcomes/stats?days=30&symbol=` gộp theo `overall` / `by_trigger` (so Watcher với lịch với bấm tay) /
+`by_symbol` / `by_direction` / `by_confidence` (`<50`, `50-69`, `70+`): số lệnh, tỉ lệ khớp, winrate
+(TP1/(TP1+SL)), tổng R, **kỳ vọng R mỗi lệnh khớp**, `missed_tp`, trung vị MFE/MAE. `GET /api/outcomes` liệt kê
+bản ghi gần nhất. `/api/signals` và `/api/signals/latest` kèm trường `outcome` (null nếu chưa chấm hoặc bảng
+chưa tạo). Chưa chia được theo chế độ vào lệnh A/B/C — mã chế độ chưa được lưu cùng tín hiệu.
+
 ---
 
 ## Cấu hình (.env)
