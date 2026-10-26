@@ -20,6 +20,7 @@ import { DailyPlanScheduler } from './services/DailyPlanScheduler';
 import { DAILY_PLAN } from './services/SignalOrchestrator';
 import { createMcpServer } from './mcp-server';
 import { McpOAuthProvider, createAuthCode } from './services/auth/McpOAuthProvider';
+import { FailureLimiter, safeEqual } from './services/auth/security';
 
 const app = express();
 // Khởi tạo sớm để route /api/scheduler tham chiếu được; chỉ .start() sau khi listen.
@@ -28,6 +29,12 @@ const scheduler = AnalysisScheduler.fromConfig();
 const setupWatcher = SetupWatcher.fromConfig();
 // Kế hoạch ngày (vàng + BTC/ETH) theo mốc giờ (mặc định 7h/11h/15h/19h T2–T6) — xem DailyPlanScheduler.ts.
 const dailyPlanScheduler = DailyPlanScheduler.fromConfig();
+// Sau reverse proxy thì req.ip mới là IP client thật (rate-limit /authorize/submit dựa vào đó).
+if (config.server.trustProxy !== undefined) app.set('trust proxy', config.server.trustProxy);
+const authorizeLimiter = new FailureLimiter(
+  config.server.authorizeMaxFailures,
+  config.server.authorizeWindowMin * 60_000,
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
@@ -46,6 +53,15 @@ app.use(mcpAuthRouter({
 app.post('/authorize/submit', (req: Request, res: Response) => {
   const { client_id, redirect_uri, code_challenge, state, scopes, password } = req.body ?? {};
 
+  const ip = req.ip ?? 'unknown';
+  const waitSec = authorizeLimiter.retryAfterSec(ip);
+  if (waitSec > 0) {
+    logger.warn('/authorize/submit bị chặn — thử sai quá nhiều', { ip, retry_after_sec: waitSec });
+    res.set('Retry-After', String(waitSec));
+    res.status(429).send(`Thử sai quá nhiều lần. Vui lòng thử lại sau ${Math.ceil(waitSec / 60)} phút.`);
+    return;
+  }
+
   if (!client_id || !redirect_uri || !code_challenge) {
     res.status(400).send('Missing required parameters');
     return;
@@ -53,7 +69,8 @@ app.post('/authorize/submit', (req: Request, res: Response) => {
 
   // Validate password when API_SERVER_KEY is set
   const required = config.server.apiKey;
-  if (required && password !== required) {
+  if (required && !safeEqual(password, required)) {
+    authorizeLimiter.recordFailure(ip);
     const back = new URL(`${config.server.domain}/authorize`);
     back.searchParams.set('error', '1');
     back.searchParams.set('client_id',      client_id);
@@ -63,6 +80,7 @@ app.post('/authorize/submit', (req: Request, res: Response) => {
     res.redirect(back.toString());
     return;
   }
+  authorizeLimiter.reset(ip);
 
   const code = createAuthCode(
     client_id,
@@ -86,7 +104,7 @@ function requireApiKey(req: Request, res: Response, next: NextFunction): void {
   const provided =
     req.headers['x-api-key'] ??
     (req.headers['authorization'] ?? '').toString().replace(/^Bearer\s+/i, '');
-  if (provided !== apiKey) {
+  if (!safeEqual(provided, apiKey)) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
   }
@@ -252,7 +270,7 @@ app.post('/api/scheduler/toggle', requireApiKey, async (req, res) => {
 // ─── Token usage / hạn mức ────────────────────────────────────────────────────
 // Gộp 2 nguồn: tổng token trong ngày (cộng dồn từ analysis_logs) + ảnh chụp hạn mức
 // còn lại của lượt gọi gần nhất (header anthropic-ratelimit-*, giữ trong RAM).
-app.get('/api/usage', async (_req, res) => {
+app.get('/api/usage', requireApiKey, async (_req, res) => {
   try {
     const since = startOfTodayVN();
     const agg = await prisma.analysisLog.aggregate({
@@ -520,7 +538,7 @@ app.get('/api/symbols/:symbol/signals', requireApiKey, async (req, res) => {
 
 // ─── Trading signals ──────────────────────────────────────────────────────────
 
-app.get('/api/signals/latest', async (_req, res) => {
+app.get('/api/signals/latest', requireApiKey, async (_req, res) => {
   try {
     // Kế hoạch ngày không phải tín hiệu vào lệnh → không để nó chiếm chỗ "tín hiệu mới nhất".
     const signal = await prisma.tradingSignal.findFirst({
@@ -538,7 +556,7 @@ app.get('/api/signals/latest', async (_req, res) => {
   }
 });
 
-app.get('/api/signals', async (req, res) => {
+app.get('/api/signals', requireApiKey, async (req, res) => {
   try {
     const limit = Math.min(parseInt(String(req.query.limit ?? '20'), 10), 100);
     // ?trigger=event → chỉ tín hiệu do SetupWatcher kích hoạt (scheduler | api | mcp tương tự).

@@ -337,6 +337,13 @@ export const config = {
   server: {
     port: parseInt(process.env.PORT ?? '3000', 10),
     apiKey: process.env.API_SERVER_KEY ?? '',
+    // Số hop reverse proxy tin cậy (hoặc tên như "loopback"); trống = không tin X-Forwarded-For.
+    trustProxy: ((v) => (v === '' ? undefined : /^\d+$/.test(v) ? parseInt(v, 10) : v))(
+      (process.env.TRUST_PROXY ?? '').trim(),
+    ),
+    // Giới hạn thử sai mật khẩu ở /authorize/submit (theo IP).
+    authorizeMaxFailures: parseInt(process.env.AUTHORIZE_MAX_FAILURES ?? '10', 10),
+    authorizeWindowMin:   parseInt(process.env.AUTHORIZE_WINDOW_MIN ?? '15', 10),
     get domain(): string {
       return process.env.APP_DOMAIN?.trim() || `http://localhost:${this.port}`;
     },

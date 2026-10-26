@@ -552,7 +552,7 @@ symbol/khung trong lúc chờ.
 
 Chạy cùng process với scheduler (qua `src/index.ts`), lắng nghe port `PORT` (mặc định 3000).
 
-**Authentication:** Header `x-api-key` hoặc `Authorization: Bearer <key>`. Bỏ qua nếu `API_SERVER_KEY` không set.
+**Authentication:** Header `x-api-key` hoặc `Authorization: Bearer <key>`. Bỏ qua nếu `API_SERVER_KEY` không set. Mọi `/api/*` đều qua `requireApiKey` (kể cả `/api/signals`, `/api/signals/latest`, `/api/usage` — trước 26/10/2026 ba route này public); so key bằng `safeEqual()` (SHA-256 + `timingSafeEqual`, `services/auth/security.ts`). `POST /authorize/submit` (đăng nhập MCP) chặn theo IP sau `AUTHORIZE_MAX_FAILURES` (10) lần sai trong `AUTHORIZE_WINDOW_MIN` (15) phút → 429 (`FailureLimiter`, RAM). Chạy sau reverse proxy phải đặt `TRUST_PROXY` (số hop), nếu không `req.ip` là IP proxy và mọi client bị khoá chung.
 
 ### POST /api/analyze
 
@@ -627,7 +627,7 @@ Trạng thái scheduler: `enabled`, `interval_min`, `window`, `weekdays`, `symbo
 
 ### GET /api/usage
 
-Token đã dùng + hạn mức còn lại. Không yêu cầu API key (dashboard tự gọi mỗi 60s).
+Token đã dùng + hạn mức còn lại. Yêu cầu API key (dashboard tự gọi mỗi 60s, gửi key từ `localStorage`).
 
 ```json
 {
@@ -678,7 +678,7 @@ trên từng bản ghi + dải tổng token trong ngày.
 **File:** `public/index.html` (intraday) — phục vụ static qua Express.
 
 - Nút **⚡ Phân tích XAU** → `POST /api/analyze {}`; nút **₿ Phân tích BTC** → `POST /api/analyze { symbol: "BTC/USD" }`. Hàm chung `runAnalyze(btnId, symbol?)`.
-- API key lưu ở `localStorage`; nếu server trả 401 sẽ prompt nhập key rồi thử lại.
+- API key lưu ở `localStorage`; nếu server trả 401 ở nút phân tích sẽ prompt nhập key rồi thử lại; ở lượt tự refresh (60s) thì hiện nút "🔑 Nhập API key" thay vì prompt liên tục.
 - `renderSignalBanner()` hiển thị badge theo action: BUY/SELL/WATCHLIST (`👁 ĐANG CANH`)/NO_TRADE. Hàng Entry/SL/TP chỉ hiện cho BUY/SELL.
 - `renderConditionalSetups()` hiển thị chi tiết WATCHLIST (POI đang canh) — đọc `conditional_setups` từ `raw_ai_response` (server `parseSignal()` bóc ra).
 - `renderUsage()` (thanh `#usageRow` dưới header) hiển thị token in/out trong ngày + hạn mức còn lại — đọc `GET /api/usage`. Tô cam khi còn ≤30%, đỏ khi ≤10%.

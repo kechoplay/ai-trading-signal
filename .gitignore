@@ -28,3 +28,7 @@
 # OS
 .DS_Store
 Thumbs.db
+
+# DB cũ/lệch đường dẫn và cài đặt Claude Code cục bộ (chứa đường dẫn máy cá nhân)
+/prisma/prisma/
+/.claude/settings.local.json

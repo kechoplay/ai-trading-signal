@@ -784,20 +784,38 @@ function renderUsage(u) {
   row.style.display = 'flex';
 }
 
+// GET kèm x-api-key. Không tự prompt khi 401: trang tự refresh mỗi 60s nên sẽ bật hộp thoại liên tục.
+const authedGet = url => fetch(url, { headers: getApiKey() ? { 'x-api-key': getApiKey() } : {} });
+
 async function loadUsage() {
   try {
-    renderUsage(await fetch('/api/usage').then(r => r.json()));
+    const res = await authedGet('/api/usage');
+    if (!res.ok) throw new Error(String(res.status));
+    renderUsage(await res.json());
   } catch {
     document.getElementById('usageRow').style.display = 'none';
   }
 }
 
+async function enterApiKey() {
+  if (promptApiKey()) loadLatest();
+}
+
 async function loadLatest() {
   try {
-    const [latest, all] = await Promise.all([
-      fetch('/api/signals/latest').then(r => r.json()),
-      fetch('/api/signals?limit=10').then(r => r.json()),
+    const [latestRes, allRes] = await Promise.all([
+      authedGet('/api/signals/latest'),
+      authedGet('/api/signals?limit=10'),
     ]);
+
+    if (latestRes.status === 401 || allRes.status === 401) {
+      document.getElementById('main').innerHTML = `<div class="grid"><div class="card col-full"><div class="empty">Server yêu cầu API key để xem tín hiệu.<br><button class="refresh-btn" onclick="enterApiKey()">🔑 Nhập API key</button></div></div></div>`;
+      document.getElementById('usageRow').style.display = 'none';
+      return;
+    }
+
+    const latest = await latestRes.json();
+    const all = await allRes.json();
 
     if (latest.error) {
       document.getElementById('main').innerHTML = `<div class="grid"><div class="card col-full"><div class="empty">Chưa có tín hiệu nào.<br>Chạy <code>npm run analyze:force</code> để tạo tín hiệu đầu tiên.</div></div></div>`;
