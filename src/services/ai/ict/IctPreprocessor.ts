@@ -83,6 +83,40 @@ export interface ActiveLeg {
   currentPct: number;
 }
 
+/**
+ * HỘP RANGE (sideway) — chuỗi swing gần nhất nằm gọn trong một biên hẹp, chạm cả hai biên
+ * nhiều lần (ngưỡng ở `ict.rangeBox`).
+ *
+ * Lý do tồn tại: ADX < 20 chỉ nói "không có xu hướng mạnh", không nói biên range ở đâu.
+ * Dealing range là nhịp gần nhất (một đoạn bên trong hộp), range mở rộng là 80 nến — không
+ * cái nào cho biết entry đang ở BIÊN hộp (mean-reversion) hay GIỮA hộp (vị trí xấu).
+ */
+export interface RangeBox {
+  top: number;
+  bottom: number;
+  width: number;
+  widthAtr: number;
+  equilibrium: number;
+  /** Thời điểm swing cũ nhất thuộc hộp. */
+  startTime: string;
+  /** Số nến đã đóng từ swing cũ nhất của hộp tới nay. */
+  bars: number;
+  /** Số swing high cách biên trên ≤ `touchTolAtr` × ATR (kể cả swing tạo biên). */
+  topTouches: number;
+  bottomTouches: number;
+  /** Vị trí giá hiện tại trong hộp: 0% = biên dưới, 100% = biên trên (<0 / >100 = đang ngoài hộp). */
+  positionPct: number;
+  /**
+   * INSIDE  : nến đã đóng gần nhất đóng trong hộp.
+   * TESTING : 1..`sweepRejectBars` nến đóng liên tiếp ngoài hộp — chưa biết sweep hay phá thật.
+   * BROKEN  : nhiều hơn số đó → phá thật, hộp hết hiệu lực.
+   */
+  state: 'INSIDE' | 'TESTING' | 'BROKEN';
+  /** Số nến đã đóng liên tiếp (tính từ nến gần nhất) đóng ngoài hộp, và phía nào. */
+  closesOutside: number;
+  outsideSide: 'ABOVE' | 'BELOW' | null;
+}
+
 export interface Fvg {
   type: 'BULLISH' | 'BEARISH';
   top: number;
@@ -228,6 +262,8 @@ export interface TimeframeAnalysis {
   range: RangeFib;
   /** null = chưa đủ swing đối nghịch để xác định nhịp đang chạy. */
   activeLeg: ActiveLeg | null;
+  /** null = không có hộp sideway đủ điều kiện `ict.rangeBox`. */
+  rangeBox: RangeBox | null;
   swingHighs: Swing[];
   swingLows: Swing[];
   fvgs: Fvg[];
@@ -389,6 +425,96 @@ function findActiveLeg(
     equilibrium: r2((low + high) / 2),
     sizeAtr: atrValue > 0 ? Number((size / atrValue).toFixed(2)) : 0,
     currentPct: Number((((last - low) / size) * 100).toFixed(1)),
+  };
+}
+
+// ─── 3c) HỘP RANGE (sideway) ─────────────────────────────────────────────────
+
+/**
+ * Đi ngược từ swing mới nhất, nhận dần các swing chừng nào biên (swing high cao nhất −
+ * swing low thấp nhất) còn ≤ `maxWidthAtr` × ATR. Biên hộp = high/low thật của các nến
+ * từ swing cũ nhất tới swing mới nhất được nhận; nến sau đó chỉ dùng để xét trạng thái
+ * (đóng trong / thử biên / phá). Một cú phá đã thành swing mới ngoài hộp chỉ chạm biên
+ * mới 1 lần → không đủ `minTouches` → không báo hộp (range đã kết thúc).
+ */
+function findRangeBox(
+  closed: Candle[],
+  swings: { highs: Swing[]; lows: Swing[] },
+  atrValue: number,
+  last: number,
+): RangeBox | null {
+  const cfg = config.ict.rangeBox;
+  if (!(atrValue > 0)) return null;
+  const maxWidth = cfg.maxWidthAtr * atrValue;
+
+  const pivots = [
+    ...swings.highs.map((s) => ({ ...s, kind: 'HIGH' as const })),
+    ...swings.lows.map((s) => ({ ...s, kind: 'LOW' as const })),
+  ].sort((a, b) => b.index - a.index);
+
+  let top = -Infinity;
+  let bottom = Infinity;
+  const accepted: typeof pivots = [];
+  for (const p of pivots) {
+    const nextTop = p.kind === 'HIGH' ? Math.max(top, p.price) : top;
+    const nextBottom = p.kind === 'LOW' ? Math.min(bottom, p.price) : bottom;
+    if (Number.isFinite(nextTop) && Number.isFinite(nextBottom) && nextTop - nextBottom > maxWidth) break;
+    top = nextTop;
+    bottom = nextBottom;
+    accepted.push(p);
+  }
+  if (!Number.isFinite(top) || !Number.isFinite(bottom)) return null;
+
+  // Chuỗi dài nhất vừa biên thường kéo theo 1 swing của nhịp trend trước hộp làm lệch biên
+  // (biên đó chỉ chạm 1 lần) → thử từ chuỗi dài nhất ngắn dần, lấy chuỗi đầu tiên đạt điều kiện.
+  const tol = cfg.touchTolAtr * atrValue;
+  const end = accepted[0].index;
+  let box: { start: number; top: number; bottom: number; topTouches: number; bottomTouches: number } | null = null;
+  for (let k = accepted.length; k >= 2 && !box; k--) {
+    const group = accepted.slice(0, k);
+    const start = group[k - 1].index;
+    if (closed.length - start < cfg.minBars) break;
+    const span = closed.slice(start, end + 1);
+    const hi = Math.max(...span.map((c) => c.high));
+    const lo = Math.min(...span.map((c) => c.low));
+    if (hi - lo > maxWidth || hi - lo < cfg.minWidthAtr * atrValue) continue;
+    const topTouches = group.filter((p) => p.kind === 'HIGH' && p.price >= hi - tol).length;
+    const bottomTouches = group.filter((p) => p.kind === 'LOW' && p.price <= lo + tol).length;
+    if (topTouches >= cfg.minTouches && bottomTouches >= cfg.minTouches) {
+      box = { start, top: hi, bottom: lo, topTouches, bottomTouches };
+    }
+  }
+  if (!box) return null;
+  const { start, topTouches, bottomTouches } = box;
+  top = box.top;
+  bottom = box.bottom;
+  const width = top - bottom;
+  const bars = closed.length - start;
+
+  let closesOutside = 0;
+  let outsideSide: 'ABOVE' | 'BELOW' | null = null;
+  for (let i = closed.length - 1; i > end; i--) {
+    const c = closed[i].close;
+    const side = c > top ? 'ABOVE' : c < bottom ? 'BELOW' : null;
+    if (!side || (outsideSide && side !== outsideSide)) break;
+    outsideSide = side;
+    closesOutside++;
+  }
+
+  return {
+    top: r2(top),
+    bottom: r2(bottom),
+    width: r2(width),
+    widthAtr: Number((width / atrValue).toFixed(2)),
+    equilibrium: r2((top + bottom) / 2),
+    startTime: closed[start].time,
+    bars,
+    topTouches,
+    bottomTouches,
+    positionPct: Number((((last - bottom) / width) * 100).toFixed(1)),
+    state: closesOutside === 0 ? 'INSIDE' : closesOutside > config.ict.sweepRejectBars ? 'BROKEN' : 'TESTING',
+    closesOutside,
+    outsideSide,
   };
 }
 
@@ -993,6 +1119,7 @@ export function analyzeTimeframe(
     range: rangeAndFib(candles, fibLookback, last),
     // swings tính trên `closed` là tiền tố của `candles` → index vẫn hợp lệ.
     activeLeg: findActiveLeg(candles, swings, atrValue, last),
+    rangeBox: findRangeBox(closed, swings, atrValue, last),
     swingHighs: withStatus(swings.highs.slice(-5), 'HIGH'),
     swingLows: withStatus(swings.lows.slice(-5), 'LOW'),
     fvgs: fvgs.slice(-6),

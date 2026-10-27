@@ -88,6 +88,16 @@ export const config = {
     // Volume tương đối = volume nến / trung bình N nến đã đóng liền TRƯỚC nó. Chỉ có với
     // crypto (provider trả volume); vàng không có volume → FACTS không in dòng nào.
     volumeSmaBars: parseInt(process.env.ICT_VOLUME_SMA_BARS ?? '20', 10),
+    // HỘP RANGE (sideway): chuỗi swing gần nhất nằm gọn trong một biên rộng ≤ maxWidthAtr× ATR,
+    // kéo dài ≥ minBars nến đã đóng, mỗi biên có ≥ minTouches swing chạm (cách biên ≤ touchTolAtr× ATR).
+    // Biên hẹp hơn minWidthAtr× ATR = nén giá, không phải range đánh được → không báo hộp.
+    rangeBox: {
+      maxWidthAtr: parseFloat(process.env.ICT_RANGE_BOX_MAX_WIDTH_ATR ?? '6'),
+      minWidthAtr: parseFloat(process.env.ICT_RANGE_BOX_MIN_WIDTH_ATR ?? '1.5'),
+      minBars: parseInt(process.env.ICT_RANGE_BOX_MIN_BARS ?? '20', 10),
+      minTouches: parseInt(process.env.ICT_RANGE_BOX_MIN_TOUCHES ?? '2', 10),
+      touchTolAtr: parseFloat(process.env.ICT_RANGE_BOX_TOUCH_TOL_ATR ?? '0.5'),
+    },
   },
 
   // SETUP WATCHER — kích hoạt phân tích AI theo SỰ KIỆN thay vì chỉ theo đồng hồ.

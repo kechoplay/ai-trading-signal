@@ -334,6 +334,22 @@ thêm `CLAUDE_RAW_CANDLES_CRYPTO_H4` (12) nến thô H4 để model đếm khi m
   Dòng `Entry zone: [thấp – cao] (mốc [giá khớp])` — "mốc" bắt buộc (LIMIT = giữa POI). `extractEntryPrice(section,
   action)` đọc `mốc` hoặc `anchor` (model hay viết tiếng Anh), thiếu cả hai mà là vùng thì lấy mép gần theo hướng
   (trước đây lấy số đầu = mép dưới, tức mép XA với BUY).
+- **Sideway: hộp range + mean-reversion + bias NEUTRAL** (thêm 27/10/2026, chỉ prompt vàng intraday). Trước đó RANGE
+  (ADX H1 < 20) trừ 1 bậc confidence MỌI lệnh, kể cả lệnh đánh từ biên về EQ — đúng kiểu lệnh hợp với sideway; cộng
+  với −1 lệnh chờ và −1 vùng giữa → gần như mọi lệnh sideway về Low. Nay:
+  (1) `IctPreprocessor.findRangeBox()` → `TimeframeAnalysis.rangeBox` + dòng FACTS "▶ HỘP RANGE" (mọi khung, mọi
+  prompt; không có hộp → in "—" để model không tự vẽ). Đi ngược từ swing mới nhất, nhận swing tới khi biên >
+  `ICT_RANGE_BOX_MAX_WIDTH_ATR` (6)× ATR, rồi thử từ chuỗi dài nhất ngắn dần (swing của nhịp trend trước hộp làm lệch
+  biên chỉ chạm 1 lần) tới chuỗi đầu tiên có ≥ `MIN_TOUCHES` (2) swing chạm mỗi biên (cách ≤ `TOUCH_TOL_ATR` 0.5× ATR),
+  ≥ `MIN_BARS` (20) nến, rộng ≥ `MIN_WIDTH_ATR` (1.5)× ATR. `state`: INSIDE / TESTING (1..`ICT_SWEEP_REJECT_BARS` nến
+  đóng ngoài) / BROKEN. Đo trên BTC/ETH 23–27/10: hộp H1 có ở ~1/3–1/2 số thời điểm, rộng thường 5–6× ATR — nới/siết
+  bằng `MAX_WIDTH_ATR`. (2) Lệnh **MEAN-REVERSION** (hộp H1 TRONG HỘP + entry ở 25% ngoài cùng đúng phía + căn cứ đảo
+  chiều tại biên + TP1 vào trong hộp, chốt non ở EQ hộp) KHÔNG bị trừ bậc RANGE; tiếp diễn/breakout vẫn −1; entry
+  35–65% hộp −1 ("giữa hộp", soft). Khớp prompt crypto (vốn đã miễn trừ). (3) **H4 NEUTRAL** → nhãn "H4 TRUNG TÍNH":
+  không trừ ngược dòng, không áp luật ≥2 nến H1, nhưng không được chế độ C / chia 2 phần / High. **H1 NEUTRAL** →
+  hướng lệnh phải từ chuỗi chuẩn M15 hoặc biên hộp, "phù hợp bias" đọc là "phù hợp hướng lệnh" + nửa dealing range đúng
+  chiều, không lên High. KHÔNG đổi 3 HARD GATE (Cổng 3 vẫn xếp FVG/OB trong hộp như cũ). Chưa có số liệu theo regime —
+  outcome tracker chưa lưu regime/hộp.
 - `parseConfidence()` (export, dùng chung với outcome rescore): `Confidence: High/Medium/Low` → 85/65/45, chấp
   nhận in đậm/nghiêng (`Confidence: **Low**`, `_High_`). Trước 27/10/2026 regex không cho `*` sau dấu `:` →
   16/35 tín hiệu 23–27/10 lưu `confidence = null` (thực tế đều Low/Medium).

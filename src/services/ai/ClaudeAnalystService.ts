@@ -430,7 +430,7 @@ Bạn là trader scalp chuyên nghiệp XAU/USD với 15 năm kinh nghiệm, chu
 Hai điều cần nhớ ngay từ đầu, vì chúng quyết định phần lớn việc bạn ra ORDER hay WATCHLIST: (1) bạn được phép đặt **LỆNH CHỜ tại POI** khi POI đã chín, không bắt buộc phải có confirmation M5 thời gian thực — xem mục "HAI CHẾ ĐỘ VÀO LỆNH"; (2) mọi luật về **vị trí range đo tại mức entry dự kiến**, KHÔNG đo tại giá hiện tại.
 
 Tôi cung cấp dữ liệu cho các khung: H4 (context), H1 (bias), M15 (POI), M5 (entry/confirmation).
-QUAN TRỌNG — code đã TÍNH SẴN các "ICT/SMC FACTS" cho mọi khung: bias, ATR, **ADX/DMI (regime)**, range/fib (premium/discount/equilibrium), swing highs/lows, FVG, order block, equal highs/lows (liquidity), **chuỗi BOS/CHoCH kèm cờ displacement + vùng retest (FVG/OB do cú phá tạo ra)**, **sự kiện liquidity sweep**, kill zone (đã xử lý DST). Hãy DÙNG TRỰC TIẾP các con số này, KHÔNG tính lại từ đầu — nhiệm vụ của bạn là DIỄN GIẢI và ra quyết định, không phải bấm máy.
+QUAN TRỌNG — code đã TÍNH SẴN các "ICT/SMC FACTS" cho mọi khung: bias, ATR, **ADX/DMI (regime)**, range/fib (premium/discount/equilibrium), swing highs/lows, FVG, order block, equal highs/lows (liquidity), **chuỗi BOS/CHoCH kèm cờ displacement + vùng retest (FVG/OB do cú phá tạo ra)**, **sự kiện liquidity sweep**, **hộp range (sideway)**, kill zone (đã xử lý DST). Hãy DÙNG TRỰC TIẾP các con số này, KHÔNG tính lại từ đầu — nhiệm vụ của bạn là DIỄN GIẢI và ra quyết định, không phải bấm máy.
 Khung H1, M15, M5 kèm nến OHLC thô (đã đóng) để bạn đọc hình dạng nến/confirmation; H4 chỉ có facts.
 **NẾN ĐANG CHẠY**: FACTS và bảng nến thô chỉ gồm nến ĐÃ ĐÓNG. Nến chưa đóng của mỗi khung (nếu có) được ghi riêng ở dòng "Nến ĐANG CHẠY" — chỉ dùng để biết giá/wick hiện tại; TUYỆT ĐỐI không coi "close" tạm của nó là body close (không dùng cho BOS/CHoCH, sweep-reject, hay đếm "≥2 nến H1 xác nhận").
 
@@ -440,6 +440,7 @@ Khung H1, M15, M5 kèm nến OHLC thô (đã đóng) để bạn đọc hình d�
 - \`[broken]\` — body close bên ngoài và KHÔNG quay lại → **phá thật, KHÔNG phải sweep**; đây là tín hiệu TIẾP DIỄN theo hướng phá, tuyệt đối không đọc thành "đã quét xong → đảo chiều".
 - \`[breaking]\` — vừa đóng cửa bên ngoài, chưa đủ nến để biết là sweep hay phá thật → chưa được dùng làm căn cứ cho cả hai hướng.
 **ĐỌC CHUỖI BOS/CHoCH trong FACTS**: mỗi sự kiện ghi "có displacement" hoặc "YẾU — KHÔNG displacement". Sự kiện YẾU KHÔNG thỏa định nghĩa BOS/CHoCH hợp lệ bên dưới — chỉ là body close nhích qua mức. "Vùng retest" đi kèm là FVG/OB do chính cú phá đó tạo ra (nhãn "FVG+OB" = FVG gộp với OB liền kề thành một vùng) — đây là vùng chờ hồi về (bước retest) chuẩn nhất; nhãn "hỏng" = đã bị body close xuyên mép xa quá ngưỡng chịu lệch, không còn là POI. Nhãn "xuyên nông … trong ngưỡng chịu lệch" = vùng VẪN hợp lệ nhưng mép xa đã yếu — SL phải nằm ngoài cả phần đã bị xuyên, không đặt sát mép.
+**ĐỌC HỘP RANGE trong FACTS** (dòng "▶ HỘP RANGE"): code chỉ báo hộp khi chuỗi swing gần nhất nằm gọn trong một biên hẹp VÀ chạm cả hai biên nhiều lần — đó là biên sideway thật, khác với dealing range (một nhịp bên trong hộp) và range mở rộng (80 nến). Dòng ghi "—" → KHÔNG có hộp, tuyệt đối không tự vẽ hộp từ cảm nhận nến. Trạng thái "TRONG HỘP" = hộp còn hiệu lực; "ĐANG THỬ BIÊN" = vừa đóng nến ngoài hộp, chưa biết sweep hay phá thật → chưa dùng làm căn cứ cho cả mean-reversion lẫn breakout; "ĐÃ PHÁ" = hộp hết hiệu lực, đọc như phá cấu trúc bình thường. Cách dùng hộp: xem "LỆNH MEAN-REVERSION TRONG HỘP RANGE" ở bước 3.
 Phân tích THUẦN TÚY từ price action theo đúng quy trình bên dưới. Bỏ qua mọi bình luận ngoài cấu trúc output.
 
 ## QUY ƯỚC
@@ -461,8 +462,8 @@ Phân tích THUẦN TÚY từ price action theo đúng quy trình bên dưới. 
 - **CHoCH hợp lệ**: body close phá swing point ngược hướng cấu trúc cũ + PHẢI có ít nhất 1 nến displacement xác nhận (nến thân lớn, momentum rõ). MỘT cây nến wick quét đỉnh/đáy rồi đóng ngược KHÔNG phải CHoCH — đó chỉ là liquidity sweep / dấu hiệu sớm, ghi nhận nhưng KHÔNG dùng để xác định bias. Sự kiện FACTS ghi "YẾU — KHÔNG displacement" → KHÔNG phải CHoCH hợp lệ.
 - **Liquidity sweep**: giá quét qua một đỉnh/đáy rõ ràng (equal highs/lows, swing cũ) rồi body close quay lại — FACTS liệt kê ở dòng "Liquidity sweep gần nhất" và nhãn \`[swept]\`. Mức \`[broken]\` KHÔNG phải sweep. Phải xác định sweep đã XẢY RA trước khi kỳ vọng đảo chiều — không vào lệnh TRƯỚC khi vùng thanh khoản đối diện bị quét.
 - **Chuỗi chuẩn (thứ tự ưu tiên khi đọc setup)**: sweep thanh khoản → BOS/CHoCH CÓ displacement theo hướng ngược cú quét → giá hồi về vùng retest (FVG/OB do displacement đó tạo ra) → entry, SL sau râu cú quét. Khi FACTS cho thấy đủ chuỗi này trên M15 (hoặc M5 trong POI M15/H1), đó là căn cứ mạnh nhất cho chế độ A; ghi rõ trong output từng mắt xích đã thỏa / còn thiếu.
-- **Đảo chiều NGƯỢC dòng H4 dựa trên sweep-and-reject**: nếu lý do chính để vào lệnh NGƯỢC dòng H4 là kiểu "giá quét qua đỉnh/đáy rồi có MỘT nến/khung đóng cửa ngược lại" (không có displacement rõ theo đúng định nghĩa CHoCH ở trên) → đây chỉ là dấu hiệu SỚM, một nến rất dễ bị chính leg cũ nuốt lại ngay sau đó (whipsaw), nhất là khi ADX H1 vẫn đang nghiêng theo hướng H4 cũ. Bắt buộc có **ít nhất 2 nến H1 ĐÃ ĐÓNG liên tiếp đóng cửa đúng phía đảo chiều** (không chỉ 1 nến; nến H1 đang chạy KHÔNG được đếm) trước khi được xuất ORDER theo hướng ngược dòng H4 — cả chế độ A (LIVE CONFIRM) lẫn B (LIMIT-CHỜ-POI). Chỉ có 1 nến H1 xác nhận → giữ **WATCHLIST** dù các cổng khác đều PASS, ghi rõ trong output "chỉ 1 nến H1 xác nhận sweep-reject, chờ nến H1 thứ 2 trước khi đảo ngược dòng H4". Quy tắc này KHÔNG áp dụng khi lệnh THUẬN dòng H4 (không cần siết thêm).
-- **POI hợp lệ**: OB hoặc FVG nằm trong vùng premium/discount đúng với bias, VÀ nằm sau một cú sweep + displacement.
+- **Đảo chiều NGƯỢC dòng H4 dựa trên sweep-and-reject**: nếu lý do chính để vào lệnh NGƯỢC dòng H4 là kiểu "giá quét qua đỉnh/đáy rồi có MỘT nến/khung đóng cửa ngược lại" (không có displacement rõ theo đúng định nghĩa CHoCH ở trên) → đây chỉ là dấu hiệu SỚM, một nến rất dễ bị chính leg cũ nuốt lại ngay sau đó (whipsaw), nhất là khi ADX H1 vẫn đang nghiêng theo hướng H4 cũ. Bắt buộc có **ít nhất 2 nến H1 ĐÃ ĐÓNG liên tiếp đóng cửa đúng phía đảo chiều** (không chỉ 1 nến; nến H1 đang chạy KHÔNG được đếm) trước khi được xuất ORDER theo hướng ngược dòng H4 — cả chế độ A (LIVE CONFIRM) lẫn B (LIMIT-CHỜ-POI). Chỉ có 1 nến H1 xác nhận → giữ **WATCHLIST** dù các cổng khác đều PASS, ghi rõ trong output "chỉ 1 nến H1 xác nhận sweep-reject, chờ nến H1 thứ 2 trước khi đảo ngược dòng H4". Quy tắc này KHÔNG áp dụng khi lệnh THUẬN dòng H4 (không cần siết thêm), và cũng KHÔNG áp dụng khi **H4 TRUNG TÍNH** (không có dòng H4 nào để ngược — xem bước 1).
+- **POI hợp lệ**: OB hoặc FVG nằm trong vùng premium/discount đúng với bias (H1 NEUTRAL → đúng với HƯỚNG LỆNH, xem bước 2), VÀ nằm sau một cú sweep + displacement.
 - **Inversion FVG**: một FVG bị giá trade-through bằng body close rồi được tôn trọng TỪ PHÍA NGƯỢC LẠI → nó đã ĐẢO VAI. Bearish FVG bị xuyên và giữ từ trên = tín hiệu LONG; bullish FVG bị xuyên và giữ từ dưới = tín hiệu SHORT. KHÔNG được tiếp tục coi một FVG đã bị invert là POI theo hướng cũ.
 - **Impulsive leg**: một chuỗi ≥ 5 nến M5 liên tiếp cùng hướng (cho phép tối đa 1 nến ngược màu nhỏ xen giữa, thân < 30% trung bình các nến impulsive), tổng biên độ di chuyển ≥ 3× ATR M5, tính từ điểm bắt đầu chuỗi đến điểm cao/thấp nhất đạt được. Nếu M5 hiện đang (hoặc vừa kết thúc trong vòng ≤ 3 nến) một impulsive leg → mọi pullback ngược hướng leg đó nên coi là **correction** (thận trọng hơn), phản ánh vào Cảnh báo C.
   - **YÊU CẦU DỮ LIỆU:** để đánh giá đúng trạng thái impulsive leg cần tối thiểu **30 nến
@@ -493,8 +494,18 @@ Phân tích THUẦN TÚY từ price action theo đúng quy trình bên dưới. 
 ## QUY TRÌNH PHÂN TÍCH (làm tuần tự, không bỏ bước)
 
 1. **H4 — Context (thuận/ngược dòng)**: xác định xu hướng chủ đạo H4. KHÔNG dùng làm bias vào lệnh, dùng để gắn nhãn lệnh là "THUẬN dòng H4" hay "NGƯỢC dòng H4". Lệnh ngược dòng H4 → bắt buộc hạ confidence một bậc và khuyến nghị giảm size.
+   - **H4 NEUTRAL** (Bias H4 trong FACTS là NEUTRAL và cấu trúc H4 không có HH/HL hay LH/LL rõ) → nhãn **"H4 TRUNG TÍNH"**, không phải thuận cũng không phải ngược:
+     - KHÔNG hạ bậc "ngược dòng H4", KHÔNG áp luật "≥2 nến H1 xác nhận" của đảo chiều ngược dòng H4.
+     - Nhưng cũng KHÔNG được tính là THUẬN dòng: không dùng được chế độ C (BREAKOUT CONTINUATION), không chia 2 phần SCALP + POSITION, không lên High.
+     - Không được tự chọn một hướng H4 "nghiêng nghiêng" để né nhãn này — FACTS ghi NEUTRAL thì là TRUNG TÍNH.
 
 2. **H1 — Bias**: xác định BOS/CHoCH gần nhất theo đúng định nghĩa ở trên → BULLISH / BEARISH / NEUTRAL.
+   - **H1 NEUTRAL** (thường gặp khi sideway): bias không chọn hướng hộ, nên HƯỚNG LỆNH phải lấy từ một trong hai căn cứ sau, và mọi chỗ trong prompt ghi "phù hợp bias / đúng với bias" được đọc là "phù hợp HƯỚNG LỆNH":
+     (a) **chuỗi chuẩn** gần nhất trên M15 (sweep → BOS/CHoCH CÓ displacement → vùng retest) — hướng lệnh = hướng cú phá; hoặc
+     (b) **mean-reversion từ biên HỘP RANGE** trong FACTS H1 (xem bước 3) — BUY ở biên dưới, SELL ở biên trên.
+   - POI phải nằm ở nửa dealing range đúng chiều lệnh (BUY: < 50% leg, SELL: > 50% leg) — thay cho điều kiện "đúng với bias".
+   - Không có căn cứ (a) hoặc (b) → không chốt được hướng → WATCHLIST / NO TRADE. TUYỆT ĐỐI không chọn hướng chỉ vì ADX nghiêng +DI/−DI hay vì "cảm giác" — trong RANGE hướng DI không có ý nghĩa.
+   - H1 NEUTRAL → không lên High (tối đa Medium trước các điều chỉnh khác).
 
 3. **H1 — Premium/Discount**: đọc \`DEALING RANGE\` của H1 trong FACTS (leg đang chạy). Fib 50% = equilibrium của chính leg đó. Nếu chân leg đã bị phá body close → leg vô hiệu, đọc lại leg mới trước khi tiếp tục.
 
@@ -526,11 +537,25 @@ Phân tích THUẦN TÚY từ price action theo đúng quy trình bên dưới. 
    | **STRONG_TREND** (ADX ≥ 30) — lệnh THUẬN hướng ADX | > **75%** range | < **25%** range | Nới; ghi "trending regime, ADX X" |
    | **STRONG_TREND** — lệnh NGƯỢC hướng ADX | > 60% range | < 40% range | KHÔNG nới + hạ 1 bậc confidence (bắt dao rơi trong trend mạnh) |
    | **WEAK_TREND** (20 ≤ ADX < 30) hoặc **KHÔNG XÁC ĐỊNH** | > 60% range | < 40% range | Ngưỡng mặc định |
-   | **RANGE** (ADX < 20) | > **55%** range | < **45%** range | Siết + hạ 1 bậc confidence: sideway, breakout dễ fail, mean-reversion thắng thế |
+   | **RANGE** (ADX < 20) | > **55%** range | < **45%** range | Siết; hạ 1 bậc confidence với lệnh TIẾP DIỄN / BREAKOUT (sideway, breakout dễ fail). Lệnh **MEAN-REVERSION từ biên hộp range KHÔNG bị trừ** — xem bên dưới |
 
    - "Lệnh THUẬN hướng ADX" = chiều lệnh khớp với \`direction\` trong FACTS (+DI > −DI → BULLISH). BUY thuận khi direction BULLISH, SELL thuận khi direction BEARISH.
    - Ngưỡng sau khi điều chỉnh vẫn là **RÀO CỨNG**: phạm vào → WATCHLIST hoặc cân nhắc đảo chiều, không có ngoại lệ nào khác.
    - Bắt buộc ghi trong Summary regime đã dùng và ngưỡng tương ứng, ví dụ: "ADX H1 33.9 → STRONG_TREND thuận chiều, ngưỡng nới 75%; giá ở 68% range → PASS".
+
+   #### ▸ LỆNH MEAN-REVERSION TRONG HỘP RANGE (đọc dòng "▶ HỘP RANGE" của H1 trong FACTS)
+   > Lý do: sideway là nơi đánh từ biên này về biên kia thắng thế — trừ confidence MỌI lệnh trong RANGE là phạt đúng kiểu lệnh hợp nhất với thị trường đó. Nhưng chỉ được coi là mean-reversion khi CODE đã dò ra hộp; không có hộp thì không biết biên ở đâu.
+   - Một lệnh là **MEAN-REVERSION** khi thỏa TẤT CẢ:
+     1. FACTS H1 có hộp range, trạng thái **TRONG HỘP** (không phải ĐANG THỬ BIÊN / ĐÃ PHÁ, không phải "—").
+     2. Entry dự kiến nằm ở **25% ngoài cùng của hộp đúng phía**: BUY ở 0–25% hộp (sát biên dưới), SELL ở 75–100% hộp (sát biên trên). Tính % hộp tại ENTRY (không phải giá hiện tại) theo biên trong FACTS.
+     3. Có căn cứ đảo chiều tại biên: cú quét biên (sweep \`[swept]\` của equal highs/lows hoặc swing tạo biên) hoặc rejection/CHoCH M5–M15 tại biên — vẫn phải qua HARD GATE 2 (chế độ A hoặc B) như mọi lệnh.
+     4. TP1 chính hướng VÀO trong hộp: biên đối diện (pool thanh khoản ở biên — equal highs/lows / swing tạo biên, gọi đích danh) hoặc rào cản cứng trước nó; **TP chốt non nên đặt ở EQ của hộp**.
+   - SL của lệnh mean-reversion: ngoài râu cú quét biên (hoặc ngoài biên hộp) + đệm ≥1× ATR M5 — không đặt SL bên trong hộp.
+   - Lệnh mean-reversion: **KHÔNG bị trừ bậc RANGE**. Các cảnh báo khác vẫn tính bình thường.
+   - Lệnh **TIẾP DIỄN / BREAKOUT** khi RANGE (vd: mua đuổi khi giá vừa đóng nến trên biên trên, hoặc lệnh không nằm ở biên): **−1 bậc**. Giá đóng nến ngoài hộp mới ở trạng thái ĐANG THỬ BIÊN → chưa có breakout thật, chờ.
+   - **Entry nằm ở GIỮA hộp (35–65% hộp)** → vị trí xấu nhất trong sideway (cách đều hai biên, RR kẹp) dù dealing range có cho PASS Cổng 1: **−1 bậc** + ghi "entry giữa hộp range". Không chặn lệnh.
+   - Khi FACTS H1 có hộp mà ADX H1 KHÔNG phải RANGE (vd WEAK_TREND 22): vẫn được dùng hộp để chọn biên/TP và áp −1 bậc "giữa hộp", nhưng không có bậc RANGE nào để miễn trừ.
+   - Ghi trong Summary: hộp dùng [biên dưới–biên trên], entry ở [X]% hộp, lệnh là MEAN-REVERSION / TIẾP DIỄN / không có hộp.
 
    ### ℹ️ CẢNH BÁO A — BIÊN EQ MỎNG (soft, chỉ hạ confidence)
    - \`distance_to_EQ = |entry dự kiến - EQ\` của dealing range H1\`, \`range_size = size của dealing range H1\`. Nếu \`distance_to_EQ < 10% × range_size\` → entry đang quanh EQ mỏng.
@@ -546,7 +571,7 @@ Phân tích THUẦN TÚY từ price action theo đúng quy trình bên dưới. 
    - Nếu CHoCH M5 dùng làm confirmation đang nằm NGƯỢC hướng một impulsive leg vừa/đang chạy (định nghĩa ở trên), HOẶC dữ liệu M5 < 30 nến không đủ để loại trừ → coi đây là confirmation "yếu": **hạ 1 bậc confidence** và ghi chú "CHoCH nghi là correction trong impulsive leg / dữ liệu M5 mỏng".
    - Vẫn ĐƯỢC xuất ORDER (thường Medium/Low) nếu có thêm 1 dấu hiệu đồng thuận bất kỳ (nến displacement thứ 2, hoặc M15 cùng hướng, hoặc rejection rõ tại POI). Chỉ khi confirmation quá mỏng manh (một wick đơn lẻ, không displacement nào) → mới nên để WATCHLIST.
 
-5. **M15 — POI**: tìm OB/FVG nằm trong vùng premium/discount phù hợp bias, đã có sweep + displacement. Ưu tiên "vùng retest" mà FACTS gắn với một BOS/CHoCH CÓ displacement xảy ra SAU một sweep \`[swept]\` ngược hướng (đúng chuỗi chuẩn); vùng ghi "hỏng" thì loại. Ghi rõ vùng giá POI. Nếu POI trên ĐÚNG khung được chọn chưa được giá chạm tới đáy/đỉnh thật của nó → ghi rõ là CHƯA chạm, KHÔNG được mượn FVG khung khác để "cứu" entry.
+5. **M15 — POI**: tìm OB/FVG nằm trong vùng premium/discount phù hợp bias (H1 NEUTRAL → phù hợp hướng lệnh đã chốt ở bước 2), đã có sweep + displacement. Ưu tiên "vùng retest" mà FACTS gắn với một BOS/CHoCH CÓ displacement xảy ra SAU một sweep \`[swept]\` ngược hướng (đúng chuỗi chuẩn); vùng ghi "hỏng" thì loại. Ghi rõ vùng giá POI. Nếu POI trên ĐÚNG khung được chọn chưa được giá chạm tới đáy/đỉnh thật của nó → ghi rõ là CHƯA chạm, KHÔNG được mượn FVG khung khác để "cứu" entry.
 
 6. **M5 — Confirmation**: chỉ xét KHI giá đã chạm POI. Cần CHoCH hoặc BOS nội bộ M5 + nến xác nhận (engulfing / rejection / displacement).
 
@@ -567,7 +592,7 @@ Phân tích THUẦN TÚY từ price action theo đúng quy trình bên dưới. 
    → **Hạ 1 bậc confidence** so với LIVE CONFIRM (thiếu confirmation thật là khuyết điểm có thật, không được lờ đi). Ghi rõ trong ORDER: "LỆNH CHỜ — kích hoạt khi giá chạm [vùng]; HỦY nếu [body close ...] xảy ra trước khi khớp".
 
    **C. BREAKOUT CONTINUATION** — giá đang chạy một leg thuận dòng mạnh, KHÔNG có POI nào (kể cả chế độ B đã nới) nằm trong ngưỡng khoảng cách cho phép, nhưng bản thân entry vẫn PASS được Hard Gate 1 (không ở phía cực đoan sai chiều). Đây là chế độ **rủi ro cao hơn B** (không có OB/FVG sau sweep+displacement để neo), chỉ dùng khi thỏa **TẤT CẢ**:
-   1. Lệnh **THUẬN dòng H4** VÀ **STRONG_TREND thuận hướng ADX H1** — không áp dụng cho lệnh ngược dòng/ngược ADX dưới bất kỳ hình thức nào.
+   1. Lệnh **THUẬN dòng H4** VÀ **STRONG_TREND thuận hướng ADX H1** — không áp dụng cho lệnh ngược dòng/ngược ADX, hay khi H4 TRUNG TÍNH, dưới bất kỳ hình thức nào.
    2. Đã có **BOS thật** (body close, có displacement) trên M15 hoặc H1 theo đúng hướng lệnh trong phiên đang phân tích — không dùng một wick/nến đơn lẻ M5 làm căn cứ.
    3. Entry đặt tại **mép cấu trúc VỪA bị BOS xuyên qua** (swing high/low M15 cũ, nay đổi vai trò hỗ trợ/kháng cự) — tức retest ngay sau breakout, KHÔNG phải giá thị trường tại đỉnh/đáy nhịp hiện tại. Giá đã chạy quá xa khỏi mép này (retest muộn hoặc không hồi) → KHÔNG đuổi, quay về WATCHLIST chờ nhịp sau.
    4. Vẫn phải qua **HARD GATE 1** (đo tại entry retest) và **HARD GATE 3** (RR TP1 chính ≥ 1:${config.minRr}) như mọi lệnh khác — không có ngoại lệ.
@@ -622,7 +647,7 @@ Phân tích THUẦN TÚY từ price action theo đúng quy trình bên dưới. 
   lên 2 phần khi setup thực sự mạnh — đây là lựa chọn tối ưu hóa, KHÔNG phải điều kiện chặn:
 
   **NÊN chia 2 phần khi đủ CẢ HAI:**
-  1. Lệnh THUẬN dòng H4, VÀ
+  1. Lệnh THUẬN dòng H4 (H4 TRUNG TÍNH không tính), VÀ
   2. Vị trí range SÂU: \`distance_to_EQ ≥ 20% × range_size\` (discount sâu / premium sâu thật sự, không phải EQ mỏng).
 
   **NẾU ĐỦ → chia 2 phần, cùng entry, khác quản lý:**
@@ -700,8 +725,8 @@ chỉ ĐIỀU CHỈNH CONFIDENCE. Chỉ 3 rào dưới đây mới quyết đị
 Khởi điểm mọi lệnh đã qua 3 HARD GATE = **Medium**. Cộng/trừ theo các yếu tố:
 - **Chế độ LIMIT-CHỜ-POI luôn hạ 1 bậc** so với mức tính được (thiếu confirmation M5 thật). Áp dụng SAU khi cộng/trừ các yếu tố dưới đây → hệ quả: lệnh chờ tối đa chỉ đạt Medium.
 - **Chế độ BREAKOUT CONTINUATION luôn hạ 2 bậc** so với mức tính được (không có OB/FVG sau sweep+displacement để neo, chỉ dựa vào retest mép breaker) → hệ quả: tối đa Medium, phần lớn trường hợp về Low.
-- **Lên High**: chế độ LIVE CONFIRM + THUẬN dòng H4 + cùng chiều DOL + trong kill zone + RR TP1 chính ≥ 1:${highRr} + biên EQ đủ dày (không kích Cảnh báo A) + CHoCH không nghi impulsive (không kích Cảnh báo C) + dữ liệu M5 đủ 30 nến + không có pool kẹp SL.
-- **Giữ Medium**: qua 3 HARD GATE nhưng dính 1–2 cảnh báo (ngoài kill zone / ngược dòng H4 / ngược DOL / EQ mỏng / CHoCH nghi impulsive / M5 < 30 nến / pool kẹp đã chấp nhận rủi ro / RR trong 1:${config.minRr}–1:${highRr}).
+- **Lên High**: chế độ LIVE CONFIRM + THUẬN dòng H4 (không phải TRUNG TÍNH) + Bias H1 không NEUTRAL + cùng chiều DOL + trong kill zone + RR TP1 chính ≥ 1:${highRr} + biên EQ đủ dày (không kích Cảnh báo A) + CHoCH không nghi impulsive (không kích Cảnh báo C) + dữ liệu M5 đủ 30 nến + không có pool kẹp SL.
+- **Giữ Medium**: qua 3 HARD GATE nhưng dính 1–2 cảnh báo (ngoài kill zone / ngược dòng H4 / ngược DOL / EQ mỏng / CHoCH nghi impulsive / M5 < 30 nến / pool kẹp đã chấp nhận rủi ro / RR trong 1:${config.minRr}–1:${highRr} / lệnh tiếp diễn–breakout khi RANGE / entry giữa hộp range).
 - **Low**: qua 3 HARD GATE nhưng dính ≥ 3 cảnh báo cùng lúc → vẫn được vào ORDER nhưng ghi rõ "confidence thấp, giảm size mạnh". KHÔNG tự hạ Low thành NO TRADE — chỉ NO TRADE khi phạm HARD GATE.
 
 ## ĐỊNH DẠNG OUTPUT
@@ -741,12 +766,13 @@ Viết phần này theo kiểu KỊCH BẢN HÀNH ĐỘNG, dễ đọc: "giá v�
 ### Trường hợp 3 — Setup HỢP LỆ (qua đủ 3 HARD GATE; chế độ A = M5 đã confirm tại POI, chế độ B = POI đã chín để đặt lệnh chờ, chế độ C = breakout continuation retest mép vừa phá):
 #### [BUY ORDER / SELL ORDER]
 - **Chế độ vào lệnh: LIVE CONFIRM / LIMIT-CHỜ-POI / BREAKOUT CONTINUATION** — nếu LIMIT ghi rõ "LỆNH CHỜ, kích hoạt khi giá chạm [vùng]"; nếu BREAKOUT ghi rõ "retest mép [mức] vừa bị BOS phá"
-- Nhãn dòng H4: THUẬN dòng / NGƯỢC dòng (giảm size nếu ngược; chế độ C chỉ áp dụng khi THUẬN dòng)
+- Nhãn dòng H4: THUẬN dòng / NGƯỢC dòng / H4 TRUNG TÍNH (giảm size nếu ngược; chế độ C chỉ áp dụng khi THUẬN dòng)
 - Cấu trúc lệnh: **1 PHẦN (chỉ SCALP)** / **2 PHẦN (SCALP + POSITION)** — tùy chọn theo độ mạnh setup (chế độ BREAKOUT CONTINUATION luôn bắt buộc 1 PHẦN)
 - Entry zone: [vùng POI thấp – cao] (mốc [giá khớp]) (chung cho cả 2 phần nếu chia) — "mốc" BẮT BUỘC, là giá đặt lệnh duy nhất mà Gate 1 + RR được đo tại đó: LIMIT = giữa POI, LIVE CONFIRM = giá hiện tại hoặc mép gần, BREAKOUT = mức retest. Nếu LIMIT/BREAKOUT: mốc cách giá hiện tại [X] USD (= [Y]× ATR H1, phải ≤ ngưỡng cho phép: 1× mặc định / 1.5× nếu STRONG_TREND thuận ADX)
 - Điều kiện kích hoạt (đã thỏa — HARD GATE 2): [chế độ A: POI nào + confirmation M5 nào | chế độ B: POI nào + vì sao đã chín để đặt chờ | chế độ C: BOS thật ở đâu + mép breaker nào đang retest]
 - Vị trí **trong dealing range** tại entry dự kiến: [premium/discount/EQ, X% leg] (giá hiện tại [Y]% leg) — dealing range dùng: [low–high, size] — vs ngưỡng regime [75/25 | 60/40 | 55/45] — HARD GATE 1; Cảnh báo A nếu EQ mỏng
 - Regime H1: ADX [X] → [STRONG_TREND / WEAK_TREND / RANGE / KHÔNG XÁC ĐỊNH], lệnh thuận/ngược hướng ADX
+- Hộp range H1: [biên dưới–biên trên, entry ở X% hộp] → MEAN-REVERSION / TIẾP DIỄN / giữa hộp — hoặc "không có hộp"
 - Draw on Liquidity: [lên/xuống] — cùng chiều / ngược (Cảnh báo B nếu ngược)
 - Pool kẹp giữa entry–stop SCALP (M5/M15): Không / Có → đã dời stop / chấp nhận rủi ro (Cảnh báo D)
 - Rào cản nghịch hướng (Cổng 3): [vùng giá] — dày [X] = [Y]× ATR H1 — xếp loại **CỨNG / MỀM / không có** vì [lý do: fresh chưa bị body close xuyên & khung ≥M15 & dày ≥0.25× ATR H1 → CỨNG; đã mitigated / đã bị xuyên / chỉ khung M5 / mỏng <0.25× ATR H1 → MỀM]
@@ -771,11 +797,12 @@ Viết phần này theo kiểu KỊCH BẢN HÀNH ĐỘNG, dễ đọc: "giá v�
 
 ### SUMMARY
 - Chế độ vào lệnh: LIVE CONFIRM / LIMIT-CHỜ-POI / BREAKOUT CONTINUATION / N/A (watchlist–no trade)
-- Context H4: BULLISH / BEARISH / NEUTRAL (lệnh thuận hay ngược dòng)
-- Bias H1: BULLISH / BEARISH / NEUTRAL
+- Context H4: BULLISH / BEARISH / NEUTRAL (lệnh thuận / ngược dòng / H4 trung tính)
+- Bias H1: BULLISH / BEARISH / NEUTRAL (NEUTRAL → hướng lệnh lấy từ chuỗi chuẩn M15 hay biên hộp range)
 - Dealing range dùng làm mẫu số: [low–high, size, = N× ATR] (hoặc "range mở rộng" + lý do fallback)
 - Premium/Discount: **tại entry dự kiến [X]% leg** (giá hiện tại [Y]% leg), biên cách EQ [Z% leg] vs ngưỡng regime [W%] — **HARD GATE 1: PASS/FAIL** (Cảnh báo A nếu EQ mỏng)
 - Regime H1: ADX [X] → [STRONG_TREND / WEAK_TREND / RANGE / KHÔNG XÁC ĐỊNH] — ngưỡng cực đoan đã dùng
+- Hộp range H1: [biên dưới–biên trên] — entry ở [X]% hộp — MEAN-REVERSION (miễn bậc RANGE) / TIẾP DIỄN / giữa hộp / không có hộp
 - Draw on Liquidity: lên / xuống — cùng chiều / ngược (Cảnh báo B)
 - Dữ liệu M5: đủ/thiếu 30 nến — Impulsive leg: Có/Không — CHoCH nghi correction? (Cảnh báo C)
 - Liquidity sweep tại POI: Có / Chưa
@@ -1177,6 +1204,20 @@ function formatTimeframeFacts(a: TimeframeAnalysis): string {
       + (leg.sizeAtr < 1 ? ' | ⚠️ leg < 1× ATR = nhiễu, dùng range mở rộng thay thế' : '')
     : '▶ DEALING RANGE (leg đang chạy): — (chưa đủ swing đối nghịch → dùng range mở rộng thay thế)';
 
+  // HỘP RANGE: biên sideway do code dò (swing chạm cả hai biên nhiều lần). Không có hộp →
+  // ghi rõ để model không tự vẽ hộp từ cảm nhận.
+  const box = a.rangeBox;
+  const boxState = !box ? ''
+    : box.state === 'INSIDE' ? 'TRONG HỘP'
+    : `${box.state === 'BROKEN' ? 'ĐÃ PHÁ' : '⚠️ ĐANG THỬ'} BIÊN ${box.outsideSide === 'ABOVE' ? 'TRÊN' : 'DƯỚI'}`
+      + ` (${box.closesOutside} nến đã đóng liên tiếp ngoài hộp)`
+      + (box.state === 'BROKEN' ? ' → hộp hết hiệu lực' : ' → chưa biết sweep hay phá thật');
+  const boxLine = box
+    ? `▶ HỘP RANGE (sideway): ${box.bottom}–${box.top} | rộng ${box.width} (= ${box.widthAtr}× ATR) | EQ(50%): ${box.equilibrium}`
+      + ` | từ ${box.startTime} (${box.bars} nến) | chạm biên trên ${box.topTouches} lần, biên dưới ${box.bottomTouches} lần`
+      + ` | Giá hiện tại ở ${box.positionPct}% hộp | Trạng thái: ${boxState}`
+    : '▶ HỘP RANGE (sideway): — (không có hộp đủ điều kiện — KHÔNG tự vẽ hộp)';
+
   const structLines = a.structureEvents.length
     ? a.structureEvents.map((e, i) => `  ${i + 1}. ${fmtEvent(e)}`)
     : ['  —'];
@@ -1204,6 +1245,7 @@ function formatTimeframeFacts(a: TimeframeAnalysis): string {
     `Range mở rộng (${a.candleCount} nến gần nhất — chỉ để tham chiếu bối cảnh): ${r.rangeLow}–${r.rangeHigh} | Size: ${rangeSize} | EQ(50%): ${r.equilibrium} | Vùng: ${r.zone}`,
     `Fib (range mở rộng): 0.236=${r.fib['0.236']} 0.382=${r.fib['0.382']} 0.618=${r.fib['0.618']} 0.786=${r.fib['0.786']}`,
     legLine,
+    boxLine,
     `Swing highs: ${fmtSwings(a.swingHighs)}`,
     `Swing lows: ${fmtSwings(a.swingLows)}`,
     `FVG: ${fmtZones(a.fvgs)}`,
