@@ -371,12 +371,7 @@ export class ClaudeAnalystService {
   }
 
   private extractConfidence(text: string): number | null {
-    const m = text.match(/confidence[^:\n]*:\s*(High|Medium|Low)/i);
-    if (!m) return null;
-    const c = m[1].toLowerCase();
-    if (c === 'high') return 85;
-    if (c === 'low')  return 45;
-    return 65;
+    return parseConfidence(text);
   }
 
   private extractBias(text: string): string | null {
@@ -1553,6 +1548,21 @@ const CRYPTO_BASES = new Set(['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'ADA', 'DOGE', 
 export function isCryptoInstrument(instrument: string): boolean {
   const base = instrument.split('/')[0]?.trim().toUpperCase();
   return base ? CRYPTO_BASES.has(base) : false;
+}
+
+// ─── Confidence parsing ──────────────────────────────────────────────────────
+/**
+ * "Confidence: High/Medium/Low" → 85/65/45. Model hay in đậm mức (`Confidence: **Low**`) —
+ * trước 27/10/2026 regex không cho `*` giữa dấu `:` và chữ nên khoảng nửa tín hiệu lưu null.
+ * Export để backfill bản ghi cũ (SignalOutcomeTracker.rescore).
+ */
+export function parseConfidence(text: string): number | null {
+  const m = text.match(/confidence[^:\n]*:[\s*_]*(High|Medium|Low)(?![a-z])/i);
+  if (!m) return null;
+  const c = m[1].toLowerCase();
+  if (c === 'high') return 85;
+  if (c === 'low')  return 45;
+  return 65;
 }
 
 // ─── Direction parsing ───────────────────────────────────────────────────────

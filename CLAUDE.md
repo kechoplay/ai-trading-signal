@@ -198,12 +198,26 @@ chốt (≤ ~96/ngày), crypto lấy Binance (miễn phí). Dùng nến vàng đ
 
 Quy ước chấm — cố ý bi quan vì không có dữ liệu tick (đổi phải sửa test + CLAUDE.md này):
 - Khớp khi range nến chứa entry, khớp đúng giá entry, không trượt giá. Lệnh chờ quá `OUTCOME_FILL_WINDOW_MIN`
-  (180) chưa khớp → `NO_FILL`; nếu giá chạy tới TP1 mà chưa chạm entry → `missed_tp = true` (đo "bỏ lỡ lệnh thắng").
+  (180) chưa khớp → `NO_FILL`; nếu giá chạy tới TP1 mà chưa chạm entry → `missed_tp = true` (đo "bỏ lỡ lệnh thắng")
+  và **hủy lệnh ngay** → `NO_FILL` (`OUTCOME_CANCEL_ON_TP_BEFORE_FILL`, thêm 27/10/2026). Trước đó lệnh chờ tiếp,
+  khớp muộn khi giá hồi về rồi dính SL — 2/4 lệnh thua 23–27/10 (sau gộp trùng) là loại này.
 - Nến VỪA khớp chỉ xét SL, không xét TP và không tính MFE (không biết thứ tự trong nến). Nến chạm cả SL lẫn TP1 → SL.
 - Tín hiệu ra giữa cây nến → bỏ cây đó, chấm từ nến mở SAU `created_at`. Lệnh thị trường
   (`|entry − current_price| ≤ OUTCOME_MARKET_FILL_TOL_R × khoảng SL`, 0.1) coi như khớp ngay lúc ra tín hiệu.
 - Đã khớp quá `OUTCOME_HOLD_MAX_HOURS` (24) mà chưa chạm TP1/SL → `EXPIRED`, R theo giá đóng nến cuối.
 - `result_r`: TP1 = +`planned_rr`, SL = −1. `NO_DATA` = nến lấy về không phủ tới lúc ra tín hiệu (hoặc mức giá sai phía).
+
+**Gộp tín hiệu trùng khi thống kê** (thêm 27/10/2026, `dedupeSetups()`): scheduler 30 phút lặp lại cùng một
+kế hoạch (23/10: SELL 4033.8 ra 13 lần, 6 lần TP1 → +17R cho một lệnh +2.9R thật; 23–27/10: 35 tín hiệu = 12
+setup). Tín hiệu nhập setup trước khi cùng symbol + hướng, entry lệch ≤ `OUTCOME_DEDUP_ENTRY_TOL_R` (0.25) ×
+khoảng SL so với tín hiệu gần nhất của setup, và ra lúc setup còn hiệu lực (chưa chốt; chưa khớp thì tới hết
+cửa sổ khớp). Đại diện = tín hiệu khớp sớm nhất (chưa khớp → tín hiệu đầu) — `trigger`/`confidence` theo đại
+diện. Chỉ gộp lúc thống kê, `signal_outcomes` vẫn 1 dòng/tín hiệu. `?raw=1` = không gộp.
+
+`POST /api/outcomes/rescore { days? }` (≤ `OUTCOME_BACKFILL_DAYS`): chấm lại MỌI bản ghi trong N ngày theo luật
+hiện tại (lượt 15 phút không đụng bản ghi đã chốt) + nạp lại `confidence` null từ `reasoning` bằng parser mới
+(cả `trading_signals` lẫn `signal_outcomes`). Gọi một lần sau mỗi lần đổi luật chấm/parser. Bản ghi đã chốt mà
+nến không còn phủ tới (ra `NO_DATA`) thì giữ kết quả cũ.
 
 `GET /api/outcomes/stats?days=30&symbol=` gộp theo `overall` / `by_trigger` (so Watcher với lịch với bấm tay) /
 `by_symbol` / `by_direction` / `by_confidence` (`<50`, `50-69`, `70+`): số lệnh, tỉ lệ khớp, winrate
@@ -313,6 +327,9 @@ thêm `CLAUDE_RAW_CANDLES_CRYPTO_H4` (12) nến thô H4 để model đếm khi m
   Dòng `Entry zone: [thấp – cao] (mốc [giá khớp])` — "mốc" bắt buộc (LIMIT = giữa POI). `extractEntryPrice(section,
   action)` đọc `mốc` hoặc `anchor` (model hay viết tiếng Anh), thiếu cả hai mà là vùng thì lấy mép gần theo hướng
   (trước đây lấy số đầu = mép dưới, tức mép XA với BUY).
+- `parseConfidence()` (export, dùng chung với outcome rescore): `Confidence: High/Medium/Low` → 85/65/45, chấp
+  nhận in đậm/nghiêng (`Confidence: **Low**`, `_High_`). Trước 27/10/2026 regex không cho `*` sau dấu `:` →
+  16/35 tín hiệu 23–27/10 lưu `confidence = null` (thực tế đều Low/Medium).
 - Parser lấy `take_profit`/`risk_reward` từ dòng chứa token `TP1` **đầu tiên** trong block ORDER — dòng `TP chốt non` cố ý không chứa token đó nên không bị bắt nhầm. Đổi nhãn TP trong prompt phải kiểm lại `extractPriceFromLine(section, 'tp1')`.
 
 **Output là TEXT markdown (KHÔNG phải JSON)** — parse bằng regex, không dùng `JSON.parse`:

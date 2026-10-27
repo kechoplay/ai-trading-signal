@@ -22,7 +22,7 @@ import { createMcpServer } from './mcp-server';
 import { McpOAuthProvider, createAuthCode } from './services/auth/McpOAuthProvider';
 import { FailureLimiter, safeEqual } from './services/auth/security';
 import { SignalOutcomeTracker } from './services/outcome/SignalOutcomeTracker';
-import { confidenceBand, groupBy, summarize } from './services/outcome/outcomeStats';
+import { confidenceBand, dedupeSetups, groupBy, summarize } from './services/outcome/outcomeStats';
 
 const app = express();
 // Khởi tạo sớm để route /api/scheduler tham chiếu được; chỉ .start() sau khi listen.
@@ -603,11 +603,20 @@ app.get('/api/outcomes/stats', requireApiKey, async (req, res) => {
     const days = Math.min(Math.max(parseInt(String(req.query.days ?? '30'), 10) || 30, 1), 365);
     const symbol = typeof req.query.symbol === 'string' && req.query.symbol ? req.query.symbol : undefined;
     const since = new Date(Date.now() - days * 86_400_000);
-    const rows = await prisma.signalOutcome.findMany({
+    const all = await prisma.signalOutcome.findMany({
       where: { signal_at: { gte: since }, ...(symbol ? { instrument: symbol } : {}) },
+    });
+    // Mặc định gộp tín hiệu trùng (scheduler lặp lại cùng kế hoạch) — ?raw=1 để xem từng tín hiệu.
+    const raw = req.query.raw === '1' || req.query.raw === 'true';
+    const rows = raw ? all : dedupeSetups(all, {
+      fillWindowMs: config.outcome.fillWindowMin * 60_000,
+      entryTolR:    config.outcome.dedupEntryTolR,
     });
     res.json({
       days, since: since.toISOString(), symbol: symbol ?? null,
+      deduped:       !raw,
+      signals:       all.length,
+      setups:        rows.length,
       tracker:       outcomeTracker.status(),
       overall:       summarize(rows),
       by_trigger:    groupBy(rows, (r) => r.trigger ?? 'unknown'),
@@ -618,6 +627,19 @@ app.get('/api/outcomes/stats', requireApiKey, async (req, res) => {
   } catch (err: any) {
     logger.error('GET /api/outcomes/stats failed', { error: err.message });
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Chấm lại các lệnh trong N ngày gần nhất (kể cả đã chốt) theo luật hiện tại + nạp lại confidence
+// còn null từ text phân tích. Gọi một lần sau khi đổi luật chấm/parser. Body/query: { days? } (≤ backfill).
+app.post('/api/outcomes/rescore', requireApiKey, async (req, res) => {
+  try {
+    const days = parseInt(String(req.body?.days ?? req.query.days ?? config.outcome.backfillDays), 10);
+    const result = await outcomeTracker.rescore(Number.isFinite(days) ? days : config.outcome.backfillDays);
+    res.json({ ok: true, ...result });
+  } catch (err: any) {
+    logger.error('POST /api/outcomes/rescore failed', { error: err.message });
+    res.status(500).json({ error: err.message ?? 'Rescore failed' });
   }
 });
 

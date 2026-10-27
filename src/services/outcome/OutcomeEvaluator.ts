@@ -10,6 +10,9 @@
  *   tín hiệu); chấm từ cây nến mở SAU thời điểm ra tín hiệu. Riêng lệnh thị trường (entry sát
  *   giá lúc phân tích, xem marketFillTolR) coi như khớp ngay lúc ra tín hiệu.
  * - Chốt EXPIRED: giá nến cuối cùng đã có, quy ra R (có thể dương hoặc âm).
+ * - Giá chạm TP1 khi lệnh chờ CHƯA khớp → setup đã chạy xong, coi như trader hủy lệnh: NO_FILL ngay
+ *   (`cancelOnTpBeforeFill`, thêm 27/10/2026). Trước đó lệnh vẫn chờ tiếp, khớp lúc giá hồi về rồi
+ *   thường dính SL — đo trên dữ liệu thật 23–27/10: 2/4 lệnh thua (sau khi gộp trùng) thuộc loại này.
  */
 
 export type OutcomeStatus = 'PENDING' | 'OPEN' | 'TP1' | 'SL' | 'EXPIRED' | 'NO_FILL' | 'NO_DATA';
@@ -38,6 +41,8 @@ export interface EvalInput {
   fillWindowMs: number;
   holdMaxMs: number;
   marketFillTolR: number;
+  /** true = giá chạm TP1 trước khi khớp entry thì hủy lệnh chờ (NO_FILL ngay). */
+  cancelOnTpBeforeFill: boolean;
   nowMs: number;
 }
 
@@ -98,7 +103,10 @@ export function evaluateOutcome(inp: EvalInput, candles: EvalCandle[]): EvalResu
       if (c.openMs >= fillDeadline) break;
       if (!touchesEntry(c)) {
         // Giá chạy thẳng tới TP1 mà chưa hề chạm entry → lệnh chờ bị bỏ lỡ.
-        if (tpHit(c)) missedTp = true;
+        if (tpHit(c)) {
+          missedTp = true;
+          if (inp.cancelOnTpBeforeFill) return { ...blank('NO_FILL'), missedTp };
+        }
         continue;
       }
       filledMs = c.openMs;

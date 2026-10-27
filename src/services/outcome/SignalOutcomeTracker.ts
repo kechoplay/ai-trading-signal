@@ -1,7 +1,8 @@
+import { SignalOutcome } from '@prisma/client';
 import { prisma } from '../../db';
 import { config } from '../../config/trading';
 import { logger } from '../../logger';
-import { isCryptoInstrument } from '../ai/ClaudeAnalystService';
+import { isCryptoInstrument, parseConfidence } from '../ai/ClaudeAnalystService';
 import { closedMarketPadding, dropClosedMarketBars } from '../ai/ict/SessionLevels';
 import { candleOpenInstant, TF_SECONDS } from '../market/candleTime';
 import { makeMarketDataProvider } from '../market/MarketDataProviderFactory';
@@ -142,10 +143,64 @@ export class SignalOutcomeTracker {
 
   /** Chấm lại mọi lệnh PENDING/OPEN: một request nến cho mỗi symbol. */
   private async evaluateActive(): Promise<{ active: number; changed: number; errors: number }> {
-    const c = config.outcome;
     const active = await prisma.signalOutcome.findMany({ where: { status: { in: ['PENDING', 'OPEN'] } } });
-    const bySymbol = new Map<string, typeof active>();
-    for (const o of active) {
+    const { changed, errors } = await this.evaluateRows(active);
+    return { active: active.length, changed, errors };
+  }
+
+  /**
+   * Chấm lại MỌI lệnh trong `days` ngày gần nhất (kể cả đã chốt) theo luật hiện tại, và nạp lại
+   * confidence còn null bằng parser mới (đọc lại `reasoning` của tín hiệu). Gọi tay qua
+   * POST /api/outcomes/rescore sau khi đổi luật chấm hoặc parser — lượt thường không đụng bản ghi đã chốt.
+   */
+  async rescore(days: number): Promise<Record<string, number>> {
+    if (this.running) throw new Error('Outcome tracker đang chạy một lượt — thử lại sau ít phút');
+    this.running = true;
+    try {
+      // Nến lấy về chỉ phủ được khoảng backfillDays (trần maxCandles) — chấm xa hơn sẽ ra NO_DATA.
+      const d = Math.min(Math.max(days, 1), config.outcome.backfillDays);
+      const since = new Date(Date.now() - d * 86_400_000);
+
+      // 1. Confidence null trên tín hiệu → đọc lại từ text phân tích.
+      const nullConf = await prisma.tradingSignal.findMany({
+        where: { created_at: { gte: since }, confidence: null, action: { in: ['BUY', 'SELL', 'WATCHLIST'] } },
+        select: { id: true, reasoning: true },
+      });
+      let confidenceFixed = 0;
+      for (const s of nullConf) {
+        const conf = parseConfidence(s.reasoning ?? '');
+        if (conf == null) continue;
+        await prisma.tradingSignal.update({ where: { id: s.id }, data: { confidence: conf } });
+        confidenceFixed++;
+      }
+
+      // 2. Chép confidence (đã sửa) sang bản ghi kết quả.
+      const rows = await prisma.signalOutcome.findMany({ where: { signal_at: { gte: since }, planned_rr: { gt: 0 } } });
+      const sigConf = new Map((await prisma.tradingSignal.findMany({
+        where: { id: { in: rows.map((r) => r.signal_id) } }, select: { id: true, confidence: true },
+      })).map((s) => [s.id, s.confidence]));
+      for (const r of rows) {
+        const conf = sigConf.get(r.signal_id) ?? null;
+        if (conf !== r.confidence) {
+          await prisma.signalOutcome.update({ where: { id: r.id }, data: { confidence: conf } });
+        }
+      }
+
+      // 3. Chấm lại theo luật hiện tại.
+      const { changed, errors } = await this.evaluateRows(rows);
+      const result = { days: d, signals_confidence_fixed: confidenceFixed, rescored: rows.length, changed, errors };
+      logger.info('Outcome tracker: chấm lại xong', result);
+      return result;
+    } finally {
+      this.running = false;
+    }
+  }
+
+  /** Lấy nến một lần cho mỗi symbol rồi chấm từng bản ghi. Trả số bản ghi đổi kết quả + số symbol lỗi. */
+  private async evaluateRows(rows: SignalOutcome[]): Promise<{ changed: number; errors: number }> {
+    const c = config.outcome;
+    const bySymbol = new Map<string, SignalOutcome[]>();
+    for (const o of rows) {
       const g = bySymbol.get(o.instrument);
       if (g) g.push(o);
       else bySymbol.set(o.instrument, [o]);
@@ -157,10 +212,10 @@ export class SignalOutcomeTracker {
     let changed = 0;
     let errors = 0;
 
-    for (const [symbol, rows] of bySymbol) {
+    for (const [symbol, group] of bySymbol) {
       try {
         const now = Date.now();
-        const oldest = Math.min(...rows.map((r) => r.signal_at.getTime()));
+        const oldest = Math.min(...group.map((r) => r.signal_at.getTime()));
         const needed = Math.ceil((now - oldest) / tfMs) + 3;
         // Vàng: lấy dư nến cuối tuần rồi bỏ đi (xem closedMarketPadding); crypto 24/7 giữ nguyên.
         const crypto = isCryptoInstrument(symbol);
@@ -176,18 +231,21 @@ export class SignalOutcomeTracker {
             return open ? [{ openMs: open.getTime(), high: k.high, low: k.low, close: k.close }] : [];
           });
 
-        for (const o of rows) {
+        for (const o of group) {
           const r = evaluateOutcome({
             direction: o.direction as 'BUY' | 'SELL',
             entry: o.entry, stopLoss: o.stop_loss, takeProfit: o.take_profit,
             currentPrice: o.signal_price,
             signalMs: o.signal_at.getTime(), tfMs,
             fillWindowMs: c.fillWindowMin * 60_000, holdMaxMs: c.holdMaxHours * 3_600_000,
-            marketFillTolR: c.marketFillTolR, nowMs: now,
+            marketFillTolR: c.marketFillTolR, cancelOnTpBeforeFill: c.cancelOnTpBeforeFill, nowMs: now,
           }, candles);
 
-          const before = `${o.status}|${o.mfe_r}|${o.mae_r}|${o.missed_tp}`;
-          const after = `${r.status}|${r.mfeR}|${r.maeR}|${r.missedTp}`;
+          // Chấm lại bản ghi đã chốt mà nến không còn phủ tới → giữ kết quả cũ, đừng ghi đè thành NO_DATA.
+          if (r.status === 'NO_DATA' && o.status !== 'PENDING' && o.status !== 'OPEN') continue;
+
+          const before = `${o.status}|${o.result_r}|${o.mfe_r}|${o.mae_r}|${o.missed_tp}`;
+          const after = `${r.status}|${r.resultR}|${r.mfeR}|${r.maeR}|${r.missedTp}`;
           await prisma.signalOutcome.update({
             where: { id: o.id },
             data: {
@@ -213,6 +271,6 @@ export class SignalOutcomeTracker {
         logger.error('Outcome tracker: chấm symbol thất bại — chờ lượt sau', { symbol, error: this.lastError });
       }
     }
-    return { active: active.length, changed, errors };
+    return { changed, errors };
   }
 }

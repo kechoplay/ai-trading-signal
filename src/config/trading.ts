@@ -163,6 +163,11 @@ export const config = {
     holdMaxHours: parseInt(process.env.OUTCOME_HOLD_MAX_HOURS ?? '24', 10),
     // |entry − giá lúc phân tích| ≤ N × (khoảng SL) thì coi là lệnh thị trường: khớp ngay lúc ra tín hiệu.
     marketFillTolR: parseFloat(process.env.OUTCOME_MARKET_FILL_TOL_R ?? '0.1'),
+    // Giá chạm TP1 khi lệnh chờ chưa khớp → coi như đã hủy lệnh (NO_FILL), không chờ khớp muộn.
+    cancelOnTpBeforeFill: (process.env.OUTCOME_CANCEL_ON_TP_BEFORE_FILL ?? 'true').toLowerCase() !== 'false',
+    // Gộp tín hiệu trùng khi thống kê: cùng symbol + hướng, entry lệch ≤ N × khoảng SL, ra lúc
+    // lệnh trước còn hiệu lực (scheduler 30p lặp lại cùng một kế hoạch). 0 = chỉ gộp entry trùng khít.
+    dedupEntryTolR: parseFloat(process.env.OUTCOME_DEDUP_ENTRY_TOL_R ?? '0.25'),
     // Tín hiệu cũ hơn ngần này ngày không đăng ký chấm (một request nến không phủ tới).
     backfillDays: parseInt(process.env.OUTCOME_BACKFILL_DAYS ?? '3', 10),
     // Trần số nến M5 mỗi request (Binance giới hạn 1500).

@@ -6,6 +6,11 @@ export interface OutcomeRow {
   trigger: string | null;
   confidence: number | null;
   status: string;
+  signal_at: Date;
+  entry: number;
+  stop_loss: number;
+  filled_at: Date | null;
+  exit_at: Date | null;
   planned_rr: number;
   result_r: number | null;
   mfe_r: number | null;
@@ -89,6 +94,52 @@ export function groupBy(rows: OutcomeRow[], key: (r: OutcomeRow) => string): Rec
     else groups.set(k, [r]);
   }
   return Object.fromEntries([...groups].sort(([a], [b]) => a.localeCompare(b)).map(([k, g]) => [k, summarize(g)]));
+}
+
+/**
+ * Gộp tín hiệu trùng thành SETUP — mỗi setup tính một lệnh. Scheduler 30 phút ra lại cùng một kế
+ * hoạch nhiều lần (23/10: SELL 4033.8 lặp 13 lần, 6 lần TP1 → +17R cho một lệnh +2.9R thật).
+ *
+ * Một tín hiệu nhập vào setup trước đó (cùng symbol + hướng) khi: entry lệch ≤ `entryTolR` × khoảng SL
+ * so với tín hiệu gần nhất của setup, VÀ ra lúc setup còn hiệu lực (chưa chốt; lệnh chưa khớp còn
+ * hiệu lực tới hết `fillWindowMs`). Đại diện setup = tín hiệu KHỚP sớm nhất (lệnh thật sự vào), chưa
+ * có thì tín hiệu đầu tiên — nguồn kích hoạt/confidence trong thống kê lấy theo đại diện.
+ */
+export function dedupeSetups<T extends OutcomeRow>(rows: T[], opts: { fillWindowMs: number; entryTolR: number }): T[] {
+  interface Setup { members: T[]; entry: number; risk: number; aliveUntil: number }
+  const aliveUntil = (r: T): number => {
+    if (r.status === 'PENDING' || r.status === 'OPEN') return Infinity;
+    if (r.exit_at) return r.exit_at.getTime();
+    if (r.status === 'NO_FILL') return r.signal_at.getTime() + opts.fillWindowMs;
+    return r.signal_at.getTime();
+  };
+
+  const setups: Setup[] = [];
+  const byKey = new Map<string, Setup[]>();
+  for (const r of [...rows].sort((a, b) => a.signal_at.getTime() - b.signal_at.getTime())) {
+    const key = `${r.instrument}|${r.direction}`;
+    const t = r.signal_at.getTime();
+    const risk = Math.abs(r.entry - r.stop_loss);
+    const list = byKey.get(key) ?? [];
+    const s = list.find((x) => t <= x.aliveUntil && Math.abs(r.entry - x.entry) <= opts.entryTolR * Math.max(risk, x.risk));
+    if (s) {
+      s.members.push(r);
+      s.entry = r.entry;
+      s.risk = risk;
+      s.aliveUntil = Math.max(s.aliveUntil, aliveUntil(r));
+    } else {
+      const ns: Setup = { members: [r], entry: r.entry, risk, aliveUntil: aliveUntil(r) };
+      list.push(ns);
+      byKey.set(key, list);
+      setups.push(ns);
+    }
+  }
+
+  return setups.map(({ members }) => {
+    const filled = members.filter((m) => m.filled_at != null);
+    if (filled.length === 0) return members[0];
+    return filled.reduce((a, b) => (b.filled_at!.getTime() < a.filled_at!.getTime() ? b : a));
+  });
 }
 
 /** Nhóm confidence — Low/Medium/High của prompt không lưu riêng, chỉ có điểm 0–100. */
