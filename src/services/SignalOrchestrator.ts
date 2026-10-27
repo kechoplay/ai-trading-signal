@@ -301,7 +301,7 @@ export class SignalOrchestrator {
   }
 
   /**
-   * Chấm lệnh BUY/SELL lần trước trên khung nhỏ nhất vừa lấy (vàng M5, crypto M15) bằng
+   * Chấm lệnh BUY/SELL lần trước trên khung nhỏ nhất vừa lấy (vàng + crypto đều M15) bằng
    * evaluateOutcome — cùng luật bi quan với outcome tracker. Trả thông tin khớp nếu lệnh đang
    * mở (OPEN), null khi chưa khớp / đã chạm SL/TP1 / hết hạn / thiếu mức giá / nến không phủ tới.
    */

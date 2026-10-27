@@ -3,6 +3,7 @@ import { TelegramNotifier } from './telegram/TelegramNotifier';
 import { RateLimitSnapshot, TokenUsage } from './ai/transport/LlmTransport';
 import { AnalysisResult } from './ai/dto/AnalysisResult';
 import { recordUsage } from './ai/UsageTracker';
+import { isCryptoInstrument } from './ai/ClaudeAnalystService';
 import { config } from '../config/trading';
 import { logger } from '../logger';
 import { prisma } from '../db';
@@ -82,12 +83,17 @@ export async function runAnalysis(opts: AnalysisRunOptions): Promise<AnalysisRun
       : notifier.formatSignalCard(result, sym, currentPrice);
     const reasoning = notifier.formatAnalysis(rawText);
 
+    // Intraday lưu khung ENTRY (khung cuối: M15); plan giữ khung đầu như cũ.
+    const usedTfs = timeframes
+      ?? (isPlan ? config.dailyPlan.timeframes : isCryptoInstrument(sym) ? config.cryptoTimeframes : config.timeframes);
+    const signalTf = (isPlan ? usedTfs[0] : usedTfs[usedTfs.length - 1]) ?? null;
+
     await prisma.$transaction([
       prisma.tradingSignal.create({
         data: {
           instrument:      sym,
           action:          result.action,
-          timeframe:       (timeframes ?? (isPlan ? config.dailyPlan.timeframes : config.timeframes))[0] ?? null,
+          timeframe:       signalTf,
           analysis_type:   analysisType,
           entry:           result.entry,
           stop_loss:       result.stopLoss,
