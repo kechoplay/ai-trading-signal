@@ -214,6 +214,13 @@ khoảng SL so với tín hiệu gần nhất của setup, và ra lúc setup cò
 cửa sổ khớp). Đại diện = tín hiệu khớp sớm nhất (chưa khớp → tín hiệu đầu) — `trigger`/`confidence` theo đại
 diện. Chỉ gộp lúc thống kê, `signal_outcomes` vẫn 1 dòng/tín hiệu. `?raw=1` = không gộp.
 
+**Carry-forward lệnh trước chỉ cho lệnh ĐÃ KHỚP** (thêm 27/10/2026, `SignalOrchestrator.loadPendingSetup` +
+`findOpenFill`): khi bản ghi gần nhất là BUY/SELL, xét các lệnh trong `CARRY_FORWARD_ORDER_WINDOW_MIN`, chấm bằng
+`evaluateOutcome` (cùng luật `OUTCOME_*`) trên khung nhỏ nhất vừa lấy cho lượt phân tích (vàng M5, crypto M15),
+lấy lệnh MỚI NHẤT đang `OPEN` — vì scheduler hay lặp lại lệnh, bản mới nhất có thể là bản lặp chưa khớp. Không có
+lệnh nào đang mở (chưa khớp / đã chạm SL/TP1 / hết hạn) → không nhét block "LỆNH ĐANG MỞ" vào prompt. Block báo sẵn
+giờ khớp + MFE/MAE; model chỉ còn khuyến nghị GIỮ / DỜI SL / THOÁT (bỏ trạng thái CHƯA KHỚP / ĐÃ ĐÓNG).
+
 `POST /api/outcomes/rescore { days? }` (≤ `OUTCOME_BACKFILL_DAYS`): chấm lại MỌI bản ghi trong N ngày theo luật
 hiện tại (lượt 15 phút không đụng bản ghi đã chốt) + nạp lại `confidence` null từ `reasoning` bằng parser mới
 (cả `trading_signals` lẫn `signal_outcomes`). Gọi một lần sau mỗi lần đổi luật chấm/parser. Bản ghi đã chốt mà

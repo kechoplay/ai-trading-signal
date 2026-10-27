@@ -2,6 +2,8 @@ import { ClaudeAnalystService, CryptoExtras, PendingSetup, PreviousPlan, isCrypt
 import { AnalysisResult } from './ai/dto/AnalysisResult';
 import { Candle } from './market/Candle';
 import { closedMarketPadding, dropClosedMarketBars } from './ai/ict/SessionLevels';
+import { candleOpenInstant, TF_SECONDS } from './market/candleTime';
+import { EvalCandle, evaluateOutcome, validateLevels } from './outcome/OutcomeEvaluator';
 import { makeMarketDataProvider } from './market/MarketDataProviderFactory';
 import { BinanceFuturesService } from './market/BinanceFuturesService';
 import { RateLimitSnapshot, TokenUsage } from './ai/transport/LlmTransport';
@@ -75,7 +77,7 @@ export class SignalOrchestrator {
 
     // Carry-forward: nếu lần phân tích gần nhất (cùng loại) đang canh WATCHLIST và còn
     // trong cửa sổ thời gian → nhét lại để AI kiểm chứng thay vì phân tích lại từ đầu.
-    const pending = await this.loadPendingSetup(instrument, analysisType);
+    const pending = await this.loadPendingSetup(instrument, analysisType, candlesByTf);
 
     const { result, rawText, usage, rateLimit } =
       await this.claude.analyze(instrument, candlesByTf, currentPrice, extras, pending, triggerNote);
@@ -211,10 +213,18 @@ export class SignalOrchestrator {
    *  - Tính năng đang bật + có analysisType (longterm không truyền → bỏ, cửa sổ 2h không hợp).
    *  - Bản ghi GẦN NHẤT là WATCHLIST → kiểm chứng setup, hoặc BUY/SELL → đánh giá quản lý
    *    lệnh (giữ/thoát). NO_TRADE → không có gì để mang theo.
+   *  - BUY/SELL chỉ mang theo lệnh ĐÃ KHỚP entry và CHƯA chạm SL/TP1 (chấm trên chính bộ nến
+   *    vừa lấy, cùng luật với outcome tracker — xem findOpenFill): lệnh mới nhất đang mở trong
+   *    cửa sổ orderWindowMin. Không lệnh nào đang mở → bỏ, phân tích như chưa có lệnh (trước
+   *    27/10/2026 model tự đoán "CHƯA KHỚP / ĐANG CHẠY / ĐÃ ĐÓNG" từ nến, đánh giá cả lệnh chưa khớp).
    *  - Còn trong cửa sổ config.carryForward.windowMin.
    * Fail-soft: mọi lỗi (parse JSON / DB) → trả null, phân tích vẫn chạy bình thường.
    */
-  private async loadPendingSetup(instrument: string, analysisType?: string): Promise<PendingSetup | null> {
+  private async loadPendingSetup(
+    instrument: string,
+    analysisType: string | undefined,
+    candlesByTf: Record<string, Candle[]>,
+  ): Promise<PendingSetup | null> {
     if (!config.carryForward.enabled || !analysisType) return null;
 
     try {
@@ -234,7 +244,36 @@ export class SignalOrchestrator {
         return null;
       }
 
-      const raw = JSON.parse(last.raw_ai_response ?? '{}');
+      const tz = config.marketHours.timezone;
+      const fmtVn = (d: Date) => d.toLocaleString('vi-VN', { timeZone: tz, hour12: false });
+
+      // Order: chỉ mang theo lệnh đã khớp + đang chạy. Scheduler hay lặp lại cùng một lệnh mỗi lượt,
+      // bản ghi mới nhất có thể là bản lặp chưa khớp (giá đã rời entry) trong khi bản trước đã khớp
+      // → xét các lệnh trong cửa sổ, lấy lệnh MỚI NHẤT đang mở.
+      let src = last;
+      let fill: { filledAtVn: string; mfeR: number | null; maeR: number | null } | undefined;
+      if (isOrder) {
+        const orders = await prisma.tradingSignal.findMany({
+          where: {
+            instrument, analysis_type: analysisType, action: { in: ['BUY', 'SELL'] },
+            created_at: { gte: new Date(Date.now() - windowMin * 60_000) },
+          },
+          orderBy: { created_at: 'desc' },
+          take: 20,
+        });
+        let open: ReturnType<SignalOrchestrator['findOpenFill']> = null;
+        for (const o of orders) {
+          open = this.findOpenFill(o, o.action as 'BUY' | 'SELL', candlesByTf);
+          if (open) { src = o; break; }
+        }
+        if (!open) {
+          logger.info('Carry-forward: không có lệnh nào đã khớp + đang chạy — bỏ qua', { instrument, checked: orders.length });
+          return null;
+        }
+        fill = { filledAtVn: fmtVn(new Date(open.filledMs)), mfeR: open.mfeR, maeR: open.maeR };
+      }
+
+      const raw = JSON.parse(src.raw_ai_response ?? '{}');
       const setup = Array.isArray(raw.conditional_setups) ? raw.conditional_setups[0] : null;
       const rawText: string = setup?.rawText?.trim() || '';
       if (!rawText) return null;
@@ -242,24 +281,68 @@ export class SignalOrchestrator {
       const kind: 'watchlist' | 'order' = isOrder ? 'order' : 'watchlist';
       // Order: hướng = action đã lưu; Watchlist: hướng = hướng dự kiến trong setup.
       const direction: 'BUY' | 'SELL' = isOrder
-        ? (last.action as 'BUY' | 'SELL')
+        ? (src.action as 'BUY' | 'SELL')
         : (setup?.direction === 'SELL' ? 'SELL' : 'BUY');
-      const analyzedAtVn = new Date(last.created_at).toLocaleString('vi-VN', {
-        timeZone: config.marketHours.timezone, hour12: false,
-      });
+      const srcAge = Math.round((Date.now() - new Date(src.created_at).getTime()) / 60000);
 
       logger.info('Carry-forward: nhét tín hiệu lần trước để đánh giá', {
-        instrument, analysisType, kind, direction, ageMinutes,
+        instrument, analysisType, kind, direction, ageMinutes: srcAge, signal_id: src.id, filled_at: fill?.filledAtVn,
       });
       return {
-        kind, direction, ageMinutes, analyzedAtVn,
-        priceThen: last.current_price ?? null, rawText,
-        entry: last.entry, stopLoss: last.stop_loss, takeProfit: last.take_profit, riskReward: last.risk_reward,
+        kind, direction, ageMinutes: srcAge, analyzedAtVn: fmtVn(new Date(src.created_at)),
+        priceThen: src.current_price ?? null, rawText,
+        entry: src.entry, stopLoss: src.stop_loss, takeProfit: src.take_profit, riskReward: src.risk_reward,
+        ...fill,
       };
     } catch (err: any) {
       logger.warn('Carry-forward: nạp tín hiệu lần trước thất bại — bỏ qua', { error: err?.message ?? String(err) });
       return null;
     }
+  }
+
+  /**
+   * Chấm lệnh BUY/SELL lần trước trên khung nhỏ nhất vừa lấy (vàng M5, crypto M15) bằng
+   * evaluateOutcome — cùng luật bi quan với outcome tracker. Trả thông tin khớp nếu lệnh đang
+   * mở (OPEN), null khi chưa khớp / đã chạm SL/TP1 / hết hạn / thiếu mức giá / nến không phủ tới.
+   */
+  private findOpenFill(
+    last: { id: number; entry: number | null; stop_loss: number | null; take_profit: number | null;
+            current_price: number | null; created_at: Date },
+    direction: 'BUY' | 'SELL',
+    candlesByTf: Record<string, Candle[]>,
+  ): { filledMs: number; mfeR: number | null; maeR: number | null } | null {
+    const { entry, stop_loss: sl, take_profit: tp } = last;
+    if (entry == null || sl == null || tp == null || !validateLevels(direction, entry, sl, tp)) {
+      logger.info('Carry-forward: lệnh lần trước thiếu/sai mức giá — bỏ qua', { signal_id: last.id });
+      return null;
+    }
+
+    const tf = Object.keys(candlesByTf)
+      .filter((k) => TF_SECONDS[k] && candlesByTf[k].length > 0)
+      .sort((a, b) => TF_SECONDS[a] - TF_SECONDS[b])[0];
+    if (!tf) return null;
+
+    const tz = config.marketHours.timezone;
+    const candles: EvalCandle[] = candlesByTf[tf].flatMap((k) => {
+      const open = candleOpenInstant(k.time, tz);
+      return open ? [{ openMs: open.getTime(), high: k.high, low: k.low, close: k.close }] : [];
+    });
+    const c = config.outcome;
+    const r = evaluateOutcome({
+      direction, entry, stopLoss: sl, takeProfit: tp,
+      currentPrice: last.current_price,
+      signalMs: last.created_at.getTime(), tfMs: TF_SECONDS[tf] * 1000,
+      fillWindowMs: c.fillWindowMin * 60_000, holdMaxMs: c.holdMaxHours * 3_600_000,
+      marketFillTolR: c.marketFillTolR, cancelOnTpBeforeFill: c.cancelOnTpBeforeFill, nowMs: Date.now(),
+    }, candles);
+
+    if (r.status !== 'OPEN' || r.filledMs == null) {
+      logger.info('Carry-forward: lệnh lần trước không ở trạng thái đã khớp + đang chạy — bỏ qua', {
+        signal_id: last.id, status: r.status, tf,
+      });
+      return null;
+    }
+    return { filledMs: r.filledMs, mfeR: r.mfeR, maeR: r.maeR };
   }
 
   private async notify(

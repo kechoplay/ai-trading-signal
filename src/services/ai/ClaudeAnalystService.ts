@@ -26,7 +26,7 @@ export interface CryptoExtras {
  * cho AI đánh giá tiếp thay vì phân tích lại từ số 0. Cố ý đưa dạng ĐÁNH GIÁ ĐỘC LẬP
  * để tránh anchoring bias.
  *  - kind='watchlist': setup đang canh → KIỂM CHỨNG (đã kích hoạt / vô hiệu / vẫn chờ).
- *  - kind='order':     lệnh đã ra → QUẢN LÝ (giữ / dời SL / thoát / đã đóng).
+ *  - kind='order':     lệnh ĐÃ KHỚP, chưa chạm SL/TP1 (code chấm trên nến) → QUẢN LÝ (giữ / dời SL / thoát).
  */
 export interface PendingSetup {
   kind: 'watchlist' | 'order';
@@ -40,6 +40,9 @@ export interface PendingSetup {
   stopLoss?: number | null;
   takeProfit?: number | null;
   riskReward?: number | null;
+  filledAtVn?: string;     // lúc khớp entry (giờ VN, đã format)
+  mfeR?: number | null;    // đi xa nhất theo hướng lệnh kể từ khi khớp (R)
+  maeR?: number | null;    // thụt lùi sâu nhất kể từ khi khớp (R)
 }
 
 /** Plan lượt trước trong ngày — nhét vào prompt kế hoạch ngày để cập nhật kịch bản. */
@@ -1516,28 +1519,26 @@ function buildPreviousOrderBlock(p: PendingSetup): string {
   const dir = p.direction === 'BUY' ? 'BUY (LONG)' : 'SELL (SHORT)';
   const priceThen = p.priceThen != null ? `${p.priceThen}` : 'không rõ';
   const num = (x: number | null | undefined) => (x != null ? `${x}` : '—');
+  const r = (x: number | null | undefined) => (x != null ? `${x.toFixed(2)}R` : '—');
   return [
-    `=== LỆNH LẦN TRƯỚC — ĐÁNH GIÁ GIỮ HAY THOÁT (từ lần phân tích GẦN NHẤT, cách đây ${p.ageMinutes} phút — lúc ${p.analyzedAtVn} giờ VN) ===`,
+    `=== LỆNH ĐANG MỞ — ĐÁNH GIÁ GIỮ HAY THOÁT (lệnh ra cách đây ${p.ageMinutes} phút — lúc ${p.analyzedAtVn} giờ VN) ===`,
     `Lần trước hệ thống đã ra LỆNH ${dir}. Giá lúc đó: ${priceThen}.`,
-    `Thông số lệnh: Entry ${num(p.entry)} | SL ${num(p.stopLoss)} | TP ${num(p.takeProfit)} | RR ${p.riskReward != null ? `1:${p.riskReward}` : '—'}.`,
+    `Thông số lệnh: Entry ${num(p.entry)} | SL ${num(p.stopLoss)} | TP1 ${num(p.takeProfit)} | RR ${p.riskReward != null ? `1:${p.riskReward}` : '—'}.`,
+    `Trạng thái (code đã chấm trên nến thật, KHÔNG cần tự xác định lại): ĐÃ KHỚP entry lúc ${p.filledAtVn ?? 'không rõ'} giờ VN, CHƯA chạm SL lẫn TP1. Kể từ khi khớp: đi xa nhất +${r(p.mfeR)}, thụt sâu nhất −${r(p.maeR)}.`,
     `Chi tiết lệnh lần trước (gồm điều kiện "Hủy lệnh nếu"):`,
     p.rawText,
     ``,
     `⚠️ NHIỆM VỤ với lệnh trên — làm ĐỘC LẬP trên FACTS/nến MỚI, đánh giá KHÁCH QUAN (đừng thiên vị giữ lệnh vì sunk cost):`,
-    `1. Xác định trạng thái lệnh hiện tại:`,
-    `   • CHƯA KHỚP ENTRY — giá chưa chạm entry zone → lệnh còn hiệu lực (chờ khớp) hay đã lỡ/vô hiệu (giá đã bỏ đi không quay lại)?`,
-    `   • ĐANG CHẠY — giá đã qua entry, chưa chạm SL/TP → đọc nến (nhóm C H1: nến thân lớn phá cấu trúc / rejection tại TP) để quyết định.`,
-    `   • ĐÃ ĐÓNG — giá đã chạm TP (thắng) / SL (thua) / thỏa "Hủy lệnh nếu" bằng body close → lệnh kết thúc.`,
+    `1. Đọc nến kể từ lúc khớp (nhóm C H1: nến thân lớn phá cấu trúc / rejection tại TP chốt non / TP1) và kiểm điều kiện "Hủy lệnh nếu" bằng body close.`,
     `2. KHUYẾN NGHỊ QUẢN LÝ (chọn 1, nêu rõ lý do bằng price action):`,
     `   • GIỮ NGUYÊN — thesis còn nguyên, chưa có tín hiệu thoát.`,
     `   • DỜI SL VỀ BREAKEVEN / SIẾT SL — đã có lời hoặc động lượng cạn dần.`,
-    `   • THOÁT SỚM — cấu trúc đã gãy / rejection mạnh dù chưa chạm SL.`,
-    `   • ĐÃ ĐÓNG — nêu rõ đóng tại TP / SL / invalidation nào.`,
+    `   • THOÁT SỚM — cấu trúc đã gãy / rejection mạnh / đã thỏa "Hủy lệnh nếu" dù chưa chạm SL.`,
     `3. QUAN TRỌNG: "GIỮ lệnh đang mở" KHÁC "vào lệnh mới". Ví dụ giá lên premium sâu có thể CHẶN một lệnh BUY mới nhưng KHÔNG có nghĩa phải thoát lệnh BUY đang lời — đánh giá hai việc RIÊNG BIỆT.`,
     `4. Đặt ở ĐẦU output một block quản lý:`,
     `   #### QUẢN LÝ LỆNH TRƯỚC`,
-    `   - Trạng thái: [CHƯA KHỚP / ĐANG CHẠY / ĐÃ ĐÓNG]`,
-    `   - Khuyến nghị: [GIỮ / DỜI SL / THOÁT / ĐÃ ĐÓNG] — [lý do ngắn bằng price action]`,
+    `   - Trạng thái: ĐANG CHẠY`,
+    `   - Khuyến nghị: [GIỮ / DỜI SL / THOÁT] — [lý do ngắn bằng price action]`,
     `Sau block đó, TIẾP TỤC phân tích entry MỚI như bình thường — khách quan, độc lập với lệnh cũ (có thể ra ORDER mới, WATCHLIST, hoặc NO TRADE).`,
   ].join('\n');
 }

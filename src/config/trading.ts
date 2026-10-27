@@ -56,6 +56,7 @@ export const config = {
   // dạng kiểm chứng ĐỘC LẬP (AI được toàn quyền bác bỏ) để tránh anchoring bias.
   // windowMin (watchlist) nhỏ vì scalp intraday — POI cũ quá 2h dễ lỗi thời.
   // orderWindowMin rộng hơn: lệnh đang giữ có thể sống lâu hơn, cần review giữ/thoát muộn hơn.
+  // Lệnh BUY/SELL chỉ được mang theo khi nến xác nhận ĐÃ KHỚP + chưa chạm SL/TP1 (luật config.outcome).
   carryForward: {
     enabled: (process.env.CARRY_FORWARD_WATCHLIST ?? 'true').toLowerCase() !== 'false',
     windowMin: parseInt(process.env.CARRY_FORWARD_WINDOW_MIN ?? '120', 10),
