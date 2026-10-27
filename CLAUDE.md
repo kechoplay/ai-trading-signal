@@ -6,7 +6,7 @@
 
 ## Tổng quan
 
-**AI Trading Signal** là hệ thống phân tích kỹ thuật và phát tín hiệu giao dịch cho **XAU/USD (vàng)** và các cặp **crypto (BTC/USD, ETH/USD…)** sử dụng Claude AI (Anthropic). Hệ thống lấy dữ liệu nến từ API thị trường, gửi qua Claude để phân tích đa khung thời gian, lưu kết quả vào SQLite và gửi thông báo qua Telegram. Phân tích được trigger theo ba đường: **scheduler nội bộ** theo đồng hồ (`SCHEDULER_INTERVAL_MIN`, 8h–22h, T2–T6 giờ VN), **SetupWatcher** theo sự kiện (chuỗi sweep → CHoCH có displacement → retest, dò cơ học mỗi 5 phút) và **thủ công** qua REST API / dashboard. Ngoài tín hiệu intraday còn có **kế hoạch ngày** cho vàng + BTC/ETH (`DailyPlanScheduler`, 7h/11h/15h/19h T2–T6) — plan bias + kịch bản, không ra lệnh. Không dùng cron của OS — scheduler chạy trong process server.
+**AI Trading Signal** là hệ thống phân tích kỹ thuật và phát tín hiệu giao dịch cho **XAU/USD (vàng)** và các cặp **crypto (BTC/USD, ETH/USD…)** sử dụng Claude AI (Anthropic). Hệ thống lấy dữ liệu nến từ API thị trường, gửi qua Claude để phân tích đa khung thời gian, lưu kết quả vào SQLite và gửi thông báo qua Telegram. Phân tích được trigger theo ba đường: **scheduler nội bộ** theo đồng hồ (`SCHEDULER_INTERVAL_MIN`, 8h–22h, T2–T6 giờ VN), **SetupWatcher** theo sự kiện (chuỗi sweep → CHoCH có displacement → retest, dò cơ học mỗi 5 phút) và **thủ công** qua REST API / dashboard. Ngoài tín hiệu intraday còn có **kế hoạch ngày** cho vàng + BTC/ETH (`DailyPlanScheduler`, 7h/11h/15h/19h T2–T6) — plan bias + kịch bản, không ra lệnh. **Crypto chạy cả T7/CN** (thêm 27/10/2026): `SCHEDULER_CRYPTO_WEEKDAYS` / `DAILY_PLAN_CRYPTO_WEEKDAYS` (mặc định `0,1,2,3,4,5,6`) thay `*_WEEKDAYS` cho symbol crypto ở cả scheduler intraday, SetupWatcher lẫn daily plan — cuối tuần mỗi mốc chỉ chạy symbol crypto, vàng nghỉ; khung giờ vẫn chung. Không dùng cron của OS — scheduler chạy trong process server.
 
 - **Ngôn ngữ phân tích AI**: Tiếng Việt
 - **Khung thời gian phân tích**: Vàng dùng H4 (context), H1 (bias), M15 (POI), M5 (entry). Crypto dùng bộ khung riêng từ M15: D (context), H4 (bias), H1 (POI), M15 (entry) — cấu hình qua `TRADING_CRYPTO_TIMEFRAMES`, áp dụng khi instrument là crypto và request không truyền timeframes.
@@ -265,6 +265,7 @@ SCHEDULER_INTERVAL_MIN=15           # mốc canh theo đồng hồ :00/:15/:30/:
 SCHEDULER_START_HOUR=8
 SCHEDULER_END_HOUR=22               # 22 = lượt cuối 21:45
 SCHEDULER_WEEKDAYS=1,2,3,4,5        # 1=T2 … 5=T6 (0=CN, 6=T7)
+SCHEDULER_CRYPTO_WEEKDAYS=0,1,2,3,4,5,6   # symbol crypto (scheduler + watcher) — 24/7
 SCHEDULER_SYMBOLS=                  # trống = TRADING_INSTRUMENT
 SCHEDULER_OFFSET_SEC=0
 
@@ -439,7 +440,8 @@ thêm `CLAUDE_RAW_CANDLES_CRYPTO_H4` (12) nến thô H4 để model đếm khi m
 
 - **Lịch theo GIỜ, không theo phút**: mốc = `DAILY_PLAN_START_HOUR` (7), cộng
   `DAILY_PLAN_INTERVAL_HOURS` (4) tới ≤ `DAILY_PLAN_END_HOUR` (22) → 7h/11h/15h/19h, T2–T6
-  giờ VN, +`DAILY_PLAN_OFFSET_SEC`. Tách khỏi `AnalysisScheduler` vì scheduler đó canh mốc
+  giờ VN (crypto theo `DAILY_PLAN_CRYPTO_WEEKDAYS`, mặc định cả tuần → T7/CN mốc chỉ lập plan
+  BTC/ETH), +`DAILY_PLAN_OFFSET_SEC`. Bấm tay (`run-all`) vẫn chạy mọi symbol bất kể ngày. Tách khỏi `AnalysisScheduler` vì scheduler đó canh mốc
   bằng `minute % interval` — không chạy được chu kỳ nhiều giờ.
 - **Đi qua `runAnalysis({ analysisType: 'daily_plan' })`** như mọi đường trigger khác (lưu DB +
   single-flight). Đụng lượt khác (11h/15h/19h trùng mốc :00 của intraday) → KHÔNG bỏ lượt như
@@ -489,7 +491,10 @@ Cơ chế: mỗi `SETUP_WATCHER_INTERVAL_MIN` (5) phút, canh theo đồng hồ 
 khung giờ/ngày với `SCHEDULER_*`. Symbol lấy từ `SETUP_WATCHER_SYMBOLS` (thêm 20/10/2026 — hiện
 `XAU/USD,BTC/USD,ETH/USD`; trống → `SCHEDULER_SYMBOLS` → `TRADING_INSTRUMENT`), tách khỏi scheduler
 để dò thêm crypto mà không thêm lượt AI theo đồng hồ. Symbol crypto kích hoạt AI thì
-`SignalOrchestrator` tự dùng prompt + bộ khung crypto. Crypto vẫn chỉ dò trong khung giờ T2–T6 8h–22h.
+`SignalOrchestrator` tự dùng prompt + bộ khung crypto. Crypto dò trong khung giờ 8h–22h cả tuần
+(`SCHEDULER_CRYPTO_WEEKDAYS`, từ 27/10/2026; trước đó chỉ T2–T6) — T7/CN chỉ dò symbol crypto, status trả
+`active_symbols` để modal báo symbol đang nghỉ. Nến crypto lấy Binance nên dò cuối tuần không tốn credit TwelveData,
+nhưng lượt AI do watcher kích hoạt cuối tuần vẫn tiêu quota subscription.
 Fetch nến `SETUP_WATCHER_TIMEFRAME` (M15) + bias khung
 `SETUP_WATCHER_BIAS_TIMEFRAME` (H1; crypto dùng `SETUP_WATCHER_CRYPTO_BIAS_TIMEFRAME` = H4 cho khớp khung bias của prompt crypto; cache tới lúc nến H1 đang chạy đóng — bias chỉ tính trên nến
 đã đóng nên refetch sớm hơn là thừa; `BIAS_CACHE_MIN` chỉ dùng khi nến cuối không còn chạy), chạy `analyzeTimeframe` (nến đã đóng), rồi

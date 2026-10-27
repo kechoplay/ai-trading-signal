@@ -1,6 +1,7 @@
 import { config } from '../config/trading';
 import { logger } from '../logger';
 import { AnalysisBusyError, currentRun, runAnalysis } from './AnalysisRunner';
+import { isCryptoInstrument } from './ai/ClaudeAnalystService';
 
 const VN_WEEKDAY = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
 
@@ -13,7 +14,8 @@ interface ZonedParts {
 
 /**
  * Tự chạy phân tích intraday theo chu kỳ trong khung giờ giao dịch (mặc định mỗi 15
- * phút, 8h–22h, T2–T6 giờ VN).
+ * phút, 8h–22h, T2–T6 giờ VN). Symbol crypto có danh sách ngày riêng (`cryptoWeekdays`,
+ * mặc định cả tuần) — T7/CN chỉ chạy crypto, vàng nghỉ.
  *
  * Vì sao setTimeout tự hẹn lại thay vì setInterval: một lần phân tích mất ~3 phút,
  * setInterval sẽ trôi dần và có thể xếp hàng chồng lên nhau. Mỗi tick tự tính mốc kế
@@ -42,6 +44,7 @@ export class AnalysisScheduler {
     private readonly startHour: number,
     private readonly endHour: number,
     private readonly weekdays: number[],
+    private readonly cryptoWeekdays: number[],
     private readonly symbols: string[],
     private readonly offsetSec: number,
     private readonly timezone: string,
@@ -57,6 +60,7 @@ export class AnalysisScheduler {
       s.startHour,
       s.endHour,
       s.weekdays,
+      s.cryptoWeekdays,
       s.symbols.length > 0 ? s.symbols : [config.instrument],
       s.offsetSec,
       config.marketHours.timezone,
@@ -83,9 +87,9 @@ export class AnalysisScheduler {
       logger.info('Scheduler tắt (SCHEDULER_ENABLED=false) — chỉ chạy phân tích khi bấm tay');
       return;
     }
-    if (this.intervalMin < 1 || this.symbols.length === 0 || this.weekdays.length === 0) {
+    if (this.intervalMin < 1 || this.symbols.every((x) => this.weekdaysOf(x).length === 0)) {
       logger.error('Scheduler cấu hình không hợp lệ — không bật', {
-        intervalMin: this.intervalMin, symbols: this.symbols, weekdays: this.weekdays,
+        intervalMin: this.intervalMin, symbols: this.symbols, weekdays: this.weekdays, crypto_weekdays: this.cryptoWeekdays,
       });
       return;
     }
@@ -95,6 +99,7 @@ export class AnalysisScheduler {
       interval_min: this.intervalMin,
       window: `${this.pad(this.startHour)}:00–${this.pad(this.endHour)}:00 ${this.timezone}`,
       weekdays: this.weekdays.map((d) => VN_WEEKDAY[d]).join(','),
+      crypto_weekdays: this.cryptoWeekdays.map((d) => VN_WEEKDAY[d]).join(','),
       symbols: this.symbols.join(','),
       runs_per_day: this.runsPerDay(),
       next_run: this.nextRunAt ? this.fmt(this.nextRunAt) : null,
@@ -115,6 +120,7 @@ export class AnalysisScheduler {
       window:       `${this.pad(this.startHour)}:00–${this.pad(this.endHour)}:00`,
       timezone:     this.timezone,
       weekdays:     this.weekdays.map((d) => VN_WEEKDAY[d]),
+      crypto_weekdays: this.cryptoWeekdays.map((d) => VN_WEEKDAY[d]),
       symbols:      this.symbols,
       runs_per_day: this.runsPerDay(),
       next_run_at:  this.nextRunAt ? this.fmt(this.nextRunAt) : null,
@@ -155,7 +161,7 @@ export class AnalysisScheduler {
     }
     this.lastRunAt = new Date();
 
-    for (const symbol of this.symbols) {
+    for (const symbol of this.symbolsOn(this.lastRunAt)) {
       try {
         const r = await runAnalysis({ symbol, analysisType: 'intraday', trigger: 'scheduler' });
         this.runCount++;
@@ -182,7 +188,7 @@ export class AnalysisScheduler {
 
   /**
    * Mốc chạy kế tiếp: bội số của intervalMin theo đồng hồ + offsetSec, nằm trong khung
-   * giờ và đúng ngày làm việc. Ngoài khung (đêm, T7/CN) thì nhảy tiếp từng interval cho
+   * giờ và là ngày chạy của ÍT NHẤT một symbol. Ngoài khung (đêm, T7/CN khi không có crypto) thì nhảy tiếp từng interval cho
    * tới mốc hợp lệ — cuối tuần nghỉ 2 ngày vẫn chỉ là ~300 vòng lặp.
    */
   private nextTick(from: Date): Date {
@@ -203,14 +209,25 @@ export class AnalysisScheduler {
       if (this.inWindow(at)) return at;
       candidate += this.intervalMin * 60_000;
     }
-    // Không thể xảy ra với cấu hình hợp lệ (đã chặn weekdays rỗng ở start()).
+    // Không thể xảy ra với cấu hình hợp lệ (start() đã chặn khi không symbol nào có ngày chạy).
     throw new Error('Scheduler: không tìm được mốc chạy hợp lệ — kiểm tra SCHEDULER_WEEKDAYS/START_HOUR/END_HOUR');
   }
 
-  /** Trong khung giờ giao dịch và đúng ngày làm việc (theo múi giờ cấu hình). */
+  /** Ngày chạy của một symbol: crypto 24/7 dùng cryptoWeekdays, còn lại weekdays. */
+  private weekdaysOf(symbol: string): number[] {
+    return isCryptoInstrument(symbol) ? this.cryptoWeekdays : this.weekdays;
+  }
+
+  /** Symbol chạy tại mốc `at` — lọc theo ngày của từng symbol (giờ kiểm ở inWindow). */
+  private symbolsOn(at: Date): string[] {
+    const wd = this.partsIn(at).weekday;
+    return this.symbols.filter((s) => this.weekdaysOf(s).includes(wd));
+  }
+
+  /** Trong khung giờ giao dịch và có ít nhất một symbol chạy ngày đó (theo múi giờ cấu hình). */
   private inWindow(at: Date): boolean {
+    if (this.symbolsOn(at).length === 0) return false;
     const p = this.partsIn(at);
-    if (!this.weekdays.includes(p.weekday)) return false;
     const minutes = p.hour * 60 + p.minute;
     return minutes >= this.startHour * 60 && minutes < this.endHour * 60;
   }

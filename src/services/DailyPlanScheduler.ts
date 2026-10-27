@@ -1,6 +1,7 @@
 import { config } from '../config/trading';
 import { logger } from '../logger';
 import { AnalysisBusyError, runAnalysis } from './AnalysisRunner';
+import { isCryptoInstrument } from './ai/ClaudeAnalystService';
 import { DAILY_PLAN } from './SignalOrchestrator';
 
 const VN_WEEKDAY = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
@@ -33,6 +34,7 @@ interface PlanBatch {
 /**
  * Lập KẾ HOẠCH NGÀY (vàng + crypto) theo các mốc GIỜ cố định: startHour, startHour + intervalHours,
  * … ≤ endHour (mặc định 7h/11h/15h/19h, T2–T6 giờ VN). Mỗi mốc chạy lần lượt từng symbol.
+ * Symbol crypto theo `cryptoWeekdays` (mặc định cả tuần) — T7/CN mốc chỉ chạy crypto.
  *
  * Tách khỏi AnalysisScheduler vì scheduler đó canh mốc theo PHÚT (minute % interval) —
  * chu kỳ 4 giờ sẽ không khớp. Ở đây mốc là đầu giờ trong danh sách `hours`.
@@ -63,6 +65,7 @@ export class DailyPlanScheduler {
     endHour: number,
     intervalHours: number,
     private readonly weekdays: number[],
+    private readonly cryptoWeekdays: number[],
     private readonly symbols: string[],
     private readonly offsetSec: number,
     private readonly busyRetrySec: number,
@@ -79,7 +82,7 @@ export class DailyPlanScheduler {
   static fromConfig(): DailyPlanScheduler {
     const p = config.dailyPlan;
     return new DailyPlanScheduler(
-      p.enabled, p.startHour, p.endHour, p.intervalHours, p.weekdays, p.symbols,
+      p.enabled, p.startHour, p.endHour, p.intervalHours, p.weekdays, p.cryptoWeekdays, p.symbols,
       p.offsetSec, p.busyRetrySec, p.busyMaxWaitMin, config.marketHours.timezone,
     );
   }
@@ -89,9 +92,9 @@ export class DailyPlanScheduler {
       logger.info('Daily plan scheduler tắt (DAILY_PLAN_ENABLED=false)');
       return;
     }
-    if (this.hours.length === 0 || this.symbols.length === 0 || this.weekdays.length === 0) {
+    if (this.hours.length === 0 || this.symbols.every((s) => this.weekdaysOf(s).length === 0)) {
       logger.error('Daily plan scheduler cấu hình không hợp lệ — không bật', {
-        hours: this.hours, symbols: this.symbols, weekdays: this.weekdays,
+        hours: this.hours, symbols: this.symbols, weekdays: this.weekdays, crypto_weekdays: this.cryptoWeekdays,
       });
       return;
     }
@@ -101,6 +104,7 @@ export class DailyPlanScheduler {
       hours: this.hours.map((h) => `${this.pad(h)}:00`).join(','),
       timezone: this.timezone,
       weekdays: this.weekdays.map((d) => VN_WEEKDAY[d]).join(','),
+      crypto_weekdays: this.cryptoWeekdays.map((d) => VN_WEEKDAY[d]).join(','),
       symbols: this.symbols.join(','),
       next_run: this.nextRunAt ? this.fmt(this.nextRunAt) : null,
     });
@@ -119,6 +123,7 @@ export class DailyPlanScheduler {
       hours:        this.hours.map((h) => `${this.pad(h)}:00`),
       timezone:     this.timezone,
       weekdays:     this.weekdays.map((d) => VN_WEEKDAY[d]),
+      crypto_weekdays: this.cryptoWeekdays.map((d) => VN_WEEKDAY[d]),
       symbols:      this.symbols,
       runs_per_day: this.hours.length * this.symbols.length,
       next_run_at:  this.nextRunAt ? this.fmt(this.nextRunAt) : null,
@@ -141,8 +146,19 @@ export class DailyPlanScheduler {
    */
   runAllNow(): string[] | null {
     if (this.running || this.symbols.length === 0) return null;
-    void this.runBatch('api');
+    void this.runBatch('api', this.symbols);
     return this.symbols;
+  }
+
+  /** Ngày lập plan của một symbol: crypto 24/7 dùng cryptoWeekdays, còn lại weekdays. */
+  private weekdaysOf(symbol: string): number[] {
+    return isCryptoInstrument(symbol) ? this.cryptoWeekdays : this.weekdays;
+  }
+
+  /** Symbol có lịch vào ngày (theo múi giờ cấu hình) của mốc `at`. */
+  private symbolsOn(at: Date): string[] {
+    const wd = this.partsIn(at).weekday;
+    return this.symbols.filter((s) => this.weekdaysOf(s).includes(wd));
   }
 
   private arm(): void {
@@ -168,19 +184,22 @@ export class DailyPlanScheduler {
       return;
     }
 
-    await this.runBatch('scheduler');
+    // Kiểm ngày tại đầu giờ (bỏ offset) như nextTick() — T7/CN chỉ còn symbol crypto.
+    const symbols = this.symbolsOn(new Date(Date.now() - this.offsetSec * 1000));
+    if (symbols.length === 0) return;
+    await this.runBatch('scheduler', symbols);
   }
 
   /** Lần lượt từng symbol; `running` chặn lượt thứ hai (mốc giờ / bấm tay) chồng lên. */
-  private async runBatch(trigger: PlanTrigger): Promise<void> {
+  private async runBatch(trigger: PlanTrigger, symbols: string[]): Promise<void> {
     this.running = true;
     this.lastRunAt = new Date();
     const batch: PlanBatch = {
-      trigger, symbols: [...this.symbols], started_at: this.fmt(this.lastRunAt), finished_at: null, results: [],
+      trigger, symbols: [...symbols], started_at: this.fmt(this.lastRunAt), finished_at: null, results: [],
     };
     this.lastBatch = batch;
     try {
-      for (const symbol of this.symbols) {
+      for (const symbol of symbols) {
         this.currentSymbol = symbol;
         batch.results.push(await this.runOne(symbol, trigger));
       }
@@ -222,7 +241,7 @@ export class DailyPlanScheduler {
   }
 
   /**
-   * Mốc kế tiếp: đầu giờ (+offsetSec) thuộc `hours`, đúng ngày làm việc. Bước từng giờ
+   * Mốc kế tiếp: đầu giờ (+offsetSec) thuộc `hours`, là ngày lập plan của ít nhất một symbol. Bước từng giờ
    * theo đồng hồ của múi giờ cấu hình — nghỉ cuối tuần cũng chỉ ~70 vòng.
    */
   private nextTick(from: Date): Date {
@@ -234,8 +253,8 @@ export class DailyPlanScheduler {
 
     for (let i = 0; i < 24 * 8; i++) {
       // Kiểm giờ/ngày tại đầu giờ (bỏ offset) để offset vài phút không đẩy sang giờ khác.
-      const q = this.partsIn(new Date(candidate - this.offsetSec * 1000));
-      if (this.weekdays.includes(q.weekday) && this.hours.includes(q.hour)) return new Date(candidate);
+      const top = new Date(candidate - this.offsetSec * 1000);
+      if (this.hours.includes(this.partsIn(top).hour) && this.symbolsOn(top).length > 0) return new Date(candidate);
       candidate += 3_600_000;
     }
     throw new Error('Daily plan: không tìm được mốc chạy hợp lệ — kiểm tra DAILY_PLAN_WEEKDAYS/START_HOUR/END_HOUR');

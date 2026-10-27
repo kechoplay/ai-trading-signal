@@ -1545,7 +1545,11 @@ function renderWatcher(st) {
   </div>`);
 
   if (!st.in_window_now) {
-    parts.push(`<div class="w-alert info">⏸ Ngoài khung giờ dò (${esc(st.window)}, ngày ${esc((st.weekdays || []).join(','))} — 0=CN). Số liệu bên dưới là của lần dò cuối.</div>`);
+    parts.push(`<div class="w-alert info">⏸ Ngoài khung giờ dò (${esc(st.window)}, ngày ${esc((st.weekdays || []).join(','))}, crypto ${esc((st.crypto_weekdays || []).join(','))} — 0=CN). Số liệu bên dưới là của lần dò cuối.</div>`);
+  } else if (Array.isArray(st.active_symbols)) {
+    // Cuối tuần: crypto vẫn dò, vàng nghỉ.
+    const idle = (st.watch_symbols || []).filter((s) => !st.active_symbols.includes(s));
+    if (idle.length) parts.push(`<div class="w-alert info">⏸ Hôm nay không dò ${esc(idle.join(', '))} (ngoài ngày giao dịch) — số liệu của các symbol này là của lần dò cuối.</div>`);
   }
   if (st.running) parts.push('<div class="w-alert info">⏳ Đang dò / đang chờ một lượt phân tích AI chạy xong…</div>');
   if (st.last_trigger) {

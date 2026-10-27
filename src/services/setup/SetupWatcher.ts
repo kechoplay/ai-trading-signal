@@ -158,7 +158,10 @@ export class SetupWatcher {
       // vì sao snapshot đứng yên (ngoài giờ) thay vì tưởng là lỗi.
       window: `${pad(s.startHour)}:00–${pad(s.endHour)}:00`,
       weekdays: s.weekdays,
-      in_window_now: this.inWindow(new Date()),
+      crypto_weekdays: s.cryptoWeekdays,
+      in_window_now: this.symbolsInWindow(new Date()).length > 0,
+      // Symbol đang trong ngày/giờ dò (cuối tuần chỉ còn crypto) — modal đánh dấu symbol đang nghỉ.
+      active_symbols: this.symbolsInWindow(new Date()),
       running: this.running,
       interval_min: cfg.intervalMin,
       timeframe: cfg.timeframe,
@@ -190,13 +193,17 @@ export class SetupWatcher {
     this.timer = setTimeout(() => { void this.fire(); }, next - now);
   }
 
-  /** Cùng khung giờ/ngày với AnalysisScheduler (SCHEDULER_START_HOUR/END_HOUR/WEEKDAYS). */
-  private inWindow(at: Date): boolean {
+  /**
+   * Symbol được dò tại `at` — cùng khung giờ/ngày với AnalysisScheduler: SCHEDULER_START_HOUR/
+   * END_HOUR cho mọi symbol, ngày theo SCHEDULER_WEEKDAYS (vàng) / SCHEDULER_CRYPTO_WEEKDAYS
+   * (crypto, mặc định cả tuần). Rỗng = ngoài khung.
+   */
+  private symbolsInWindow(at: Date): string[] {
     const s = config.scheduler;
     const p = zonedParts(at, config.marketHours.timezone);
-    if (!s.weekdays.includes(p.weekday)) return false;
     const minutes = p.hour * 60 + p.minute;
-    return minutes >= s.startHour * 60 && minutes < s.endHour * 60;
+    if (minutes < s.startHour * 60 || minutes >= s.endHour * 60) return [];
+    return this.symbols.filter((x) => (isCryptoInstrument(x) ? s.cryptoWeekdays : s.weekdays).includes(p.weekday));
   }
 
   private async fire(): Promise<void> {
@@ -209,11 +216,12 @@ export class SetupWatcher {
       this.timer = setTimeout(() => { void this.fire(); }, config.setupWatcher.intervalMin * 60_000);
     }
 
-    if (!this.inWindow(new Date())) return;
+    const symbols = this.symbolsInWindow(new Date());
+    if (symbols.length === 0) return;
     // Tick trước còn đang chạy (thường vì đang chờ một lượt phân tích AI ~3 phút) → bỏ tick.
     if (this.running) {
       const at = new Date();
-      for (const symbol of this.symbols) {
+      for (const symbol of symbols) {
         await this.recordTick(symbol, at, { outcome: 'BUSY', reasons: ['tick trước còn chạy (đang chờ lượt phân tích AI)'] });
       }
       return;
@@ -222,7 +230,7 @@ export class SetupWatcher {
     this.running = true;
     this.lastTickAt = new Date();
     try {
-      for (const symbol of this.symbols) {
+      for (const symbol of symbols) {
         const startedAt = new Date();
         const tick: TickLog = { outcome: 'IDLE', reasons: [] };
         try {

@@ -4,6 +4,10 @@ import { EXIT_RULES, ExitRuleName } from '../services/swing/SwingSignalService';
 const numList = (raw: string): number[] =>
   raw.split(',').map((x) => parseFloat(x.trim())).filter((n) => Number.isFinite(n) && n > 0);
 
+/** "1,2,3,4,5" → ngày trong tuần theo Date.getDay (0=CN … 6=T7); bỏ phần tử ngoài 0–6. */
+const parseWeekdays = (raw: string): number[] =>
+  raw.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => Number.isInteger(n) && n >= 0 && n <= 6);
+
 const exitRule = (raw?: string): ExitRuleName => {
   const v = (raw ?? '').trim().toUpperCase();
   return (EXIT_RULES as string[]).includes(v) ? (v as ExitRuleName) : 'PARTIAL_BE';
@@ -203,10 +207,10 @@ export const config = {
     startHour: parseInt(process.env.SCHEDULER_START_HOUR ?? '8', 10),
     endHour: parseInt(process.env.SCHEDULER_END_HOUR ?? '22', 10),
     // 1=T2 … 5=T6 (chuẩn Date.getDay: 0=CN, 6=T7). Vàng nghỉ T7/CN nên mặc định bỏ.
-    weekdays: (process.env.SCHEDULER_WEEKDAYS ?? '1,2,3,4,5')
-      .split(',')
-      .map((s) => parseInt(s.trim(), 10))
-      .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6),
+    weekdays: parseWeekdays(process.env.SCHEDULER_WEEKDAYS ?? '1,2,3,4,5'),
+    // Ngày chạy cho symbol crypto (BTC/ETH…) — giao dịch 24/7 nên mặc định cả tuần.
+    // Áp cho cả SetupWatcher. Khung giờ vẫn dùng START_HOUR/END_HOUR như vàng.
+    cryptoWeekdays: parseWeekdays(process.env.SCHEDULER_CRYPTO_WEEKDAYS ?? '0,1,2,3,4,5,6'),
     // Trống → dùng TRADING_INSTRUMENT. Nhiều symbol → chạy LẦN LƯỢT trong cùng một tick
     // (không song song, vì single-flight trong AnalysisRunner chặn chạy đồng thời).
     symbols: (process.env.SCHEDULER_SYMBOLS ?? '')
@@ -227,10 +231,9 @@ export const config = {
     startHour: parseInt(process.env.DAILY_PLAN_START_HOUR ?? '7', 10),
     endHour: parseInt(process.env.DAILY_PLAN_END_HOUR ?? '22', 10),
     intervalHours: parseInt(process.env.DAILY_PLAN_INTERVAL_HOURS ?? '4', 10),
-    weekdays: (process.env.DAILY_PLAN_WEEKDAYS ?? '1,2,3,4,5')
-      .split(',')
-      .map((s) => parseInt(s.trim(), 10))
-      .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6),
+    weekdays: parseWeekdays(process.env.DAILY_PLAN_WEEKDAYS ?? '1,2,3,4,5'),
+    // Ngày lập plan cho symbol crypto — mặc định cả tuần (T7/CN chỉ chạy BTC/ETH, bỏ vàng).
+    cryptoWeekdays: parseWeekdays(process.env.DAILY_PLAN_CRYPTO_WEEKDAYS ?? '0,1,2,3,4,5,6'),
     // Vàng dùng prompt plan vàng; symbol crypto (BTC/ETH…) tự dùng prompt plan crypto
     // (LONG/SHORT, ngày UTC, funding/OI). Mỗi mốc chạy lần lượt từng symbol (~3 phút/symbol).
     symbols: (process.env.DAILY_PLAN_SYMBOLS ?? 'XAU/USD,BTC/USD,ETH/USD')
