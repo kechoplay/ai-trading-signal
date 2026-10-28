@@ -9,7 +9,7 @@
 **AI Trading Signal** là hệ thống phân tích kỹ thuật và phát tín hiệu giao dịch cho **XAU/USD (vàng)** và các cặp **crypto (BTC/USD, ETH/USD…)** sử dụng Claude AI (Anthropic). Hệ thống lấy dữ liệu nến từ API thị trường, gửi qua Claude để phân tích đa khung thời gian, lưu kết quả vào SQLite và gửi thông báo qua Telegram. Phân tích được trigger theo ba đường: **scheduler nội bộ** theo đồng hồ (`SCHEDULER_INTERVAL_MIN`, 8h–22h, T2–T6 giờ VN), **SetupWatcher** theo sự kiện (chuỗi sweep → CHoCH có displacement → retest, dò cơ học mỗi 5 phút) và **thủ công** qua REST API / dashboard. Ngoài tín hiệu intraday còn có **kế hoạch ngày** cho vàng + BTC/ETH (`DailyPlanScheduler`, 7h/11h/15h/19h T2–T6) — plan bias + kịch bản, không ra lệnh. **Crypto chạy cả T7/CN** (thêm 27/10/2026): `SCHEDULER_CRYPTO_WEEKDAYS` / `DAILY_PLAN_CRYPTO_WEEKDAYS` (mặc định `0,1,2,3,4,5,6`) thay `*_WEEKDAYS` cho symbol crypto ở cả scheduler intraday, SetupWatcher lẫn daily plan — cuối tuần mỗi mốc chỉ chạy symbol crypto, vàng nghỉ; khung giờ vẫn chung. Không dùng cron của OS — scheduler chạy trong process server.
 
 - **Ngôn ngữ phân tích AI**: Tiếng Việt
-- **Khung thời gian phân tích**: Vàng dùng H4 (context), H1 (bias), M15 (POI), M5 (entry). Crypto dùng bộ khung riêng từ M15: D (context), H4 (bias), H1 (POI), M15 (entry) — cấu hình qua `TRADING_CRYPTO_TIMEFRAMES`, áp dụng khi instrument là crypto và request không truyền timeframes.
+- **Khung thời gian phân tích**: Vàng dùng D (bối cảnh nhiều ngày — chỉ facts, không phải cổng, không đổi confidence; prompt ghi "Context D", không "Bias D" vì `extractBias` lấy dòng `Bias …:` đầu tiên), H4 (context — thuận/ngược dòng), H1 (bias + POI lớn), M15 (POI + entry/confirmation) — bỏ M5 + thêm D từ 27/10/2026 (`TRADING_TIMEFRAMES=D,H4,H1,M15`, nến D/H4 = `TRADING_CANDLES_D`/`_H4` 120 (H4 trước là 30 — không đủ cho lookback 80/ATR nền 96), +1 request TwelveData/lượt, nến thô M15 = `CLAUDE_RAW_CANDLES_M15` 60; đệm SL ≥0.5× ATR M15 ≈ biên độ 1× ATR M5 cũ; impulsive leg / "≥30 nến" đo trên M15). Crypto dùng bộ khung riêng từ M15: D (context), H4 (bias), H1 (POI), M15 (entry) — cấu hình qua `TRADING_CRYPTO_TIMEFRAMES`, áp dụng khi instrument là crypto và request không truyền timeframes.
 - **Tài sản hỗ trợ**: Vàng (prompt scalp ICT/SMC, từ vựng BUY/SELL) và crypto (prompt riêng, từ vựng LONG/SHORT → map về BUY/SELL). Nến + giá crypto lấy từ Binance Futures klines (perpetual USDT-M, có volume); vàng vẫn TwelveData.
 - **Múi giờ hoạt động**: Asia/Ho_Chi_Minh (6:00 – 22:00)
 - **Môi trường**: Node.js + TypeScript, SQLite, chạy trên Windows
@@ -106,12 +106,12 @@ D:/ai-trading-signal/
        ↓
 [SignalOrchestrator.run(instrument?, timeframes?, analysisType?)]
        │  timeframes: dùng tham số nếu có, fallback về TRADING_TIMEFRAMES trong .env
-       ├─ MarketDataProvider.fetchCandles(symbol, H4/H1/M15/M5)  (crypto → exchange=Binance)
+       ├─ MarketDataProvider.fetchCandles(symbol, D/H4/H1/M15)  (crypto → exchange=Binance)
        ├─ MarketDataProvider.fetchCurrentPrice()
        ↓
 [ClaudeAnalystService.analyze(instrument, …)]
        ├─ Chọn prompt theo instrument: vàng (buildGoldSystemPrompt) hoặc crypto (buildCryptoSystemPrompt)
-       ├─ Build user prompt (bảng nến CSV theo tfOrder H4→H1→M15→M5)
+       ├─ Build user prompt (bảng nến CSV theo tfOrder D→H4→H1→M15)
        ├─ Stream Claude API (thinking adaptive, max_tokens 64000)
        ├─ Parse TEXT (regex) → action BUY/SELL/NO_TRADE/WATCHLIST
        │    LONG→BUY, SHORT→SELL; WATCHLIST = canh setup, chưa vào lệnh
@@ -216,7 +216,7 @@ diện. Chỉ gộp lúc thống kê, `signal_outcomes` vẫn 1 dòng/tín hiệ
 
 **Carry-forward lệnh trước chỉ cho lệnh ĐÃ KHỚP** (thêm 27/10/2026, `SignalOrchestrator.loadPendingSetup` +
 `findOpenFill`): khi bản ghi gần nhất là BUY/SELL, xét các lệnh trong `CARRY_FORWARD_ORDER_WINDOW_MIN`, chấm bằng
-`evaluateOutcome` (cùng luật `OUTCOME_*`) trên khung nhỏ nhất vừa lấy cho lượt phân tích (vàng M5, crypto M15),
+`evaluateOutcome` (cùng luật `OUTCOME_*`) trên khung nhỏ nhất vừa lấy cho lượt phân tích (vàng + crypto đều M15),
 lấy lệnh MỚI NHẤT đang `OPEN` — vì scheduler hay lặp lại lệnh, bản mới nhất có thể là bản lặp chưa khớp. Không có
 lệnh nào đang mở (chưa khớp / đã chạm SL/TP1 / hết hạn) → không nhét block "LỆNH ĐANG MỞ" vào prompt. Block báo sẵn
 giờ khớp + MFE/MAE; model chỉ còn khuyến nghị GIỮ / DỜI SL / THOÁT (bỏ trạng thái CHƯA KHỚP / ĐÃ ĐÓNG).
@@ -246,9 +246,10 @@ LOG_LEVEL=info
 # Market Data
 MARKET_PROVIDER=twelvedata          # hoặc "oanda"
 TRADING_INSTRUMENT=XAU/USD
-TRADING_TIMEFRAMES=H4,H1,M15,M5    # H4 context → M5 entry
+TRADING_TIMEFRAMES=D,H4,H1,M15     # D bối cảnh → H4 dòng → M15 entry
 TRADING_CANDLES_COUNT=214
-TRADING_CANDLES_H4=30               # H4 chỉ làm context → ít nến
+TRADING_CANDLES_D=120               # D/H4 chỉ gửi facts → nhiều nến không tốn token;
+TRADING_CANDLES_H4=120              # ≥110 cho lookback range 80 + ATR nền 96 + ADX(14)
 TRADING_CANDLES_H1=214
 TRADING_CANDLES_M15=240
 TRADING_CANDLES_M5=180
@@ -871,7 +872,7 @@ GET https://api-fxpractice.oanda.com/v3/instruments/XAU_USD/candles
 
 ## Quy tắc quan trọng khi sửa code
 
-1. **Khung thời gian**: Intraday dùng H4 (context), H1, M15, M5 — thứ tự gửi nến do `tfOrder` trong `ClaudeAnalystService` quyết định.
+1. **Khung thời gian**: Intraday vàng dùng D (bối cảnh), H4 (context), H1, M15 (entry) — thứ tự gửi nến do `tfOrder` trong `ClaudeAnalystService` quyết định.
 2. **Ngôn ngữ prompt**: Prompt AI viết bằng tiếng Việt — giữ nguyên. Vàng dùng từ vựng BUY/SELL, crypto dùng LONG/SHORT — khi sửa parser phải giữ map LONG→BUY, SHORT→SELL.
 3. **Database**: Dùng Prisma — không dùng raw SQL. Sau mỗi thay đổi schema (`prisma/schema.prisma`), bắt buộc chạy:
    ```bash
