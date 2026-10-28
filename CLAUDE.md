@@ -214,12 +214,15 @@ khoảng SL so với tín hiệu gần nhất của setup, và ra lúc setup cò
 cửa sổ khớp). Đại diện = tín hiệu khớp sớm nhất (chưa khớp → tín hiệu đầu) — `trigger`/`confidence` theo đại
 diện. Chỉ gộp lúc thống kê, `signal_outcomes` vẫn 1 dòng/tín hiệu. `?raw=1` = không gộp.
 
-**Carry-forward lệnh trước chỉ cho lệnh ĐÃ KHỚP** (thêm 27/10/2026, `SignalOrchestrator.loadPendingSetup` +
-`findOpenFill`): khi bản ghi gần nhất là BUY/SELL, xét các lệnh trong `CARRY_FORWARD_ORDER_WINDOW_MIN`, chấm bằng
+**Carry-forward lệnh trước: lệnh ĐÃ KHỚP, không có thì lệnh CHỜ** (27/10/2026, `SignalOrchestrator.loadPendingSetup` +
+`evaluatePrevOrder`): khi bản ghi gần nhất là BUY/SELL, xét các lệnh trong `CARRY_FORWARD_ORDER_WINDOW_MIN`, chấm bằng
 `evaluateOutcome` (cùng luật `OUTCOME_*`) trên khung nhỏ nhất vừa lấy cho lượt phân tích (vàng + crypto đều M15),
-lấy lệnh MỚI NHẤT đang `OPEN` — vì scheduler hay lặp lại lệnh, bản mới nhất có thể là bản lặp chưa khớp. Không có
-lệnh nào đang mở (chưa khớp / đã chạm SL/TP1 / hết hạn) → không nhét block "LỆNH ĐANG MỞ" vào prompt. Block báo sẵn
-giờ khớp + MFE/MAE; model chỉ còn khuyến nghị GIỮ / DỜI SL / THOÁT (bỏ trạng thái CHƯA KHỚP / ĐÃ ĐÓNG).
+lấy lệnh MỚI NHẤT đang `OPEN` — vì scheduler hay lặp lại lệnh, bản mới nhất có thể là bản lặp chưa khớp. Block "LỆNH
+ĐANG MỞ" báo sẵn giờ khớp + MFE/MAE; model khuyến nghị GIỮ / DỜI SL / THOÁT. Không có lệnh `OPEN` → lấy lệnh MỚI NHẤT
+`PENDING` (chưa khớp, còn trong `OUTCOME_FILL_WINDOW_MIN`, chưa chạm TP1) → block "LỆNH CHỜ CHƯA KHỚP" (thêm 28/10/2026)
+báo giá tiến gần entry nhất (+ khoảng cách theo R) và giờ hết hạn khớp; model khuyến nghị GIỮ / HỦY LỆNH CHỜ, và nếu giá
+đã sát entry thì thêm nhánh "nếu đã khớp ở broker". Lý do: 28/10 SELL limit 4058.2 — đỉnh TwelveData 4057.68 (hụt 0.52 =
+0.04R) nhưng broker đã khớp, lượt sau bỏ hẳn lệnh. Đã chạm SL/TP1 / hết hạn / `NO_FILL` → không nhét gì.
 
 `POST /api/outcomes/rescore { days? }` (≤ `OUTCOME_BACKFILL_DAYS`): chấm lại MỌI bản ghi trong N ngày theo luật
 hiện tại (lượt 15 phút không đụng bản ghi đã chốt) + nạp lại `confidence` null từ `reasoning` bằng parser mới

@@ -213,10 +213,11 @@ export class SignalOrchestrator {
    *  - Tính năng đang bật + có analysisType (longterm không truyền → bỏ, cửa sổ 2h không hợp).
    *  - Bản ghi GẦN NHẤT là WATCHLIST → kiểm chứng setup, hoặc BUY/SELL → đánh giá quản lý
    *    lệnh (giữ/thoát). NO_TRADE → không có gì để mang theo.
-   *  - BUY/SELL chỉ mang theo lệnh ĐÃ KHỚP entry và CHƯA chạm SL/TP1 (chấm trên chính bộ nến
-   *    vừa lấy, cùng luật với outcome tracker — xem findOpenFill): lệnh mới nhất đang mở trong
-   *    cửa sổ orderWindowMin. Không lệnh nào đang mở → bỏ, phân tích như chưa có lệnh (trước
-   *    27/10/2026 model tự đoán "CHƯA KHỚP / ĐANG CHẠY / ĐÃ ĐÓNG" từ nến, đánh giá cả lệnh chưa khớp).
+   *  - BUY/SELL: chấm trên chính bộ nến vừa lấy, cùng luật với outcome tracker (evaluatePrevOrder),
+   *    lấy lệnh mới nhất ĐÃ KHỚP + chưa chạm SL/TP1 trong cửa sổ orderWindowMin → quản lý lệnh;
+   *    không có thì lệnh chờ mới nhất CHƯA KHỚP còn trong cửa sổ khớp → giữ/hủy lệnh chờ (thêm
+   *    28/10/2026 — nguồn giá lệch broker, lệnh hụt entry vài chục cent trên TwelveData vẫn có thể
+   *    đã khớp ở broker). Không có cả hai → bỏ, phân tích như chưa có lệnh.
    *  - Còn trong cửa sổ config.carryForward.windowMin.
    * Fail-soft: mọi lỗi (parse JSON / DB) → trả null, phân tích vẫn chạy bình thường.
    */
@@ -247,11 +248,11 @@ export class SignalOrchestrator {
       const tz = config.marketHours.timezone;
       const fmtVn = (d: Date) => d.toLocaleString('vi-VN', { timeZone: tz, hour12: false });
 
-      // Order: chỉ mang theo lệnh đã khớp + đang chạy. Scheduler hay lặp lại cùng một lệnh mỗi lượt,
-      // bản ghi mới nhất có thể là bản lặp chưa khớp (giá đã rời entry) trong khi bản trước đã khớp
-      // → xét các lệnh trong cửa sổ, lấy lệnh MỚI NHẤT đang mở.
+      // Order: ưu tiên lệnh đã khớp + đang chạy. Scheduler hay lặp lại cùng một lệnh mỗi lượt, bản
+      // ghi mới nhất có thể là bản lặp chưa khớp trong khi bản trước đã khớp → xét các lệnh trong
+      // cửa sổ, lấy lệnh MỚI NHẤT đang mở; không có thì lấy lệnh chờ MỚI NHẤT còn trong cửa sổ khớp.
       let src = last;
-      let fill: { filledAtVn: string; mfeR: number | null; maeR: number | null } | undefined;
+      let orderInfo: Partial<PendingSetup> | undefined;
       if (isOrder) {
         const orders = await prisma.tradingSignal.findMany({
           where: {
@@ -261,16 +262,21 @@ export class SignalOrchestrator {
           orderBy: { created_at: 'desc' },
           take: 20,
         });
-        let open: ReturnType<SignalOrchestrator['findOpenFill']> = null;
-        for (const o of orders) {
-          open = this.findOpenFill(o, o.action as 'BUY' | 'SELL', candlesByTf);
-          if (open) { src = o; break; }
-        }
-        if (!open) {
-          logger.info('Carry-forward: không có lệnh nào đã khớp + đang chạy — bỏ qua', { instrument, checked: orders.length });
+        const states = orders.map((o) => ({ o, s: this.evaluatePrevOrder(o, o.action as 'BUY' | 'SELL', candlesByTf) }));
+        const pick = states.find((x) => x.s?.status === 'OPEN') ?? states.find((x) => x.s?.status === 'PENDING');
+        if (!pick?.s) {
+          logger.info('Carry-forward: không có lệnh nào đang chạy hoặc đang chờ khớp — bỏ qua', { instrument, checked: orders.length });
           return null;
         }
-        fill = { filledAtVn: fmtVn(new Date(open.filledMs)), mfeR: open.mfeR, maeR: open.maeR };
+        src = pick.o;
+        const s = pick.s;
+        orderInfo = s.status === 'OPEN'
+          ? { orderState: 'filled', filledAtVn: fmtVn(new Date(s.filledMs)), mfeR: s.mfeR, maeR: s.maeR }
+          : {
+              orderState: 'pending', closestPrice: s.closestPrice, closestGapR: s.closestGapR,
+              fillDeadlineVn: fmtVn(new Date(s.deadlineMs)),
+              fillMinutesLeft: Math.max(0, Math.round((s.deadlineMs - Date.now()) / 60000)),
+            };
       }
 
       const raw = JSON.parse(src.raw_ai_response ?? '{}');
@@ -286,13 +292,14 @@ export class SignalOrchestrator {
       const srcAge = Math.round((Date.now() - new Date(src.created_at).getTime()) / 60000);
 
       logger.info('Carry-forward: nhét tín hiệu lần trước để đánh giá', {
-        instrument, analysisType, kind, direction, ageMinutes: srcAge, signal_id: src.id, filled_at: fill?.filledAtVn,
+        instrument, analysisType, kind, direction, ageMinutes: srcAge, signal_id: src.id,
+        order_state: orderInfo?.orderState, filled_at: orderInfo?.filledAtVn, closest_price: orderInfo?.closestPrice,
       });
       return {
         kind, direction, ageMinutes: srcAge, analyzedAtVn: fmtVn(new Date(src.created_at)),
         priceThen: src.current_price ?? null, rawText,
         entry: src.entry, stopLoss: src.stop_loss, takeProfit: src.take_profit, riskReward: src.risk_reward,
-        ...fill,
+        ...orderInfo,
       };
     } catch (err: any) {
       logger.warn('Carry-forward: nạp tín hiệu lần trước thất bại — bỏ qua', { error: err?.message ?? String(err) });
@@ -302,15 +309,18 @@ export class SignalOrchestrator {
 
   /**
    * Chấm lệnh BUY/SELL lần trước trên khung nhỏ nhất vừa lấy (vàng + crypto đều M15) bằng
-   * evaluateOutcome — cùng luật bi quan với outcome tracker. Trả thông tin khớp nếu lệnh đang
-   * mở (OPEN), null khi chưa khớp / đã chạm SL/TP1 / hết hạn / thiếu mức giá / nến không phủ tới.
+   * evaluateOutcome — cùng luật bi quan với outcome tracker. OPEN → thông tin khớp; PENDING (chưa
+   * khớp, còn trong cửa sổ khớp, chưa chạm TP1) → giá tiến gần entry nhất + hạn khớp; null khi đã
+   * chạm SL/TP1 / hết hạn / NO_FILL / thiếu mức giá / nến không phủ tới.
    */
-  private findOpenFill(
+  private evaluatePrevOrder(
     last: { id: number; entry: number | null; stop_loss: number | null; take_profit: number | null;
             current_price: number | null; created_at: Date },
     direction: 'BUY' | 'SELL',
     candlesByTf: Record<string, Candle[]>,
-  ): { filledMs: number; mfeR: number | null; maeR: number | null } | null {
+  ): { status: 'OPEN'; filledMs: number; mfeR: number | null; maeR: number | null }
+    | { status: 'PENDING'; deadlineMs: number; closestPrice: number | null; closestGapR: number | null }
+    | null {
     const { entry, stop_loss: sl, take_profit: tp } = last;
     if (entry == null || sl == null || tp == null || !validateLevels(direction, entry, sl, tp)) {
       logger.info('Carry-forward: lệnh lần trước thiếu/sai mức giá — bỏ qua', { signal_id: last.id });
@@ -328,21 +338,32 @@ export class SignalOrchestrator {
       return open ? [{ openMs: open.getTime(), high: k.high, low: k.low, close: k.close }] : [];
     });
     const c = config.outcome;
+    const signalMs = last.created_at.getTime();
+    const tfMs = TF_SECONDS[tf] * 1000;
+    const fillWindowMs = c.fillWindowMin * 60_000;
     const r = evaluateOutcome({
       direction, entry, stopLoss: sl, takeProfit: tp,
       currentPrice: last.current_price,
-      signalMs: last.created_at.getTime(), tfMs: TF_SECONDS[tf] * 1000,
-      fillWindowMs: c.fillWindowMin * 60_000, holdMaxMs: c.holdMaxHours * 3_600_000,
+      signalMs, tfMs, fillWindowMs, holdMaxMs: c.holdMaxHours * 3_600_000,
       marketFillTolR: c.marketFillTolR, cancelOnTpBeforeFill: c.cancelOnTpBeforeFill, nowMs: Date.now(),
     }, candles);
 
-    if (r.status !== 'OPEN' || r.filledMs == null) {
-      logger.info('Carry-forward: lệnh lần trước không ở trạng thái đã khớp + đang chạy — bỏ qua', {
-        signal_id: last.id, status: r.status, tf,
-      });
-      return null;
+    if (r.status === 'OPEN' && r.filledMs != null) {
+      return { status: 'OPEN', filledMs: r.filledMs, mfeR: r.mfeR, maeR: r.maeR };
     }
-    return { filledMs: r.filledMs, mfeR: r.mfeR, maeR: r.maeR };
+    if (r.status === 'PENDING') {
+      // Cùng tập nến evaluateOutcome xét khớp: từ nến mở sau lúc ra tín hiệu (gồm nến đang chạy).
+      const firstOpen = Math.ceil(signalMs / tfMs) * tfMs;
+      const after = candles.filter((k) => k.openMs >= firstOpen);
+      const closestPrice = after.length === 0 ? null
+        : direction === 'BUY' ? Math.min(...after.map((k) => k.low)) : Math.max(...after.map((k) => k.high));
+      const closestGapR = closestPrice == null ? null : Math.abs(entry - closestPrice) / Math.abs(entry - sl);
+      return { status: 'PENDING', deadlineMs: signalMs + fillWindowMs, closestPrice, closestGapR };
+    }
+    logger.info('Carry-forward: lệnh lần trước không còn đang chạy / đang chờ khớp — bỏ qua', {
+      signal_id: last.id, status: r.status, tf,
+    });
+    return null;
   }
 
   private async notify(

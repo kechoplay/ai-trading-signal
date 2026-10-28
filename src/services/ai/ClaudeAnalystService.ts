@@ -26,7 +26,8 @@ export interface CryptoExtras {
  * cho AI đánh giá tiếp thay vì phân tích lại từ số 0. Cố ý đưa dạng ĐÁNH GIÁ ĐỘC LẬP
  * để tránh anchoring bias.
  *  - kind='watchlist': setup đang canh → KIỂM CHỨNG (đã kích hoạt / vô hiệu / vẫn chờ).
- *  - kind='order':     lệnh ĐÃ KHỚP, chưa chạm SL/TP1 (code chấm trên nến) → QUẢN LÝ (giữ / dời SL / thoát).
+ *  - kind='order':     lệnh ĐÃ KHỚP, chưa chạm SL/TP1 (code chấm trên nến) → QUẢN LÝ (giữ / dời SL / thoát);
+ *                      hoặc lệnh chờ CHƯA KHỚP còn trong cửa sổ khớp (orderState='pending') → GIỮ / HỦY lệnh chờ.
  */
 export interface PendingSetup {
   kind: 'watchlist' | 'order';
@@ -40,9 +41,15 @@ export interface PendingSetup {
   stopLoss?: number | null;
   takeProfit?: number | null;
   riskReward?: number | null;
+  orderState?: 'filled' | 'pending'; // kind='order': đã khớp + đang chạy / lệnh chờ chưa khớp
   filledAtVn?: string;     // lúc khớp entry (giờ VN, đã format)
   mfeR?: number | null;    // đi xa nhất theo hướng lệnh kể từ khi khớp (R)
   maeR?: number | null;    // thụt lùi sâu nhất kể từ khi khớp (R)
+  // Chỉ có với orderState='pending'.
+  closestPrice?: number | null;   // giá tiến gần entry nhất kể từ lúc ra tín hiệu (null = chưa có nến sau tín hiệu)
+  closestGapR?: number | null;    // khoảng cách còn lại tới entry, quy ra R (khoảng SL)
+  fillDeadlineVn?: string;        // hết cửa sổ khớp (giờ VN, đã format)
+  fillMinutesLeft?: number;
 }
 
 /** Plan lượt trước trong ngày — nhét vào prompt kế hoạch ngày để cập nhật kịch bản. */
@@ -1559,6 +1566,7 @@ function buildPreviousWatchlistBlock(p: PendingSetup): string {
 }
 
 function buildPreviousOrderBlock(p: PendingSetup): string {
+  if (p.orderState === 'pending') return buildPreviousLimitBlock(p);
   const dir = p.direction === 'BUY' ? 'BUY (LONG)' : 'SELL (SHORT)';
   const priceThen = p.priceThen != null ? `${p.priceThen}` : 'không rõ';
   const num = (x: number | null | undefined) => (x != null ? `${x}` : '—');
@@ -1582,6 +1590,41 @@ function buildPreviousOrderBlock(p: PendingSetup): string {
     `   #### QUẢN LÝ LỆNH TRƯỚC`,
     `   - Trạng thái: ĐANG CHẠY`,
     `   - Khuyến nghị: [GIỮ / DỜI SL / THOÁT] — [lý do ngắn bằng price action]`,
+    `Sau block đó, TIẾP TỤC phân tích entry MỚI như bình thường — khách quan, độc lập với lệnh cũ (có thể ra ORDER mới, WATCHLIST, hoặc NO TRADE).`,
+  ].join('\n');
+}
+
+/**
+ * Lệnh chờ lần trước CHƯA khớp trên nến của hệ thống nhưng còn trong cửa sổ khớp. Nguồn giá
+ * (TwelveData) lệch broker vài chục cent — 28/10/2026 SELL limit 4058.2, đỉnh TwelveData 4057.68,
+ * broker đã khớp — nên block báo khoảng cách gần nhất và bắt model trả lời cả nhánh "nếu đã khớp".
+ */
+function buildPreviousLimitBlock(p: PendingSetup): string {
+  const dir = p.direction === 'BUY' ? 'BUY (LONG)' : 'SELL (SHORT)';
+  const priceThen = p.priceThen != null ? `${p.priceThen}` : 'không rõ';
+  const num = (x: number | null | undefined) => (x != null ? `${x}` : '—');
+  const closest = p.closestPrice != null
+    ? `giá tiến gần entry nhất ${p.closestPrice} (còn cách ${p.closestGapR != null ? `${p.closestGapR.toFixed(2)}R` : '—'} — nguồn giá hệ thống có thể lệch broker vài chục cent, lệnh SÁT entry có thể đã khớp ở broker)`
+    : 'chưa có nến nào đóng/mở sau lúc ra tín hiệu';
+  return [
+    `=== LỆNH CHỜ CHƯA KHỚP — ĐÁNH GIÁ GIỮ HAY HỦY (lệnh ra cách đây ${p.ageMinutes} phút — lúc ${p.analyzedAtVn} giờ VN) ===`,
+    `Lần trước hệ thống đã ra LỆNH ${dir} dạng lệnh chờ. Giá lúc đó: ${priceThen}.`,
+    `Thông số lệnh: Entry ${num(p.entry)} | SL ${num(p.stopLoss)} | TP1 ${num(p.takeProfit)} | RR ${p.riskReward != null ? `1:${p.riskReward}` : '—'}.`,
+    `Trạng thái (code đã chấm trên nến thật, KHÔNG cần tự xác định lại): CHƯA KHỚP entry, chưa chạm TP1; ${closest}. Lệnh chờ tự hủy lúc ${p.fillDeadlineVn ?? 'không rõ'} giờ VN (còn ${p.fillMinutesLeft ?? '—'} phút).`,
+    `Chi tiết lệnh lần trước (gồm điều kiện "Hủy lệnh nếu"):`,
+    p.rawText,
+    ``,
+    `⚠️ NHIỆM VỤ với lệnh chờ trên — làm ĐỘC LẬP trên FACTS/nến MỚI, KHÔNG mặc định giữ hướng cũ:`,
+    `1. Kiểm POI/entry còn hợp lệ không: điều kiện "Hủy lệnh nếu" (body close), POI đã bị mitigate/invert chưa, cấu trúc khung bias có đổi không, entry còn qua Cổng 1 + Cổng 3 trên dữ liệu mới không.`,
+    `2. KHUYẾN NGHỊ (chọn 1, nêu rõ lý do bằng price action):`,
+    `   • GIỮ LỆNH CHỜ — POI + thesis còn nguyên.`,
+    `   • HỦY LỆNH CHỜ — đã thỏa "Hủy lệnh nếu" / POI vô hiệu / cấu trúc đổi / RR không còn đạt.`,
+    `3. Nếu giá đã SÁT entry, trả lời thêm: nếu lệnh ĐÃ KHỚP ở broker thì GIỮ / DỜI SL / THOÁT.`,
+    `4. Đặt ở ĐẦU output một block quản lý:`,
+    `   #### QUẢN LÝ LỆNH TRƯỚC`,
+    `   - Trạng thái: CHỜ KHỚP`,
+    `   - Khuyến nghị: [GIỮ LỆNH CHỜ / HỦY LỆNH CHỜ] — [lý do ngắn bằng price action]`,
+    `   - Nếu đã khớp ở broker: [GIỮ / DỜI SL / THOÁT] — [lý do ngắn] (bỏ dòng này nếu giá còn xa entry)`,
     `Sau block đó, TIẾP TỤC phân tích entry MỚI như bình thường — khách quan, độc lập với lệnh cũ (có thể ra ORDER mới, WATCHLIST, hoặc NO TRADE).`,
   ].join('\n');
 }
