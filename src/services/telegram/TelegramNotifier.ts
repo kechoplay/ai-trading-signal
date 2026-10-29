@@ -553,13 +553,21 @@ export class TelegramNotifier {
       const messageId = data?.result?.message_id;
       return messageId !== undefined ? String(messageId) : null;
     } catch (err: any) {
+      // Không có response = lỗi mạng (timeout / ECONNRESET / DNS…) → status/body undefined,
+      // nguyên nhân chỉ nằm ở err.code + err.message.
+      const detail = err.response
+        ? `(${err.response.status}): ${JSON.stringify(err.response.data)}`
+        : `(no response, ${err.code ?? 'unknown'}): ${err.message}`;
       logger.error('Telegram sendMessage failed', {
         status: err.response?.status,
         body: err.response?.data,
+        code: err.code,
+        message: err.message,
+        chat_id: body.chat_id,
+        reply_to: body.reply_to_message_id,
+        length: text.length,
       });
-      throw new Error(
-        `Telegram sendMessage failed (${err.response?.status}): ${JSON.stringify(err.response?.data)}`,
-      );
+      throw new Error(`Telegram sendMessage failed ${detail}`);
     }
   }
 
