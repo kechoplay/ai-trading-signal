@@ -313,9 +313,7 @@ export class ClaudeAnalystService {
     const setups: ConditionalSetup[] = [];
 
     for (const direction of ['BUY', 'SELL'] as const) {
-      const label = DIR_LABEL[direction];
-      const re    = new RegExp(`####\\s*${label}[\\s\\S]*?(?=${DIR_BOUNDARY}|###\\s|---|\n{3,}|$)`, 'i');
-      const raw   = text.match(re)?.[0]?.trim();
+      const raw = findOrderSection(text, direction)?.trim();
       if (!raw) continue;
 
       setups.push({ direction, rawText: raw });
@@ -325,38 +323,40 @@ export class ClaudeAnalystService {
   }
 
   private extractAction(text: string): 'BUY' | 'SELL' | 'NO_TRADE' | 'WATCHLIST' {
+    // Model hay in đậm cả nhãn ("**Best opportunity:** WATCHLIST") và hạ heading xuống "##" —
+    // `[*_\s]*` sau dấu ":" + `#{2,6}` để không rơi về NO_TRADE (29/10/2026: BTC WATCHLIST SHORT
+    // lưu thành NO_TRADE vì cả hai).
     // "Patience level: No trade" is the final decision — check first
-    if (/patience\s+level[^:\n]*:\s*no\s+trade/i.test(text)) return 'NO_TRADE';
+    if (/patience\s+level[^:\n]*:[*_\s]*no\s+trade/i.test(text)) return 'NO_TRADE';
 
     // An actionable ORDER block present → trust it over the SUMMARY wording.
-    const hasBuy  = new RegExp(`####\\s*${DIR_LABEL.BUY}`, 'i').test(text);
-    const hasSell = new RegExp(`####\\s*${DIR_LABEL.SELL}`, 'i').test(text);
+    const hasBuy  = new RegExp(`${ORDER_HEAD}${DIR_LABEL.BUY}\\b`, 'i').test(text);
+    const hasSell = new RegExp(`${ORDER_HEAD}${DIR_LABEL.SELL}\\b`, 'i').test(text);
     if (hasBuy && !hasSell) return 'BUY';
     if (hasSell && !hasBuy) return 'SELL';
 
     // WATCHLIST block (canh setup, chưa có ORDER) — ưu tiên trước "Best opportunity"
     // để không biến hướng dự kiến của watchlist thành lệnh thật.
-    if (/####\s*WATCHLIST/i.test(text)) return 'WATCHLIST';
+    if (new RegExp(`${ORDER_HEAD}WATCHLIST`, 'i').test(text)) return 'WATCHLIST';
 
     // Fallback: SUMMARY's stated decision
-    const m = text.match(/best\s+opportunity[^:\n]*:\s*(BUY|SELL|LONG|SHORT)/i);
+    const m = text.match(/best\s+opportunity[^:\n]*:[*_\s]*(BUY|SELL|LONG|SHORT)/i);
     if (m) return dirToAction(m[1]);
-    if (/best\s+opportunity[^:\n]*:\s*WATCHLIST/i.test(text)) return 'WATCHLIST';
+    if (/best\s+opportunity[^:\n]*:[*_\s]*WATCHLIST/i.test(text)) return 'WATCHLIST';
 
     return 'NO_TRADE';
   }
 
   private extractWatchlist(text: string): ConditionalSetup[] {
-    const re  = /####\s*WATCHLIST[\s\S]*?(?=####\s|###\s|---|\n{3,}|$)/i;
+    const re  = new RegExp(`${ORDER_HEAD}WATCHLIST[\\s\\S]*?${SECTION_END}`, 'i');
     const raw = text.match(re)?.[0]?.trim();
     if (!raw) return [];
-    const dir = raw.match(/Hướng dự kiến[^:\n]*:\s*(BUY|SELL|LONG|SHORT)/i);
+    const dir = raw.match(/Hướng dự kiến[^:\n]*:[*_\s]*(BUY|SELL|LONG|SHORT)/i);
     return [{ direction: dir ? dirToAction(dir[1]) : 'BUY', rawText: raw }];
   }
 
   private extractSection(text: string, action: 'BUY' | 'SELL'): string {
-    const re = new RegExp(`####\\s*${DIR_LABEL[action]}[\\s\\S]*?(?=${DIR_BOUNDARY}|###\\s|---|\n{3,}|$)`, 'i');
-    return text.match(re)?.[0] ?? text;
+    return findOrderSection(text, action) ?? text;
   }
 
   private extractRR(section: string): number | null {
@@ -1658,7 +1658,22 @@ const DIR_LABEL = {
   BUY:  '(?:BUY\\s+ORDER|LONG)',
   SELL: '(?:SELL\\s+ORDER|SHORT)',
 } as const;
-const DIR_BOUNDARY = '####\\s*(?:BUY\\s+ORDER|SELL\\s+ORDER|LONG|SHORT)\\b';
+// Heading của block ORDER: prompt mẫu là `#### BUY ORDER` / `#### LONG`, nhưng model hay viết
+// `## SHORT`, `### SELL ORDER`, `## 🔴 SELL ORDER`, `## [BUY ORDER]` — 23–27/10/2026 có 7 lệnh
+// thật bị lưu NO_TRADE vì chỉ nhận `####`. Nhận 2–6 dấu # + tối đa vài ký tự trang trí trước nhãn.
+const ORDER_HEAD = '(?:^|\\n)#{2,6}[ \\t]*[^\\w\\n]{0,8}';
+// Section kết thúc ở heading kế tiếp (mọi cấp ≥2), `---` hoặc khoảng trống dài.
+const SECTION_END = '(?=\\n#{2,6}\\s|---|\\n{3,}|$)';
+
+/**
+ * Block ORDER theo hướng. Model có lúc lồng heading (`## 🟢 LONG — ORDER` rồi ngay dưới là
+ * `#### LONG`) → heading ngoài cho section rỗng; lấy section đầu tiên có dòng Entry.
+ */
+function findOrderSection(text: string, action: 'BUY' | 'SELL'): string | null {
+  const re = new RegExp(`${ORDER_HEAD}${DIR_LABEL[action]}\\b[\\s\\S]*?${SECTION_END}`, 'gi');
+  const all = [...text.matchAll(re)].map((m) => m[0]);
+  return all.find((s) => /entry/i.test(s)) ?? all[0] ?? null;
+}
 
 function dirToAction(s: string): 'BUY' | 'SELL' {
   const u = s.toUpperCase();

@@ -364,7 +364,13 @@ thêm `CLAUDE_RAW_CANDLES_CRYPTO_H4` (12) nến thô H4 để model đếm khi m
 - `extractAction()` trả về `BUY | SELL | NO_TRADE | WATCHLIST`. Thứ tự ưu tiên: ORDER block thật → `#### WATCHLIST` → dòng `Best opportunity:` trong SUMMARY.
 - `dirToAction()`: **LONG→BUY, SHORT→SELL** (crypto dùng LONG/SHORT, hệ thống lưu BUY/SELL).
 - `WATCHLIST` = setup đang hình thành, chưa đủ điều kiện vào lệnh → không có entry/SL/TP; thông tin "POI đang canh" nằm trong `conditionalSetups`.
-- Các hằng số parser dùng chung: `DIR_LABEL` (`BUY ORDER|LONG`, `SELL ORDER|SHORT`), `DIR_BOUNDARY`.
+- Các hằng số parser dùng chung: `DIR_LABEL` (`BUY ORDER|LONG`, `SELL ORDER|SHORT`), `ORDER_HEAD`, `SECTION_END`.
+- **Heading + in đậm lỏng** (sửa 29/10/2026): model hay lệch mẫu `#### …` — viết `## SHORT`, `### SELL ORDER`,
+  `## 🔴 SELL ORDER`, `## [BUY ORDER]`, `## WATCHLIST`, hoặc lồng `## 🟢 LONG — ORDER` rồi `#### LONG`; và in đậm cả
+  nhãn `**Best opportunity:** SHORT`. Parser cũ chỉ nhận `####` và chữ ngay sau `:` → rơi về NO_TRADE: trên 2117 bản
+  ghi có 49 lệnh BUY/SELL thật + 131 WATCHLIST bị lưu NO_TRADE (vd #2205 BTC 29/10, #2116/#2088/#2085 26–27/10).
+  Nay `ORDER_HEAD` = 2–6 dấu # + ≤8 ký tự trang trí, `[*_\s]*` sau dấu `:`, `findOrderSection()` lấy section đầu
+  tiên có dòng Entry. Bản ghi cũ trong DB CHƯA được parse lại.
 
 **Block ORDER mẫu (vàng):**
 ```
