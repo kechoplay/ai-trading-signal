@@ -508,8 +508,8 @@ nhưng lượt AI do watcher kích hoạt cuối tuần vẫn tiêu quota subscr
 Fetch nến `SETUP_WATCHER_TIMEFRAME` (M15) + bias khung
 `SETUP_WATCHER_BIAS_TIMEFRAME` (H1; crypto dùng `SETUP_WATCHER_CRYPTO_BIAS_TIMEFRAME` = H4 cho khớp khung bias của prompt crypto; cache tới lúc nến H1 đang chạy đóng — bias chỉ tính trên nến
 đã đóng nên refetch sớm hơn là thừa; `BIAS_CACHE_MIN` chỉ dùng khi nến cuối không còn chạy), chạy `analyzeTimeframe` (nến đã đóng), rồi
-`detectSetup()` cho từng hướng: `NONE → SWEPT → CONFIRMED → RETEST`. Chỉ khi `RETEST` (+ KHÔNG ngược
-bias nếu `REQUIRE_BIAS`) mới gọi `runAnalysis({ trigger: 'event', triggerNote })` — `triggerNote` mô tả
+`detectSetup()` cho từng hướng: `NONE → SWEPT → CONFIRMED → RETEST`. Chỉ khi `RETEST` (+ TRÙNG
+bias nếu `REQUIRE_BIAS` — NEUTRAL bị chặn) mới gọi `runAnalysis({ trigger: 'event', triggerNote })` — `triggerNote` mô tả
 chuỗi, được nối vào user prompt dưới dạng "gợi ý cần kiểm chứng độc lập" (chống anchoring).
 
 **Luật bias (đổi 22/10/2026):** `biasOk` = "không NGƯỢC bias rõ ràng" — chỉ chặn BUY khi bias
@@ -520,6 +520,8 @@ loại setup watcher săn — gần như luôn rơi vào lúc H1 còn `NEUTRAL` 
 dần). Claude tự đánh giá lại bias trên dữ liệu đầy đủ. Cột `bias_ok` trong `setup_watch_events` /
 `detail` của `setup_watch_ticks` đổi nghĩa từ ngày này (bản ghi cũ: `false` khi NEUTRAL) — UI suy
 nhãn 3 trạng thái (trùng / trung tính / ngược) từ `bias` + hướng, không đọc `bias_ok`.
+**Đổi lại 29/10/2026:** `biasOk` lại đòi TRÙNG bias — `NEUTRAL` (và `null`) KHÔNG gọi AI, ghi `skip_reason`
+"bias H1 trung tính (NEUTRAL)" (ngược bias vẫn là "ngược bias …"). `bias_ok` từ ngày này lại `false` khi NEUTRAL.
 
 Chặn quota: mỗi chuỗi (key = hướng + thời điểm sweep + thời điểm cú phá) chỉ kích hoạt 1 lần;
 `COOLDOWN_MIN` giữa hai lần cùng symbol; `MAX_PER_DAY` lần/ngày — **trần chung cho MỌI symbol**

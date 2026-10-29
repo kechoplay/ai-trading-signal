@@ -320,11 +320,14 @@ export class SetupWatcher {
     this.snapshots.set(symbol, { at: now.toISOString(), price: live.price, bias, bias_timeframe: biasTimeframeFor(symbol), setups });
     await this.recordTransitions(symbol, cfg.timeframe, live.price, bias, setups);
 
-    // RETEST nhưng NGƯỢC bias rõ ràng → ghi lý do vào lịch sử (không kích hoạt). NEUTRAL vẫn cho qua.
+    // RETEST nhưng không TRÙNG bias (ngược hoặc NEUTRAL / không rõ) → ghi lý do vào lịch sử (không kích hoạt).
     if (cfg.requireBias) {
       for (const s of setups) {
         if (s.stage === 'RETEST' && !s.biasOk) {
-          await this.skip(tick, symbol, s.direction, `ngược bias ${biasTimeframeFor(symbol)} (${bias})`);
+          const against = bias === (s.direction === 'BUY' ? 'BEARISH' : 'BULLISH');
+          await this.skip(tick, symbol, s.direction, against
+            ? `ngược bias ${biasTimeframeFor(symbol)} (${bias})`
+            : `bias ${biasTimeframeFor(symbol)} trung tính (${bias ?? 'không rõ'})`);
         }
       }
     }
