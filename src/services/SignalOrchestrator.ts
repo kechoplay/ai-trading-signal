@@ -211,14 +211,14 @@ export class SignalOrchestrator {
    * Nạp tín hiệu của lần phân tích GẦN NHẤT (cùng instrument + analysis_type) để
    * carry-forward. Điều kiện:
    *  - Tính năng đang bật + có analysisType (longterm không truyền → bỏ, cửa sổ 2h không hợp).
-   *  - Bản ghi GẦN NHẤT là WATCHLIST → kiểm chứng setup, hoặc BUY/SELL → đánh giá quản lý
-   *    lệnh (giữ/thoát). NO_TRADE → không có gì để mang theo.
-   *  - BUY/SELL: chấm trên chính bộ nến vừa lấy, cùng luật với outcome tracker (evaluatePrevOrder),
-   *    lấy lệnh mới nhất ĐÃ KHỚP + chưa chạm SL/TP1 trong cửa sổ orderWindowMin → quản lý lệnh;
-   *    không có thì lệnh chờ mới nhất CHƯA KHỚP còn trong cửa sổ khớp → giữ/hủy lệnh chờ (thêm
-   *    28/10/2026 — nguồn giá lệch broker, lệnh hụt entry vài chục cent trên TwelveData vẫn có thể
-   *    đã khớp ở broker). Không có cả hai → bỏ, phân tích như chưa có lệnh.
-   *  - Còn trong cửa sổ config.carryForward.windowMin.
+   *  - BUY/SELL trong cửa sổ orderWindowMin, BẤT KỂ bản ghi gần nhất là gì (lượt sau có thể ra
+   *    NO_TRADE/WATCHLIST khi lệnh vẫn chạy — prompt vàng cấm lặp ORDER cùng vùng): chấm trên chính
+   *    bộ nến vừa lấy, cùng luật với outcome tracker (evaluatePrevOrder), lấy lệnh mới nhất ĐÃ KHỚP
+   *    + chưa chạm SL/TP1 → quản lý lệnh; không có thì lệnh chờ mới nhất CHƯA KHỚP còn trong cửa sổ
+   *    khớp → giữ/hủy lệnh chờ (thêm 28/10/2026 — nguồn giá lệch broker, lệnh hụt entry vài chục
+   *    cent trên TwelveData vẫn có thể đã khớp ở broker).
+   *  - Không có lệnh nào: bản ghi GẦN NHẤT là WATCHLIST còn trong cửa sổ windowMin → kiểm chứng
+   *    setup. Còn lại → bỏ, phân tích như chưa có lệnh.
    * Fail-soft: mọi lỗi (parse JSON / DB) → trả null, phân tích vẫn chạy bình thường.
    */
   private async loadPendingSetup(
@@ -233,17 +233,7 @@ export class SignalOrchestrator {
         where:   { instrument, analysis_type: analysisType },
         orderBy: { created_at: 'desc' },
       });
-      const isOrder = last?.action === 'BUY' || last?.action === 'SELL';
-      const isWatchlist = last?.action === 'WATCHLIST';
-      if (!last || (!isOrder && !isWatchlist)) return null;
-
-      // Order có cửa sổ rộng hơn watchlist (lệnh giữ lâu hơn POI đang canh).
-      const windowMin = isOrder ? config.carryForward.orderWindowMin : config.carryForward.windowMin;
-      const ageMinutes = Math.round((Date.now() - new Date(last.created_at).getTime()) / 60000);
-      if (ageMinutes > windowMin) {
-        logger.info('Carry-forward: tín hiệu gần nhất đã quá cửa sổ, bỏ qua', { instrument, ageMinutes, windowMin });
-        return null;
-      }
+      if (!last) return null;
 
       const tz = config.marketHours.timezone;
       const fmtVn = (d: Date) => d.toLocaleString('vi-VN', { timeZone: tz, hour12: false });
@@ -251,23 +241,20 @@ export class SignalOrchestrator {
       // Order: ưu tiên lệnh đã khớp + đang chạy. Scheduler hay lặp lại cùng một lệnh mỗi lượt, bản
       // ghi mới nhất có thể là bản lặp chưa khớp trong khi bản trước đã khớp → xét các lệnh trong
       // cửa sổ, lấy lệnh MỚI NHẤT đang mở; không có thì lấy lệnh chờ MỚI NHẤT còn trong cửa sổ khớp.
+      const orders = await prisma.tradingSignal.findMany({
+        where: {
+          instrument, analysis_type: analysisType, action: { in: ['BUY', 'SELL'] },
+          created_at: { gte: new Date(Date.now() - config.carryForward.orderWindowMin * 60_000) },
+        },
+        orderBy: { created_at: 'desc' },
+        take: 20,
+      });
+      const states = orders.map((o) => ({ o, s: this.evaluatePrevOrder(o, o.action as 'BUY' | 'SELL', candlesByTf) }));
+      const pick = states.find((x) => x.s?.status === 'OPEN') ?? states.find((x) => x.s?.status === 'PENDING');
+
       let src = last;
       let orderInfo: Partial<PendingSetup> | undefined;
-      if (isOrder) {
-        const orders = await prisma.tradingSignal.findMany({
-          where: {
-            instrument, analysis_type: analysisType, action: { in: ['BUY', 'SELL'] },
-            created_at: { gte: new Date(Date.now() - windowMin * 60_000) },
-          },
-          orderBy: { created_at: 'desc' },
-          take: 20,
-        });
-        const states = orders.map((o) => ({ o, s: this.evaluatePrevOrder(o, o.action as 'BUY' | 'SELL', candlesByTf) }));
-        const pick = states.find((x) => x.s?.status === 'OPEN') ?? states.find((x) => x.s?.status === 'PENDING');
-        if (!pick?.s) {
-          logger.info('Carry-forward: không có lệnh nào đang chạy hoặc đang chờ khớp — bỏ qua', { instrument, checked: orders.length });
-          return null;
-        }
+      if (pick?.s) {
         src = pick.o;
         const s = pick.s;
         orderInfo = s.status === 'OPEN'
@@ -277,7 +264,16 @@ export class SignalOrchestrator {
               fillDeadlineVn: fmtVn(new Date(s.deadlineMs)),
               fillMinutesLeft: Math.max(0, Math.round((s.deadlineMs - Date.now()) / 60000)),
             };
+      } else {
+        const ageMinutes = Math.round((Date.now() - new Date(last.created_at).getTime()) / 60000);
+        if (last.action !== 'WATCHLIST' || ageMinutes > config.carryForward.windowMin) {
+          logger.info('Carry-forward: không có lệnh đang chạy/chờ khớp hay watchlist còn hiệu lực — bỏ qua', {
+            instrument, checked: orders.length, last_action: last.action, ageMinutes,
+          });
+          return null;
+        }
       }
+      const isOrder = orderInfo != null;
 
       const raw = JSON.parse(src.raw_ai_response ?? '{}');
       const setup = Array.isArray(raw.conditional_setups) ? raw.conditional_setups[0] : null;
