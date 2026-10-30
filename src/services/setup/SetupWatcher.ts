@@ -304,11 +304,10 @@ export class SetupWatcher {
     const bias = await this.biasFor(symbol);
 
     // Nến đang chạy + nến vừa đóng: bắt retest bằng wick xảy ra giữa hai tick.
-    const tail = candles.slice(-2);
+    // Index trong `candles` trùng index nến đã đóng (nến đã đóng là tiền tố của `candles`).
     const live = {
       price: a.lastPrice,
-      recentHigh: Math.max(...tail.map((c) => c.high)),
-      recentLow: Math.min(...tail.map((c) => c.low)),
+      recentBars: candles.slice(-2).map((c, k) => ({ index: candles.length - 2 + k, high: c.high, low: c.low })),
     };
     const params = {
       maxSweepAgeBars: cfg.maxSweepAgeBars,

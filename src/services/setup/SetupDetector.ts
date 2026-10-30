@@ -41,9 +41,12 @@ export interface DetectParams {
 export interface LivePrice {
   /** Giá hiện tại (close của nến cuối, kể cả nến đang chạy). */
   price: number;
-  /** High/low của vài nến gần nhất (nến đang chạy + nến vừa đóng) — bắt retest bằng wick giữa hai tick. */
-  recentHigh: number;
-  recentLow: number;
+  /**
+   * Vài nến gần nhất (nến vừa đóng + nến đang chạy, theo thứ tự thời gian) — bắt retest bằng
+   * wick giữa hai tick. `index` cùng hệ với mảng nến ĐÃ ĐÓNG (nến đang chạy = `closedCount`),
+   * để loại chính cây phá / nến tạo vùng: râu của chúng nằm trong vùng theo định nghĩa.
+   */
+  recentBars: { index: number; high: number; low: number }[];
 }
 
 export function detectSetup(
@@ -101,13 +104,19 @@ export function detectSetup(
   }
 
   // 3) Retest: giá đang trong/sát vùng, hoặc wick vừa chạm vùng mà giá chưa chạy xa.
+  // Chỉ tính nến mở SAU cây phá và sau khi vùng hình thành xong (cùng mốc với phép kiểm "hỏng"
+  // trong IctPreprocessor). Trước 30/10/2026 râu của chính cây phá (vừa đóng) được tính là
+  // retest → chuỗi nhảy CONFIRMED → RETEST ngay tick đầu sau cú phá, giá chưa hồi lần nào.
+  const firstRetestIdx = Math.max(structure.index + 1, zone.index + 2);
+  const bars = live.recentBars.filter((b) => b.index >= firstRetestIdx);
+  const priceIdx = live.recentBars.length ? live.recentBars[live.recentBars.length - 1].index : Infinity;
   const prox = Math.max(0, p.retestProximityAtr) * a.atr;
-  const insideNow = buy
+  const insideNow = priceIdx >= firstRetestIdx && (buy
     ? live.price >= zone.bottom && live.price <= zone.top + prox
-    : live.price <= zone.top && live.price >= zone.bottom - prox;
-  const wickTouched = buy
-    ? live.recentLow <= zone.top + prox && live.price >= zone.bottom && live.price <= zone.top + a.atr
-    : live.recentHigh >= zone.bottom - prox && live.price <= zone.top && live.price >= zone.bottom - a.atr;
+    : live.price <= zone.top && live.price >= zone.bottom - prox);
+  const wickTouched = bars.length > 0 && (buy
+    ? Math.min(...bars.map((b) => b.low)) <= zone.top + prox && live.price >= zone.bottom && live.price <= zone.top + a.atr
+    : Math.max(...bars.map((b) => b.high)) >= zone.bottom - prox && live.price <= zone.top && live.price >= zone.bottom - a.atr);
 
   if (insideNow || wickTouched) {
     return {

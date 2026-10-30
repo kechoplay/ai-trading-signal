@@ -512,6 +512,13 @@ Fetch nến `SETUP_WATCHER_TIMEFRAME` (M15) + bias khung
 bias nếu `REQUIRE_BIAS` — NEUTRAL bị chặn) mới gọi `runAnalysis({ trigger: 'event', triggerNote })` — `triggerNote` mô tả
 chuỗi, được nối vào user prompt dưới dạng "gợi ý cần kiểm chứng độc lập" (chống anchoring).
 
+**RETEST chỉ tính nến mở SAU cây phá** (sửa 30/10/2026): `RETEST` = giá trong vùng / sát vùng
+`RETEST_PROXIMITY_ATR` (0.3)× ATR, hoặc râu nến gần nhất chạm vùng mà giá chưa chạy xa (≤1× ATR). Watcher truyền
+2 nến cuối kèm index (`LivePrice.recentBars`); detector chỉ xét nến có index ≥ `max(cây phá + 1, nến tạo vùng + 2)`
+— cùng mốc với phép kiểm "hỏng" trong `IctPreprocessor`. Trước đó râu của chính cây phá (luôn nằm trong vùng FVG/OB
+nó tạo ra) được tính là retest → chuỗi nhảy CONFIRMED → RETEST ngay tick đầu sau khi cây phá đóng, giá chưa hồi
+(30/10 13:20 XAU: CHoCH 13:00, giá 3989.2 dưới vùng SELL 3992.39–4005.67 mà vẫn gọi AI).
+
 **Luật bias (đổi 22/10/2026):** `biasOk` = "không NGƯỢC bias rõ ràng" — chỉ chặn BUY khi bias
 `BEARISH`, SELL khi `BULLISH`; `NEUTRAL` (và bias `null`) vẫn gọi AI. Trước đó `biasOk` đòi TRÙNG
 bias nên `NEUTRAL` cũng bị chặn. Lý do: bias cơ học (`structureBias`: 2 swing high + 2 swing low gần
