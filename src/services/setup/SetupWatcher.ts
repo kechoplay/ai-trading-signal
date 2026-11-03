@@ -340,10 +340,22 @@ export class SetupWatcher {
       }
     }
 
-    const ready = setups
+    const candidates = setups
       .filter((s) => s.stage === 'RETEST' && s.key != null && !this.triggered.has(s.key))
       .filter((s) => s.biasOk || !cfg.requireBias)
-      .sort((x, y) => (y.structure?.index ?? 0) - (x.structure?.index ?? 0))[0];
+      .sort((x, y) => (y.structure?.index ?? 0) - (x.structure?.index ?? 0));
+    // Đã có lệnh cùng chiều đặt ngay vùng retest (thường do scheduler ra lệnh chờ chế độ B trước
+    // khi giá hồi về) → prompt vàng cấm lặp ORDER nên AI chắc chắn trả NO TRADE: phí một lượt AI và
+    // kênh chính báo "KHÔNG VÀO LỆNH" ngay sau tín hiệu thật. KHÔNG đánh dấu key: lệnh bị hủy /
+    // chốt mà chuỗi còn RETEST thì tick sau vẫn gọi AI.
+    let ready: DetectedSetup | undefined;
+    for (const s of candidates) {
+      const order = await this.activeOrderInZone(symbol, s, a.atr);
+      if (!order) { ready = s; break; }
+      const at = order.created_at.toLocaleTimeString('vi-VN', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false });
+      await this.skip(tick, symbol, s.direction,
+        `đã có lệnh ${s.direction} #${order.id} tại ${order.entry} (${order.trigger ?? '—'} ${at}, ${order.status}) trùng vùng retest — không gọi AI`);
+    }
     if (!ready || !ready.key) return;
 
     // ── Chặn quota ────────────────────────────────────────────────────────────
@@ -499,6 +511,53 @@ export class SetupWatcher {
       } catch (err: unknown) {
         logger.warn('Setup watcher: ghi lịch sử thất bại', { symbol, direction: s.direction, error: errMsg(err) });
       }
+    }
+  }
+
+  /**
+   * Lệnh intraday cùng symbol + chiều, còn hiệu lực, có entry nằm trong vùng retest (± ngưỡng
+   * retest `retestProximityAtr`× ATR). "Còn hiệu lực" = trong cửa sổ carry-forward lệnh (prompt chỉ
+   * thấy lệnh trong cửa sổ này) và outcome `OPEN`, hoặc `PENDING` / chưa chấm mà chưa quá cửa sổ
+   * khớp. Outcome tracker chấm mỗi 15 phút nên lệnh vừa dính SL/TP1 có thể vẫn chặn tới lượt chấm
+   * kế. Lỗi DB → null (không chặn kích hoạt).
+   */
+  private async activeOrderInZone(
+    symbol: string,
+    s: DetectedSetup,
+    atr: number,
+  ): Promise<{ id: number; entry: number; created_at: Date; trigger: string | null; status: string } | null> {
+    if (!s.zone) return null;
+    const now = Date.now();
+    const tol = Math.max(0, config.setupWatcher.retestProximityAtr) * atr;
+    try {
+      const signals = await prisma.tradingSignal.findMany({
+        where: {
+          instrument: symbol,
+          analysis_type: 'intraday',
+          action: s.direction,
+          entry: { gte: s.zone.bottom - tol, lte: s.zone.top + tol },
+          created_at: { gte: new Date(now - config.carryForward.orderWindowMin * 60_000) },
+        },
+        orderBy: { created_at: 'desc' },
+        select: { id: true, entry: true, created_at: true, trigger: true },
+      });
+      if (!signals.length) return null;
+      // Bảng signal_outcomes có thể chưa được tạo trên DB → coi như chưa chấm.
+      const outcomes = await prisma.signalOutcome
+        .findMany({ where: { signal_id: { in: signals.map((x) => x.id) } }, select: { signal_id: true, status: true } })
+        .catch(() => []);
+      const statusOf = new Map(outcomes.map((o) => [o.signal_id, o.status]));
+      for (const sig of signals) {
+        const status = statusOf.get(sig.id) ?? 'PENDING';
+        const age = now - sig.created_at.getTime();
+        if (status === 'OPEN' || (status === 'PENDING' && age <= config.outcome.fillWindowMin * 60_000)) {
+          return { id: sig.id, entry: sig.entry as number, created_at: sig.created_at, trigger: sig.trigger, status };
+        }
+      }
+      return null;
+    } catch (err: unknown) {
+      logger.warn('Setup watcher: kiểm lệnh đang có thất bại — vẫn cho kích hoạt', { symbol, error: errMsg(err) });
+      return null;
     }
   }
 

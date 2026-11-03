@@ -533,6 +533,14 @@ nhãn 3 trạng thái (trùng / trung tính / ngược) từ `bias` + hướng, 
 **Đổi lại 29/10/2026:** `biasOk` lại đòi TRÙNG bias — `NEUTRAL` (và `null`) KHÔNG gọi AI, ghi `skip_reason`
 "bias H1 trung tính (NEUTRAL)" (ngược bias vẫn là "ngược bias …"). `bias_ok` từ ngày này lại `false` khi NEUTRAL.
 
+**Không gọi AI khi đã có lệnh tại vùng retest** (thêm 03/11/2026, `activeOrderInZone`): trước khi kích hoạt,
+tìm tín hiệu intraday cùng symbol + chiều (mọi trigger) trong `CARRY_FORWARD_ORDER_WINDOW_MIN`, entry nằm trong
+vùng retest ± `RETEST_PROXIMITY_ATR`× ATR, outcome `OPEN` hoặc `PENDING`/chưa chấm và chưa quá `OUTCOME_FILL_WINDOW_MIN`
+→ ghi `skip_reason` "đã có lệnh … trùng vùng retest", KHÔNG đánh dấu key (lệnh hủy/chốt mà còn RETEST thì tick sau
+vẫn gọi). Lý do: 03/11 08:03 scheduler đặt BUY limit 3948.93 (#2300) ngay vùng FVG, 08:05 watcher gọi AI cho đúng
+chuỗi đó → luật "Lệnh đã có" của prompt vàng ra NO TRADE (#2301), phí một lượt và kênh chính báo KHÔNG VÀO LỆNH.
+Outcome tracker chấm mỗi 15 phút → lệnh vừa chạm SL/TP1 có thể còn chặn tới lượt chấm kế. Lỗi DB → không chặn.
+
 Chặn quota: mỗi chuỗi (key = hướng + thời điểm sweep + thời điểm cú phá) chỉ kích hoạt 1 lần;
 `COOLDOWN_MIN` giữa hai lần cùng symbol; `MAX_PER_DAY` lần/ngày — **trần chung cho MỌI symbol**
 (quota Claude là một), không phải mỗi symbol; `0` = không giới hạn (`.env` đang để 0 từ 20/10/2026 —
