@@ -737,20 +737,21 @@ function tvSymbol(symbol) {
 
 // EMA 34 / 89 / 200, bật sẵn trên chart.
 // Widget embed công khai BỎ QUA màu theo từng study (`override`) lẫn `studies_overrides`, nên
-// 3 study "Moving Average Exponential" ra cùng một màu. "MA Ribbon" (STD;MA%Ribbon) thì nhận
-// màu qua inputs: mỗi đường 5 input liên tiếp in_{5n}..in_{5n+4} = bật, loại MA, nguồn, độ dài,
-// màu (4 đường, n = 0..3) — đường không dùng thì tắt bằng in_{5n} = false.
-function ribbonLine(n, type, source, length, color) {
-  const i = n * 5;
-  return { ['in_' + i]: true, ['in_' + (i + 1)]: type, ['in_' + (i + 2)]: source,
-           ['in_' + (i + 3)]: length, ['in_' + (i + 4)]: color };
+// 3 study "Moving Average Exponential" ra cùng một màu. Dùng 1 study "MA Ribbon" (STD;MA%Ribbon):
+// mỗi đường 4 input liên tiếp in_{4n}..in_{4n+3} = bật, loại MA, nguồn, độ dài (4 đường, n = 0..3).
+// Màu KHÔNG phải input — màu là màu mặc định của Ribbon (vàng → cam đậm). Bản cũ tưởng 5 input/đường
+// (có màu) nên chỉ đường 1 nhận cấu hình, legend ra "EMA 34 SMA 50 SMA 100 SMA 200" và không vẽ đường nào.
+// Đường 4 tắt nhưng legend vẫn in loại + độ dài của nó → đặt EMA 200 để legend không hiện "SMA".
+function ribbonLine(n, show, type, source, length) {
+  const i = n * 4;
+  return { ['in_' + i]: show, ['in_' + (i + 1)]: type, ['in_' + (i + 2)]: source, ['in_' + (i + 3)]: length };
 }
 const EMA_STUDIES = [
   { id: 'STD;MA%Ribbon', inputs: {
-    ...ribbonLine(0, 'EMA', 'close', 34, '#2962ff'),
-    ...ribbonLine(1, 'EMA', 'close', 89, '#00897b'),
-    ...ribbonLine(2, 'EMA', 'close', 200, '#e91e63'),
-    in_15: false,
+    ...ribbonLine(0, true, 'EMA', 'close', 34),
+    ...ribbonLine(1, true, 'EMA', 'close', 89),
+    ...ribbonLine(2, true, 'EMA', 'close', 200),
+    ...ribbonLine(3, false, 'EMA', 'close', 200),
   } },
 ];
 
@@ -773,8 +774,8 @@ function loadChart(symbol) {
     withdateranges: true,
     hide_side_toolbar: false,
     studies: EMA_STUDIES,
-    // Thanh chọn khung (nhất là trên mobile) chỉ hiện các khung yêu thích — bỏ 30p, giữ bộ khung hệ thống dùng.
-    favorites: { intervals: ['1', '5', '15', '60', '240', '1D'] },
+    // Không có tham số `favorites` ở đây: tv.js KHÔNG chuyển nó vào iframe (đã đọc mã tv.js 03/11/2026),
+    // nên không bỏ được nút 30m bằng code. Khung nhanh trên thanh công cụ do TradingView quyết định.
     container_id: 'tv_chart',
   });
   // Widget embed công khai (tv.js) không có activeChart()/onIntervalChanged() — chỉ

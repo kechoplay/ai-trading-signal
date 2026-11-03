@@ -798,8 +798,11 @@ trên từng bản ghi + dải tổng token trong ngày.
 không vẽ được dữ liệu của hệ thống lên chart, không chạy Pine/script cộng đồng (script SonicR gốc là
 protected, không lấy được). **EMA 34 / 89 / 200 bật sẵn** (thêm 23/10/2026, `EMA_STUDIES`), dựng bằng
 1 study `STD;MA%Ribbon` (đường thứ 4 tắt). Không dùng 3 study `MAExp@tv-basicstudies` vì widget bỏ qua màu theo study (`override`) lẫn `studies_overrides` → mọi EMA cùng
-màu; Ribbon nhận màu qua inputs: đường n (0..3) = `in_{5n}`..`in_{5n+4}` (bật, loại, nguồn, độ dài, màu).
-Thanh chọn khung chỉ hiện `favorites.intervals` (1/5/15/60/240/1D — bỏ 30p).
+màu; Ribbon có ít nhất 3 màu khác nhau (màu mặc định của Ribbon, KHÔNG đặt được qua inputs): đường n (0..3) =
+`in_{4n}`..`in_{4n+3}` (bật, loại, nguồn, độ dài). Đường 4 tắt nhưng vẫn in trong legend → đặt EMA 200 cho legend
+không hiện "SMA". Trước 03/11/2026 dùng nhầm bước 5 (tưởng có input màu) → legend "EMA 34 SMA 50 SMA 100 SMA 200", không vẽ đường nào.
+Thanh chọn khung KHÔNG chỉnh được: `tv.js` không chuyển `favorites` vào iframe (bản cũ có `favorites.intervals`
+bỏ 30p nhưng chưa từng có tác dụng — gỡ 03/11/2026). `disabled_features: ['header_resolutions']` (chưa thử) nếu có tác dụng thì ẩn cả bộ chọn khung.
 
 ---
 
