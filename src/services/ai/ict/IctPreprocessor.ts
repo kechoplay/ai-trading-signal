@@ -181,7 +181,8 @@ export interface StructureEvent {
   index: number;
   /**
    * Có nến displacement đi kèm không: nến phá (hoặc nến liền trước, cùng chiều) có thân
-   * ≥ `ict.displacementBodyAtr` × ATR, HOẶC cú phá để lại FVG cùng chiều. false → theo
+   * ≥ `ict.displacementBodyAtr` × ATR, HOẶC cú phá để lại FVG cùng chiều rộng ≥
+   * `ict.displacementFvgMinAtr` × ATR. false → theo
    * định nghĩa trong prompt, đây KHÔNG phải CHoCH/BOS hợp lệ (chỉ là body close nhích qua).
    */
   displacement: boolean;
@@ -966,7 +967,11 @@ function describeBreak(
   // OB = nến ngược cuối cùng trước cú đẩy, nằm ngay trước/tại nến phá.
   const ob = obs.filter((o) => o.type === direction && o.index >= i - 3 && o.index <= i).pop();
 
-  const displacement = (atrValue > 0 && maxBody >= atrValue * config.ict.displacementBodyAtr) || Boolean(fvg);
+  // FVG mỏng (vài chục cent) không phải dấu vết của lực đẩy — chỉ tính khi đủ rộng.
+  const fvgMin = Math.max(0, config.ict.displacementFvgMinAtr) * atrValue;
+  const strongFvg = fvgs.some((f) => f.type === direction && f.index >= i - 2 && f.index <= i + 1
+    && f.top - f.bottom >= fvgMin);
+  const displacement = (atrValue > 0 && maxBody >= atrValue * config.ict.displacementBodyAtr) || strongFvg;
 
   type Box = { top: number; bottom: number; index: number; mitigated: boolean };
   const zoneOf = (source: RetestZone['source'], z: Box): RetestZone => {

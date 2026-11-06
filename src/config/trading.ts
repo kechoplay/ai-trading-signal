@@ -72,6 +72,11 @@ export const config = {
     // Nến phá cấu trúc (hoặc nến liền trước, cùng chiều) có thân ≥ N× ATR → displacement.
     // Không đạt mà cũng không để lại FVG → BOS/CHoCH bị gắn nhãn "không displacement".
     displacementBodyAtr: parseFloat(process.env.ICT_DISPLACEMENT_BODY_ATR ?? '1.0'),
+    // FVG của cú phá chỉ tính là displacement khi rộng ≥ N× ATR. 0 = FVG nào cũng tính (hành
+    // vi trước 06/11/2026) — 05/11 một FVG 0.82 USD (0.14× ATR M15) biến cú phá thân 0.71× ATR
+    // thành "có displacement" → watcher gọi AI, lệnh BUY dính SL. Chỉ đổi cờ displacement,
+    // FVG mỏng vẫn được dùng làm vùng retest.
+    displacementFvgMinAtr: parseFloat(process.env.ICT_DISPLACEMENT_FVG_MIN_ATR ?? '0.25'),
     // Sau khi body close vượt mức thanh khoản, còn bao nhiêu nến để đóng cửa quay lại
     // bên trong thì vẫn tính là SWEEP (quét rồi từ chối); quá số này → BROKEN (phá thật).
     sweepRejectBars: parseInt(process.env.ICT_SWEEP_REJECT_BARS ?? '2', 10),

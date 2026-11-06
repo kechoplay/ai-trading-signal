@@ -404,6 +404,12 @@ thêm `CLAUDE_RAW_CANDLES_CRYPTO_H4` (12) nến thô H4 để model đếm khi m
   `ICT_DISPLACEMENT_BODY_ATR`× ATR, hoặc cú phá để lại FVG) và `retestZone` (FVG/OB do chính cú
   phá tạo ra, kèm cờ `invalidated` khi đã bị body close xuyên mép xa). Prompt in sự kiện không
   displacement thành "YẾU" — khớp định nghĩa CHoCH hợp lệ. `recentStructure` giữ để tương thích.
+- **FVG mỏng không tính là displacement** (thêm 06/11/2026, `describeBreak`): FVG của cú phá phải rộng
+  ≥ `ICT_DISPLACEMENT_FVG_MIN_ATR` (0.25)× ATR khung đó. Trước đó FVG nào cũng tính — 05/11 18:15 M15
+  XAU: BOS phá 4133.94 thân 0.71× ATR, râu trên dài hơn thân, chỉ để lại FVG 4131.40–4132.22 (0.82 USD
+  = 0.14× ATR) → "có displacement" → watcher lên CONFIRMED → RETEST, gọi AI, lệnh BUY #2381 dính SL.
+  Chỉ đổi cờ `displacement` (FACTS + SetupWatcher cùng đọc), FVG mỏng vẫn làm vùng retest. `0` = hành vi cũ.
+  Kỳ vọng: ít CONFIRMED/RETEST hơn → ít lượt AI do watcher kích hoạt. Số liệu tác động chưa đo.
 - **Vùng retest có ngưỡng chịu lệch + gộp FVG/OB** (thêm 15/10/2026, `describeBreak`). Trước đó
   một nến M15 đóng thân xuyên mép xa của FVG 0.7 USD chỉ 0.12 USD đã đánh dấu vùng `invalidated`
   → SetupWatcher hủy cả chuỗi sweep → BOS trước khi tới RETEST. Nay: (1) chỉ `invalidated` khi
